@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flame/game.dart';
-
-import '../game/taxi_game.dart';
-import '../services/game_state_service.dart';
+import '../../services/game_state_service.dart';
 import 'game_screen.dart';
 
 /// Main menu screen - entry point of the app
@@ -73,6 +70,7 @@ class MainMenuScreen extends StatelessWidget {
               
               // Play Button
               _MenuButton(
+                buttonKey: const Key('play_button'),
                 icon: Icons.play_arrow,
                 label: 'PLAY',
                 onPressed: () {
@@ -89,6 +87,7 @@ class MainMenuScreen extends StatelessWidget {
               
               // Garage Button
               _MenuButton(
+                buttonKey: const Key('garage_button'),
                 icon: Icons.directions_car,
                 label: 'GARAGE',
                 onPressed: () {
@@ -103,6 +102,7 @@ class MainMenuScreen extends StatelessWidget {
               
               // Settings Button
               _MenuButton(
+                buttonKey: const Key('settings_button'),
                 icon: Icons.settings,
                 label: 'SETTINGS',
                 onPressed: () {
@@ -142,16 +142,19 @@ class _MenuButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
+  final Key? buttonKey;
   
   const _MenuButton({
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.buttonKey,
   });
 
   @override
   Widget build(BuildContext context) {
     return ElevatedButton.icon(
+      key: buttonKey,
       onPressed: onPressed,
       icon: Icon(icon, size: 32),
       label: Text(

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flame/components.dart';
+import '../../models/traffic_pattern.dart';
 
 /// Represents a game level with all its data
 class GameLevel {
@@ -8,7 +10,8 @@ class GameLevel {
   final List<Vector2> dropoffPoints;
   final int coinReward;
   final LevelDifficulty difficulty;
-  
+  final TrafficPattern trafficPattern;
+
   GameLevel({
     required this.levelNumber,
     required this.name,
@@ -16,20 +19,22 @@ class GameLevel {
     required this.dropoffPoints,
     required this.coinReward,
     required this.difficulty,
-  });
-  
+    TrafficPattern? trafficPattern,
+  }) : trafficPattern = trafficPattern ?? TrafficPattern.light;
+
   /// Creates a simple test level for initial development
   factory GameLevel.createTestLevel() {
     return GameLevel(
       levelNumber: 1,
       name: 'Test Level',
-      pickupPoints: [const Offset(200, 400) as Vector2],
-      dropoffPoints: [const Offset(200, 100) as Vector2],
+      pickupPoints: [Vector2(200, -200)],
+      dropoffPoints: [Vector2(200, -500)],
       coinReward: 50,
       difficulty: LevelDifficulty.easy,
+      trafficPattern: TrafficPattern.light,
     );
   }
-  
+
   /// Load level from JSON data
   factory GameLevel.fromJson(Map<String, dynamic> json) {
     return GameLevel(
@@ -43,9 +48,12 @@ class GameLevel {
           .toList(),
       coinReward: json['coinReward'] as int,
       difficulty: LevelDifficulty.values.byName(json['difficulty'] as String),
+      trafficPattern: json['trafficPattern'] != null
+          ? TrafficPattern.fromJson(json['trafficPattern'])
+          : TrafficPattern.light,
     );
   }
-  
+
   Map<String, dynamic> toJson() {
     return {
       'levelNumber': levelNumber,
@@ -54,6 +62,7 @@ class GameLevel {
       'dropoffPoints': dropoffPoints.map((p) => [p.x, p.y]).toList(),
       'coinReward': coinReward,
       'difficulty': difficulty.name,
+      'trafficPattern': trafficPattern.toJson(),
     };
   }
 }
@@ -63,14 +72,4 @@ enum LevelDifficulty {
   medium,
   hard,
   expert,
-}
-
-/// Simple Vector2 class for positions (will be replaced by Flame's Vector2)
-class Vector2 {
-  final double x;
-  final double y;
-  
-  const Vector2(this.x, this.y);
-  
-  static final zero = Vector2(0, 0);
 }

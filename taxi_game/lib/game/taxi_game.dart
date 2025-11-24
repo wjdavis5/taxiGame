@@ -6,15 +6,23 @@ import 'package:flutter/material.dart';
 import 'components/player_vehicle.dart';
 import 'components/road_segment.dart';
 import 'components/background.dart';
+import 'components/traffic_spawner.dart';
+import 'components/pickup_zone.dart';
+import 'components/dropoff_zone.dart';
 import 'systems/input_controller.dart';
 import 'levels/level.dart';
+import '../models/passenger_data.dart';
 
 /// Main game class that manages the entire game loop and components
 class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   late PlayerVehicle player;
   late InputController inputController;
   late GameLevel currentLevel;
-  
+  late TrafficSpawner trafficSpawner;
+
+  List<PassengerData> passengers = [];
+  int passengersDelivered = 0;
+
   bool isGameActive = false;
   int currentLevelNumber = 1;
   
@@ -39,31 +47,129 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     // Add background
     final background = Background();
     add(background);
-    
+
     // Create a simple test level
     currentLevel = GameLevel.createTestLevel();
-    
+
     // Add road
     final road = RoadSegment(
       position: Vector2(200, 0),
       length: 1000,
     );
     add(road);
-    
+
     // Add player vehicle
     player = PlayerVehicle(
       position: Vector2(200, 600),
     );
     add(player);
-    
+
     // Add input controller
     inputController = InputController(player);
     add(inputController);
-    
+
+    // Add traffic spawner based on level pattern
+    trafficSpawner = TrafficSpawner(pattern: currentLevel.trafficPattern);
+    add(trafficSpawner);
+
+    // Create passengers from level data
+    _createPassengers();
+
     // Make camera follow player
     camera.follow(player);
-    
+
     isGameActive = true;
+  }
+
+  void _createPassengers() {
+    passengers.clear();
+    passengersDelivered = 0;
+
+    // Create a passenger for each pickup/dropoff pair in the level
+    for (int i = 0; i < currentLevel.pickupPoints.length; i++) {
+      final pickupPoint = currentLevel.pickupPoints[i];
+      final dropoffPoint = i < currentLevel.dropoffPoints.length
+          ? currentLevel.dropoffPoints[i]
+          : currentLevel.dropoffPoints.last;
+
+      final passenger = PassengerData(
+        id: 'passenger_$i',
+        pickupLocation: pickupPoint,
+        dropoffLocation: dropoffPoint,
+        reward: currentLevel.coinReward ~/ currentLevel.pickupPoints.length,
+      );
+
+      passengers.add(passenger);
+
+      // Add pickup zone
+      final pickupZone = PickupZone(
+        position: pickupPoint,
+        passenger: passenger,
+        onPickup: () => _onPassengerPickup(passenger),
+      );
+      add(pickupZone);
+
+      // Add dropoff zone
+      final dropoffZone = DropoffZone(
+        position: dropoffPoint,
+        passenger: passenger,
+        onDropoff: () => _onPassengerDropoff(passenger),
+      );
+      add(dropoffZone);
+    }
+
+    // Start by navigating to first pickup (optional - can keep manual for now)
+    if (passengers.isNotEmpty) {
+      // Auto-navigate to first pickup point
+      // player.navigateTo(passengers.first.pickupLocation);
+      // For now, keep it manual so player has full control
+    }
+  }
+
+  void _onPassengerPickup(PassengerData passenger) {
+    // Update player visual state
+    player.hasPassenger = true;
+
+    // Auto-navigate to dropoff location (OPTIONAL - enable for autopilot)
+    // player.navigateTo(passenger.dropoffLocation);
+
+    // Could add pickup sound effect here
+    // audioService.playSound('pickup');
+  }
+
+  void _onPassengerDropoff(PassengerData passenger) {
+    passengersDelivered++;
+
+    // Update player visual state
+    player.hasPassenger = false;
+
+    // Stop autopilot if it was active
+    player.stopNavigation();
+
+    // Could add dropoff sound effect here
+    // audioService.playSound('dropoff');
+
+    // Check if there are more passengers
+    if (passengersDelivered < passengers.length) {
+      // Find next passenger that hasn't been picked up
+      final nextPassenger = passengers.firstWhere(
+        (p) => !p.isPickedUp,
+        orElse: () => passenger,
+      );
+
+      // Auto-navigate to next pickup (OPTIONAL - enable for autopilot)
+      // if (nextPassenger != passenger) {
+      //   player.navigateTo(nextPassenger.pickupLocation);
+      // }
+    } else {
+      // All passengers delivered!
+      _completeLevel();
+    }
+  }
+
+  void _completeLevel() {
+    // Level complete!
+    onLevelComplete();
   }
   
   @override
@@ -78,6 +184,18 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   void restartLevel() {
     // Reset player position
     player.reset();
+
+    // Clear and restart traffic
+    trafficSpawner.clear();
+    trafficSpawner.resume();
+
+    // Recreate passengers and zones
+    _createPassengers();
+
+    // Remove any overlays
+    overlays.remove('levelFailed');
+    overlays.remove('levelComplete');
+
     isGameActive = true;
   }
   
@@ -89,6 +207,10 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   
   void onLevelFailed() {
     isGameActive = false;
+
+    // Pause traffic spawning
+    trafficSpawner.pause();
+
     // Show level failed overlay
     overlays.add('levelFailed');
   }

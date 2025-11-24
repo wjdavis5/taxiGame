@@ -1,0 +1,87 @@
+# Asset Licenses for Taxi Game
+
+## Visual Assets
+
+### Vehicles, UI, Environment (Kenney.nl)
+Source: https://kenney.nl
+Artist: Kenney Vleugels
+License: CC0 1.0 Universal (Public Domain)
+Files: All PNG files in assets/images/
+Note: No attribution required, but appreciated
+
+### Additional Vehicles (OpenGameArt - Optional)
+Source: https://opengameart.org/content/free-top-down-car-sprites-by-unlucky-studio
+Artist: Unlucky Studio
+License: Royalty-free (attribution appreciated)
+Files: Specific vehicle sprites if used
+Attribution: "Vehicle sprites by Unlucky Studio (opengameart.org)"
+
+## Audio Assets
+
+### Background Music (Incompetech)
+Source: https://incompetech.com
+Composer: Kevin MacLeod
+License: CC-BY 4.0 (http://creativecommons.org/licenses/by/4.0/)
+Files: 
+  - menu_music.mp3 (Track: Cipher - RECOMMENDED, or your chosen track)
+Attribution Required:
+  "Music by Kevin MacLeod (incompetech.com)
+   Licensed under Creative Commons: By Attribution 4.0 License
+   Track: Cipher" (or your chosen track name)
+
+### Sound Effects (Multiple Sources)
+
+#### Sonniss GDC Bundle (if used)
+Source: https://sonniss.com/gameaudiogdc/
+License: 100% Royalty-Free, Commercial Use, No Attribution Required
+Files: [List specific SFX files when added]
+
+#### Freesound.org (if used)
+Individual sound attributions:
+[Add as you download sounds - include artist name, Freesound ID, and license type]
+
+#### JSFXR Generated (if used)
+Source: https://sfxr.me
+License: Royalty-free (generated sounds)
+Files: [List generated sounds when added]
+
+---
+
+## Instructions
+
+When you add assets to the project:
+1. Update this file with the specific asset names
+2. Include the source, artist, and license
+3. Add any required attribution text
+4. Keep this file updated as you add more assets
+
+## In-Game Credits
+
+Copy this section to your in-game credits screen:
+
+CREDITS
+
+GAME DEVELOPMENT
+[Your Name/Studio]
+
+VISUAL ASSETS
+Kenney Vleugels (kenney.nl)
+CC0 License - Public Domain
+
+MUSIC
+Kevin MacLeod (incompetech.com)
+Licensed under Creative Commons: By Attribution 4.0
+http://creativecommons.org/licenses/by/4.0/
+
+Tracks Used:
+- [Track Name 1]
+- [Track Name 2]
+- [Track Name 3]
+
+SOUND EFFECTS
+Sonniss GameAudioGDC (sonniss.com)
+Freesound.org community
+[Individual artist credits if using CC-BY sounds]
+
+SPECIAL THANKS
+The open-source game development community
