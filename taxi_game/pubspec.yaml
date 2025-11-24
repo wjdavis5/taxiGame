@@ -58,6 +58,6 @@ flutter:
     
     # Audio - Music
     - assets/audio/music/
-    
-    # Level data (if needed)
-    - assets/data/levels/
+
+    # Level data
+    - assets/levels/

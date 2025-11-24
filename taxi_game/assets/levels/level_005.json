@@ -1,0 +1,30 @@
+{
+  "levelNumber": 5,
+  "name": "Heavy Traffic",
+  "difficulty": "medium",
+  "pickupPoints": [
+    [170, 450],
+    [230, 250]
+  ],
+  "dropoffPoints": [
+    [230, -250],
+    [170, -550]
+  ],
+  "coinReward": 150,
+  "trafficPattern": {
+    "name": "heavy",
+    "spawnInterval": 2.0,
+    "lanes": [
+      {
+        "laneX": 160,
+        "speedRange": {"min": 140, "max": 190},
+        "spawnProbability": 0.75
+      },
+      {
+        "laneX": 240,
+        "speedRange": {"min": 140, "max": 190},
+        "spawnProbability": 0.75
+      }
+    ]
+  }
+}

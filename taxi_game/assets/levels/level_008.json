@@ -1,0 +1,28 @@
+{
+  "levelNumber": 8,
+  "name": "Narrow Escape",
+  "difficulty": "hard",
+  "pickupPoints": [
+    [200, 450]
+  ],
+  "dropoffPoints": [
+    [200, -550]
+  ],
+  "coinReward": 225,
+  "trafficPattern": {
+    "name": "very_heavy",
+    "spawnInterval": 1.5,
+    "lanes": [
+      {
+        "laneX": 160,
+        "speedRange": {"min": 160, "max": 220},
+        "spawnProbability": 0.85
+      },
+      {
+        "laneX": 240,
+        "speedRange": {"min": 160, "max": 220},
+        "spawnProbability": 0.85
+      }
+    ]
+  }
+}

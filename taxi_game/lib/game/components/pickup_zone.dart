@@ -8,7 +8,7 @@ import 'player_vehicle.dart';
 import '../../models/passenger_data.dart';
 
 /// Visual marker for passenger pickup location
-class PickupZone extends CircleComponent with HasGameRef<TaxiGame>, CollisionCallbacks {
+class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, CollisionCallbacks {
   final PassengerData passenger;
   final VoidCallback onPickup;
 

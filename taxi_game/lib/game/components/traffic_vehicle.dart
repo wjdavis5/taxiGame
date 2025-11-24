@@ -8,7 +8,7 @@ import '../../models/traffic_pattern.dart';
 
 /// AI-controlled traffic vehicle that follows a path
 class TrafficVehicle extends PositionComponent
-    with HasGameRef<TaxiGame>, CollisionCallbacks {
+    with HasGameReference<TaxiGame>, CollisionCallbacks {
 
   final TrafficVehicleType vehicleType;
   final double baseSpeed;
@@ -98,7 +98,7 @@ class TrafficVehicle extends PositionComponent
     }
 
     // Check if vehicle is off screen (below player view)
-    if (position.y > gameRef.camera.viewfinder.position.y + 1000) {
+    if (position.y > game.camera.viewfinder.position.y + 1000) {
       shouldRemove = true;
       removeFromParent();
     }

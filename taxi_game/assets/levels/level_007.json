@@ -1,0 +1,32 @@
+{
+  "levelNumber": 7,
+  "name": "Triple Threat",
+  "difficulty": "hard",
+  "pickupPoints": [
+    [180, 500],
+    [200, 300],
+    [220, 100]
+  ],
+  "dropoffPoints": [
+    [220, -100],
+    [200, -400],
+    [180, -700]
+  ],
+  "coinReward": 200,
+  "trafficPattern": {
+    "name": "heavy_fast",
+    "spawnInterval": 1.8,
+    "lanes": [
+      {
+        "laneX": 160,
+        "speedRange": {"min": 150, "max": 210},
+        "spawnProbability": 0.8
+      },
+      {
+        "laneX": 240,
+        "speedRange": {"min": 150, "max": 210},
+        "spawnProbability": 0.8
+      }
+    ]
+  }
+}

@@ -8,7 +8,7 @@ import '../systems/pathfinding_system.dart';
 
 /// Player-controlled taxi vehicle
 class PlayerVehicle extends PositionComponent
-    with HasGameRef<TaxiGame>, CollisionCallbacks {
+    with HasGameReference<TaxiGame>, CollisionCallbacks {
 
   static const double maxSpeed = 300.0;
   static const double acceleration = 400.0;
@@ -63,8 +63,8 @@ class PlayerVehicle extends PositionComponent
     // Keep within bounds (horizontally)
     if (position.x < vehicleSize.x / 2) {
       position.x = vehicleSize.x / 2;
-    } else if (position.x > gameRef.size.x - vehicleSize.x / 2) {
-      position.x = gameRef.size.x - vehicleSize.x / 2;
+    } else if (position.x > game.size.x - vehicleSize.x / 2) {
+      position.x = game.size.x - vehicleSize.x / 2;
     }
   }
 
@@ -182,7 +182,7 @@ class PlayerVehicle extends PositionComponent
     // Handle collisions with traffic vehicles
     if (other is TrafficVehicle) {
       // Collision occurred - trigger game over
-      gameRef.onLevelFailed();
+      game.onLevelFailed();
     }
   }
 }
