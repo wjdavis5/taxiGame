@@ -1,0 +1,156 @@
+name: Flutter CI Builds
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  PROJECT_PATH: taxi_game
+  FLUTTER_CHANNEL: stable
+
+jobs:
+  build_android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.PROJECT_PATH }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Cache Flutter SDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/flutter
+          key: ${{ runner.os }}-flutter-${{ env.FLUTTER_CHANNEL }}
+
+      - name: Install Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+
+      - name: Cache Pub packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('taxi_game/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Ensure Android platform directory
+        run: |
+          if [ ! -d android ]; then
+            echo "::error::Missing android/ directory. Run 'flutter create .' to add Android platform files before building."
+            exit 1
+          fi
+
+      - name: Flutter analyze
+        run: flutter analyze
+
+      - name: Flutter tests
+        run: |
+          if [ -d test ]; then
+            flutter test
+          else
+            echo "No Flutter tests found; skipping."
+          fi
+
+      - name: Build Android App Bundle
+        run: flutter build appbundle --release
+
+      - name: Build Android APK
+        run: flutter build apk --release
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-builds
+          path: |
+            taxi_game/build/app/outputs/flutter-apk/app-release.apk
+            taxi_game/build/app/outputs/bundle/release/app-release.aab
+
+  build_ios:
+    runs-on: macos-latest
+    needs: build_android
+    defaults:
+      run:
+        working-directory: ${{ env.PROJECT_PATH }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Flutter SDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/flutter
+          key: ${{ runner.os }}-flutter-${{ env.FLUTTER_CHANNEL }}
+
+      - name: Install Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+
+      - name: Cache Pub packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('taxi_game/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            taxi_game/ios/Pods
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+          key: ${{ runner.os }}-pods-${{ hashFiles('taxi_game/ios/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Ensure iOS platform directory
+        run: |
+          if [ ! -d ios ]; then
+            echo "::error::Missing ios/ directory. Run 'flutter create .' to add iOS platform files before building."
+            exit 1
+          fi
+
+      - name: Precache iOS artifacts
+        run: flutter precache --ios
+
+      - name: Install CocoaPods dependencies
+        run: pod install
+        working-directory: ${{ env.PROJECT_PATH }}/ios
+
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package Runner.app
+        run: |
+          cd build/ios/iphoneos
+          zip -r Runner.app.zip Runner.app
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-runner-app
+          path: taxi_game/build/ios/iphoneos/Runner.app.zip

@@ -3,18 +3,24 @@ import 'package:flame/collisions.dart';
 import 'package:flutter/material.dart';
 
 import '../taxi_game.dart';
+import 'traffic_vehicle.dart';
+import '../systems/pathfinding_system.dart';
 
 /// Player-controlled taxi vehicle
-class PlayerVehicle extends PositionComponent 
+class PlayerVehicle extends PositionComponent
     with HasGameRef<TaxiGame>, CollisionCallbacks {
-  
+
   static const double maxSpeed = 300.0;
   static const double acceleration = 400.0;
   static const double deceleration = 600.0;
-  
+
   Vector2 velocity = Vector2.zero();
   bool isAccelerating = false;
   bool hasPassenger = false;
+
+  // Pathfinding
+  final PathfindingSystem pathfinding = PathfindingSystem();
+  bool useAutopilot = false; // Toggle between manual and auto navigation
   
   // Visual properties
   final Color vehicleColor = Colors.yellow;
@@ -43,8 +49,27 @@ class PlayerVehicle extends PositionComponent
   @override
   void update(double dt) {
     super.update(dt);
-    
-    // Update velocity based on acceleration state
+
+    // Check if using autopilot
+    if (useAutopilot && pathfinding.isNavigating) {
+      _updateAutopilotMovement(dt);
+    } else {
+      _updateManualMovement(dt);
+    }
+
+    // Update position
+    position += velocity * dt;
+
+    // Keep within bounds (horizontally)
+    if (position.x < vehicleSize.x / 2) {
+      position.x = vehicleSize.x / 2;
+    } else if (position.x > gameRef.size.x - vehicleSize.x / 2) {
+      position.x = gameRef.size.x - vehicleSize.x / 2;
+    }
+  }
+
+  void _updateManualMovement(double dt) {
+    // Manual control - original behavior
     if (isAccelerating) {
       velocity.y = -maxSpeed; // Move upward (forward in game)
     } else {
@@ -56,16 +81,38 @@ class PlayerVehicle extends PositionComponent
         }
       }
     }
-    
-    // Update position
-    position += velocity * dt;
-    
-    // Keep within bounds (horizontally)
-    if (position.x < vehicleSize.x / 2) {
-      position.x = vehicleSize.x / 2;
-    } else if (position.x > gameRef.size.x - vehicleSize.x / 2) {
-      position.x = gameRef.size.x - vehicleSize.x / 2;
+  }
+
+  void _updateAutopilotMovement(double dt) {
+    // Get direction from pathfinding
+    final direction = pathfinding.getNavigationDirection(position);
+
+    if (direction != null) {
+      // Get speed multiplier (for slowing down near waypoints)
+      final speedMult = pathfinding.getSpeedMultiplier(position);
+
+      // Base speed - faster when holding, slower when not
+      final baseSpeed = isAccelerating ? maxSpeed : maxSpeed * 0.5;
+
+      // Apply speed multiplier and direction
+      velocity = direction * baseSpeed * speedMult;
+    } else {
+      // No navigation - stop
+      velocity = Vector2.zero();
     }
+  }
+
+  /// Navigate to a destination using pathfinding
+  void navigateTo(Vector2 destination) {
+    pathfinding.setDestination(position, destination);
+    useAutopilot = true;
+  }
+
+  /// Stop autopilot and return to manual control
+  void stopNavigation() {
+    pathfinding.clear();
+    useAutopilot = false;
+    velocity = Vector2.zero();
   }
   
   @override
@@ -124,14 +171,16 @@ class PlayerVehicle extends PositionComponent
     position = Vector2(200, 600);
     velocity = Vector2.zero();
     isAccelerating = false;
+    hasPassenger = false;
+    stopNavigation();
   }
   
   @override
   void onCollision(Set<Vector2> intersectionPoints, PositionComponent other) {
     super.onCollision(intersectionPoints, other);
-    
-    // Handle collisions with traffic or obstacles
-    if (other is! PlayerVehicle) {
+
+    // Handle collisions with traffic vehicles
+    if (other is TrafficVehicle) {
       // Collision occurred - trigger game over
       gameRef.onLevelFailed();
     }
