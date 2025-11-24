@@ -6,7 +6,7 @@ import 'traffic_vehicle.dart';
 import '../../models/traffic_pattern.dart';
 
 /// Manages spawning of traffic vehicles based on patterns
-class TrafficSpawner extends Component with HasGameRef<TaxiGame> {
+class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   final TrafficPattern pattern;
   final Random random = Random();
 
@@ -56,7 +56,7 @@ class TrafficSpawner extends Component with HasGameRef<TaxiGame> {
 
   void _spawnVehicleInLane(TrafficLaneConfig laneConfig) {
     // Calculate spawn position (ahead of player/camera)
-    final spawnY = gameRef.camera.viewfinder.position.y - spawnDistanceAhead;
+    final spawnY = game.camera.viewfinder.position.y - spawnDistanceAhead;
     final spawnX = laneConfig.laneX;
 
     // Generate random speed within range
@@ -75,7 +75,7 @@ class TrafficSpawner extends Component with HasGameRef<TaxiGame> {
     );
 
     // Add to game
-    gameRef.add(vehicle);
+    game.add(vehicle);
     _activeVehicles.add(vehicle);
   }
 

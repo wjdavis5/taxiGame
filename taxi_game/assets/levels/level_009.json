@@ -1,0 +1,30 @@
+{
+  "levelNumber": 9,
+  "name": "Marathon Run",
+  "difficulty": "hard",
+  "pickupPoints": [
+    [185, 650],
+    [215, 350]
+  ],
+  "dropoffPoints": [
+    [215, -350],
+    [185, -850]
+  ],
+  "coinReward": 250,
+  "trafficPattern": {
+    "name": "expert_chaos",
+    "spawnInterval": 1.3,
+    "lanes": [
+      {
+        "laneX": 160,
+        "speedRange": {"min": 170, "max": 230},
+        "spawnProbability": 0.9
+      },
+      {
+        "laneX": 240,
+        "speedRange": {"min": 170, "max": 230},
+        "spawnProbability": 0.9
+      }
+    ]
+  }
+}

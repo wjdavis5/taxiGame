@@ -1,0 +1,28 @@
+{
+  "levelNumber": 4,
+  "name": "Speed Challenge",
+  "difficulty": "medium",
+  "pickupPoints": [
+    [200, 500]
+  ],
+  "dropoffPoints": [
+    [200, -600]
+  ],
+  "coinReward": 125,
+  "trafficPattern": {
+    "name": "medium_fast",
+    "spawnInterval": 2.5,
+    "lanes": [
+      {
+        "laneX": 160,
+        "speedRange": {"min": 130, "max": 180},
+        "spawnProbability": 0.7
+      },
+      {
+        "laneX": 240,
+        "speedRange": {"min": 130, "max": 180},
+        "spawnProbability": 0.7
+      }
+    ]
+  }
+}

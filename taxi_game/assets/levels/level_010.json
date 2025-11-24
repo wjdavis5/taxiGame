@@ -1,0 +1,32 @@
+{
+  "levelNumber": 10,
+  "name": "Final Challenge",
+  "difficulty": "expert",
+  "pickupPoints": [
+    [175, 700],
+    [200, 450],
+    [225, 200]
+  ],
+  "dropoffPoints": [
+    [225, -200],
+    [200, -550],
+    [175, -900]
+  ],
+  "coinReward": 300,
+  "trafficPattern": {
+    "name": "nightmare",
+    "spawnInterval": 1.0,
+    "lanes": [
+      {
+        "laneX": 160,
+        "speedRange": {"min": 180, "max": 250},
+        "spawnProbability": 0.95
+      },
+      {
+        "laneX": 240,
+        "speedRange": {"min": 180, "max": 250},
+        "spawnProbability": 0.95
+      }
+    ]
+  }
+}

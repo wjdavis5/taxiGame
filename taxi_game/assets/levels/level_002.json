@@ -1,0 +1,28 @@
+{
+  "levelNumber": 2,
+  "name": "Rush Hour Begins",
+  "difficulty": "easy",
+  "pickupPoints": [
+    [180, 450]
+  ],
+  "dropoffPoints": [
+    [220, -400]
+  ],
+  "coinReward": 75,
+  "trafficPattern": {
+    "name": "light_medium",
+    "spawnInterval": 3.5,
+    "lanes": [
+      {
+        "laneX": 160,
+        "speedRange": {"min": 100, "max": 140},
+        "spawnProbability": 0.5
+      },
+      {
+        "laneX": 240,
+        "speedRange": {"min": 100, "max": 140},
+        "spawnProbability": 0.5
+      }
+    ]
+  }
+}

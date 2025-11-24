@@ -8,7 +8,7 @@ import 'player_vehicle.dart';
 import '../../models/passenger_data.dart';
 
 /// Visual marker for passenger dropoff location
-class DropoffZone extends CircleComponent with HasGameRef<TaxiGame>, CollisionCallbacks {
+class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, CollisionCallbacks {
   final PassengerData passenger;
   final VoidCallback onDropoff;
 

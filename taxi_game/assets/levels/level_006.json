@@ -1,0 +1,28 @@
+{
+  "levelNumber": 6,
+  "name": "Long Haul",
+  "difficulty": "medium",
+  "pickupPoints": [
+    [190, 600]
+  ],
+  "dropoffPoints": [
+    [210, -800]
+  ],
+  "coinReward": 175,
+  "trafficPattern": {
+    "name": "medium_varied",
+    "spawnInterval": 2.2,
+    "lanes": [
+      {
+        "laneX": 160,
+        "speedRange": {"min": 120, "max": 200},
+        "spawnProbability": 0.65
+      },
+      {
+        "laneX": 240,
+        "speedRange": {"min": 120, "max": 200},
+        "spawnProbability": 0.65
+      }
+    ]
+  }
+}
