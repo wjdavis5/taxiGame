@@ -27,8 +27,8 @@ class GameLevel {
     return GameLevel(
       levelNumber: 1,
       name: 'Test Level',
-      pickupPoints: [Vector2(200, -200)],
-      dropoffPoints: [Vector2(200, -500)],
+      pickupPoints: [Vector2(120, -300)], // Left side
+      dropoffPoints: [Vector2(280, -800)], // Right side, further up
       coinReward: 50,
       difficulty: LevelDifficulty.easy,
       trafficPattern: TrafficPattern.light,

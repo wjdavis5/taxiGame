@@ -10,13 +10,15 @@ import '../systems/pathfinding_system.dart';
 class PlayerVehicle extends PositionComponent
     with HasGameReference<TaxiGame>, CollisionCallbacks {
 
-  static const double maxSpeed = 300.0;
+  static const double maxSpeed = 150.0; // Reduced from 300 - much slower
   static const double acceleration = 400.0;
   static const double deceleration = 600.0;
+  static const double steeringSpeed = 300.0; // Increased from 200 - faster steering
 
   Vector2 velocity = Vector2.zero();
   bool isAccelerating = false;
   bool hasPassenger = false;
+  double steeringInput = 0; // -1 (left) to 1 (right)
 
   // Pathfinding
   final PathfindingSystem pathfinding = PathfindingSystem();
@@ -69,7 +71,7 @@ class PlayerVehicle extends PositionComponent
   }
 
   void _updateManualMovement(double dt) {
-    // Manual control - original behavior
+    // Forward/backward movement
     if (isAccelerating) {
       velocity.y = -maxSpeed; // Move upward (forward in game)
     } else {
@@ -81,6 +83,9 @@ class PlayerVehicle extends PositionComponent
         }
       }
     }
+
+    // Left/right steering
+    velocity.x = steeringInput * steeringSpeed;
   }
 
   void _updateAutopilotMovement(double dt) {
@@ -162,16 +167,21 @@ class PlayerVehicle extends PositionComponent
   void startAccelerating() {
     isAccelerating = true;
   }
-  
+
   void stopAccelerating() {
     isAccelerating = false;
   }
-  
+
+  void setSteering(double input) {
+    steeringInput = input.clamp(-1.0, 1.0);
+  }
+
   void reset() {
     position = Vector2(200, 600);
     velocity = Vector2.zero();
     isAccelerating = false;
     hasPassenger = false;
+    steeringInput = 0;
     stopNavigation();
   }
   

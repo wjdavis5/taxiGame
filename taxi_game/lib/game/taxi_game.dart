@@ -9,14 +9,12 @@ import 'components/background.dart';
 import 'components/traffic_spawner.dart';
 import 'components/pickup_zone.dart';
 import 'components/dropoff_zone.dart';
-import 'systems/input_controller.dart';
 import 'levels/level.dart';
 import '../models/passenger_data.dart';
 
 /// Main game class that manages the entire game loop and components
 class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   late PlayerVehicle player;
-  late InputController inputController;
   late GameLevel currentLevel;
   late TrafficSpawner trafficSpawner;
 
@@ -25,6 +23,9 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
   bool isGameActive = false;
   int currentLevelNumber = 1;
+
+  // Touch position tracking for steering
+  Vector2? _touchPosition;
   
   @override
   Color backgroundColor() => const Color(0xFF87CEEB); // Sky blue
@@ -64,10 +65,6 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     );
     add(player);
 
-    // Add input controller
-    inputController = InputController(player);
-    add(inputController);
-
     // Add traffic spawner based on level pattern
     trafficSpawner = TrafficSpawner(pattern: currentLevel.trafficPattern);
     add(trafficSpawner);
@@ -75,8 +72,8 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     // Create passengers from level data
     _createPassengers();
 
-    // Make camera follow player
-    camera.follow(player);
+    // Don't follow player - keep camera fixed so player can see ahead
+    // This gives better visibility of oncoming traffic
 
     isGameActive = true;
   }
@@ -223,5 +220,45 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   void resumeGame() {
     paused = false;
     overlays.remove('pauseMenu');
+  }
+
+  @override
+  void onTapDown(TapDownEvent event) {
+    super.onTapDown(event);
+    if (isGameActive) {
+      _touchPosition = event.localPosition;
+      player.startAccelerating();
+      _updateSteeringFromTouch();
+    }
+  }
+
+  @override
+  void onTapUp(TapUpEvent event) {
+    super.onTapUp(event);
+    _touchPosition = null;
+    player.stopAccelerating();
+    player.setSteering(0);
+  }
+
+  @override
+  void onTapCancel(TapCancelEvent event) {
+    super.onTapCancel(event);
+    _touchPosition = null;
+    player.stopAccelerating();
+    player.setSteering(0);
+  }
+
+  void _updateSteeringFromTouch() {
+    if (_touchPosition == null || !isGameActive) return;
+
+    // Calculate steering based on touch position relative to screen center
+    final screenCenter = size.x / 2;
+    final touchX = _touchPosition!.x;
+    final deltaX = touchX - screenCenter;
+
+    // Convert to steering input (-1 to 1)
+    // Divide by half screen width to normalize
+    final steeringInput = (deltaX / (size.x / 2)).clamp(-1.0, 1.0);
+    player.setSteering(steeringInput);
   }
 }
