@@ -15,17 +15,17 @@ class TrafficPattern {
   /// Light traffic - easy difficulty
   static TrafficPattern get light => TrafficPattern(
     name: 'light',
-    spawnInterval: 3.0,
+    spawnInterval: 4.0, // Increased from 3.0 - spawn less often
     lanes: [
       TrafficLaneConfig(
-        laneX: 160,
-        speedRange: SpeedRange(min: 100, max: 150),
-        spawnProbability: 0.5,
+        laneX: 140, // Left lane - moved more to left
+        speedRange: SpeedRange(min: 80, max: 120), // Slower traffic
+        spawnProbability: 0.3, // Reduced from 0.5 - spawn less
       ),
       TrafficLaneConfig(
-        laneX: 240,
-        speedRange: SpeedRange(min: 100, max: 150),
-        spawnProbability: 0.5,
+        laneX: 260, // Right lane - moved more to right
+        speedRange: SpeedRange(min: 80, max: 120), // Slower traffic
+        spawnProbability: 0.2, // Even less in right lane to avoid blocking
       ),
     ],
   );

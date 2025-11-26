@@ -3,7 +3,9 @@
     "allow": [
       "Bash(flutter run:*)",
       "Bash(flutter config:*)",
-      "Bash(flutter:*)"
+      "Bash(flutter:*)",
+      "Bash(timeout:*)",
+      "Bash(adb:*)"
     ],
     "deny": [],
     "ask": []
