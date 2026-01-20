@@ -1,10 +1,3 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" style="height:64px;margin-right:32px"/>
-
-# Pick me up 3d taxi game. Research this game in depth. Develop detailed product specifications for this game so that I can make my own version of it. Your specifications should include all relevant details about the graphics gameplay and how things work. Dive deep. Don’t skimp. Make it super detailed.
-
-Based on my research, I'll create comprehensive product specifications for "Pick Me Up 3D" so you can develop your own version. This is a casual taxi simulation game with unique mechanics.
-
-***
 
 # Pick Me Up 3D: Taxi Game - Complete Product Specifications
 
