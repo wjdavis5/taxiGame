@@ -1,28 +1,48 @@
 {
-  "levelNumber": 1,
-  "name": "First Ride",
-  "difficulty": "easy",
-  "pickupPoints": [
-    [200, 400]
-  ],
-  "dropoffPoints": [
-    [200, -300]
-  ],
-  "coinReward": 50,
-  "trafficPattern": {
-    "name": "light",
-    "spawnInterval": 4.0,
-    "lanes": [
-      {
-        "laneX": 160,
-        "speedRange": {"min": 80, "max": 120},
-        "spawnProbability": 0.4
-      },
-      {
-        "laneX": 240,
-        "speedRange": {"min": 80, "max": 120},
-        "spawnProbability": 0.4
-      }
-    ]
-  }
+    "levelNumber":  1,
+    "name":  "First Ride",
+    "difficulty":  "easy",
+    "pickupPoints":  [
+                         [
+                             315,
+                             400
+                         ]
+                     ],
+    "dropoffPoints":  [
+                          [
+                              315,
+                              -300
+                          ]
+                      ],
+    "coinReward":  50,
+    "trafficPattern":  {
+                           "name":  "light",
+                           "spawnInterval":  4.0,
+                           "lanes":  [
+                                         {
+                                             "laneX":  160,
+                                             "speedRange":  {
+                                                                "min":  80,
+                                                                "max":  120
+                                                            },
+                                             "spawnProbability":  0.4
+                                         },
+                                         {
+                                             "laneX":  240,
+                                             "speedRange":  {
+                                                                "min":  80,
+                                                                "max":  120
+                                                            },
+                                             "spawnProbability":  0.4
+                                         },
+                                         {
+                                             "laneX":  200,
+                                             "speedRange":  {
+                                                                "min":  80,
+                                                                "max":  120
+                                                            },
+                                             "spawnProbability":  0.15
+                                         }
+                                     ]
+                       }
 }

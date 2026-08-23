@@ -13,8 +13,6 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   double _timeSinceLastSpawn = 0.0;
   bool _isActive = true;
 
-  // Pool for reusing vehicles (optimization)
-  final List<TrafficVehicle> _vehiclePool = [];
   final List<TrafficVehicle> _activeVehicles = [];
 
   // Spawn area (ahead of camera view)
@@ -59,12 +57,20 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     final spawnY = game.camera.viewfinder.position.y - spawnDistanceAhead;
     final spawnX = laneConfig.laneX;
 
-    // Generate random speed within range
-    final speed = laneConfig.speedRange.min +
+    // Generate random speed within range. Same-direction traffic drives
+    // slower than the player so it can be overtaken.
+    var speed = laneConfig.speedRange.min +
         random.nextDouble() * (laneConfig.speedRange.max - laneConfig.speedRange.min);
+    if (!laneConfig.oncoming) {
+      speed *= 0.5;
+    }
 
-    // Create path (for now, just move straight down)
-    final path = _createStraightPath(Vector2(spawnX, spawnY));
+    // Oncoming traffic drives down toward the player; same-direction
+    // traffic drives up and gets caught from behind.
+    final path = _createStraightPath(
+      Vector2(spawnX, spawnY),
+      oncoming: laneConfig.oncoming,
+    );
 
     // Create or reuse vehicle
     final vehicle = TrafficVehicle.random(
@@ -74,31 +80,21 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
       random: random,
     );
 
-    // Add to game
-    game.add(vehicle);
+    // Add to the game world so it scrolls with the camera
+    game.world.add(vehicle);
     _activeVehicles.add(vehicle);
   }
 
-  /// Creates a straight path moving downward (in player's direction)
-  List<Vector2> _createStraightPath(Vector2 startPosition) {
-    // Create waypoints going down the road
+  /// Creates a straight path along the lane. Oncoming paths run down the
+  /// screen; same-direction paths run far up the road (those vehicles are
+  /// despawned once the player passes them).
+  List<Vector2> _createStraightPath(Vector2 startPosition, {required bool oncoming}) {
+    final step = oncoming ? 500.0 : -3000.0;
     return [
       startPosition,
-      Vector2(startPosition.x, startPosition.y + 500),
-      Vector2(startPosition.x, startPosition.y + 1000),
-      Vector2(startPosition.x, startPosition.y + 1500),
-    ];
-  }
-
-  /// Creates a path with a lane change
-  List<Vector2> _createLaneChangePath(Vector2 startPosition, double targetLaneX) {
-    final midY = startPosition.y + 250;
-    return [
-      startPosition,
-      Vector2(startPosition.x, midY),
-      Vector2(targetLaneX, midY + 100),
-      Vector2(targetLaneX, midY + 500),
-      Vector2(targetLaneX, midY + 1000),
+      Vector2(startPosition.x, startPosition.y + step),
+      Vector2(startPosition.x, startPosition.y + step * 2),
+      Vector2(startPosition.x, startPosition.y + step * 3),
     ];
   }
 

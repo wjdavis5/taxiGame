@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../game/taxi_game.dart';
 import '../../services/game_state_service.dart';
 
 /// HUD overlay that displays during gameplay
 class HudOverlay extends StatelessWidget {
-  const HudOverlay({super.key});
+  const HudOverlay({super.key, required this.game});
+
+  final TaxiGame game;
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +34,7 @@ class HudOverlay extends StatelessWidget {
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        'Level ${gameState.currentLevel}',
+                        'Level ${game.currentLevelNumber}',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 18,
@@ -79,7 +82,7 @@ class HudOverlay extends StatelessWidget {
                 // Pause button
                 IconButton(
                   onPressed: () {
-                    // TODO: Pause game
+                    game.pauseGame();
                   },
                   icon: const Icon(
                     Icons.pause,
@@ -106,7 +109,7 @@ class HudOverlay extends StatelessWidget {
                 borderRadius: BorderRadius.circular(25),
               ),
               child: const Text(
-                'TAP & HOLD TO DRIVE',
+                'HOLD OR ↑ TO DRIVE • ←→ STEER',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 16,

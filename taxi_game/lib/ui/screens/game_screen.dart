@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flame/game.dart';
+import 'package:provider/provider.dart';
 
 import '../../game/taxi_game.dart';
+import '../../services/game_state_service.dart';
+import '../../services/level_loader_service.dart';
 import '../widgets/hud_overlay.dart';
 
 /// Game screen that contains the actual game widget
@@ -14,11 +17,14 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen> {
   late final TaxiGame game;
-  
+
   @override
   void initState() {
     super.initState();
-    game = TaxiGame();
+    game = TaxiGame(
+      levelLoader: context.read<LevelLoaderService>(),
+      gameState: context.read<GameStateService>(),
+    );
   }
 
   @override
@@ -30,10 +36,12 @@ class _GameScreenState extends State<GameScreen> {
           GameWidget(
             game: game,
             overlayBuilderMap: {
-              'hud': (context, game) => const HudOverlay(),
-              'pauseMenu': (context, game) => _buildPauseMenu(context),
-              'levelComplete': (context, game) => _buildLevelComplete(context),
-              'levelFailed': (context, game) => _buildLevelFailed(context),
+              'hud': (context, TaxiGame game) => HudOverlay(game: game),
+              'pauseMenu': (context, TaxiGame game) => _buildPauseMenu(context),
+              'levelComplete': (context, TaxiGame game) =>
+                  _buildLevelComplete(context),
+              'levelFailed': (context, TaxiGame game) =>
+                  _buildLevelFailed(context),
             },
             initialActiveOverlays: const ['hud'],
           ),
@@ -41,7 +49,7 @@ class _GameScreenState extends State<GameScreen> {
       ),
     );
   }
-  
+
   Widget _buildPauseMenu(BuildContext context) {
     return Center(
       child: Container(
@@ -81,7 +89,7 @@ class _GameScreenState extends State<GameScreen> {
       ),
     );
   }
-  
+
   Widget _buildLevelComplete(BuildContext context) {
     return Center(
       child: Container(
@@ -109,28 +117,46 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
             const SizedBox(height: 10),
-            const Text(
-              '+50 Coins',
-              style: TextStyle(
+            Text(
+              '+${game.currentLevel.coinReward} Coins',
+              style: const TextStyle(
                 fontSize: 24,
                 color: Colors.yellow,
               ),
             ),
             const SizedBox(height: 30),
             ElevatedButton(
-              onPressed: () {
-                // TODO: Load next level
-                game.overlays.remove('levelComplete');
-                game.restartLevel();
+              onPressed: () async {
+                final navigator = Navigator.of(context);
+                final messenger = ScaffoldMessenger.of(context);
+                final hasNext = await game.startNextLevel();
+                if (!hasNext) {
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text('You beat every level! More coming soon.'),
+                    ),
+                  );
+                  navigator.pop();
+                }
               },
               child: const Text('NEXT LEVEL'),
+            ),
+            const SizedBox(height: 10),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text(
+                'MAIN MENU',
+                style: TextStyle(color: Colors.white),
+              ),
             ),
           ],
         ),
       ),
     );
   }
-  
+
   Widget _buildLevelFailed(BuildContext context) {
     return Center(
       child: Container(
@@ -160,7 +186,6 @@ class _GameScreenState extends State<GameScreen> {
             const SizedBox(height: 30),
             ElevatedButton(
               onPressed: () {
-                game.overlays.remove('levelFailed');
                 game.restartLevel();
               },
               child: const Text('RETRY'),

@@ -16,12 +16,12 @@ class Background extends PositionComponent {
     super.render(canvas);
     
     // Draw sky gradient
-    final skyGradient = LinearGradient(
+    const skyGradient = LinearGradient(
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
       colors: [
-        const Color(0xFF87CEEB), // Sky blue
-        const Color(0xFFE0F6FF), // Lighter blue
+        Color(0xFF87CEEB), // Sky blue
+        Color(0xFFE0F6FF), // Lighter blue
       ],
     );
     

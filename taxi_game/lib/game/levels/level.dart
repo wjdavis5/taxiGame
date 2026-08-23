@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flame/components.dart';
 import '../../models/traffic_pattern.dart';
 
@@ -27,8 +26,8 @@ class GameLevel {
     return GameLevel(
       levelNumber: 1,
       name: 'Test Level',
-      pickupPoints: [Vector2(120, -300)], // Left side
-      dropoffPoints: [Vector2(280, -800)], // Right side, further up
+      pickupPoints: [Vector2(85, -300)], // Left curb
+      dropoffPoints: [Vector2(315, -800)], // Right curb, further up
       coinReward: 50,
       difficulty: LevelDifficulty.easy,
       trafficPattern: TrafficPattern.light,
@@ -41,10 +40,10 @@ class GameLevel {
       levelNumber: json['levelNumber'] as int,
       name: json['name'] as String,
       pickupPoints: (json['pickupPoints'] as List)
-          .map((p) => Vector2(p[0] as double, p[1] as double))
+          .map((p) => Vector2((p[0] as num).toDouble(), (p[1] as num).toDouble()))
           .toList(),
       dropoffPoints: (json['dropoffPoints'] as List)
-          .map((p) => Vector2(p[0] as double, p[1] as double))
+          .map((p) => Vector2((p[0] as num).toDouble(), (p[1] as num).toDouble()))
           .toList(),
       coinReward: json['coinReward'] as int,
       difficulty: LevelDifficulty.values.byName(json['difficulty'] as String),

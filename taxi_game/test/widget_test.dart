@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/main.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
+import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
 void main() {
@@ -32,6 +33,7 @@ void main() {
           ChangeNotifierProvider<GameStateService>.value(value: gameStateService),
           Provider<AudioService>.value(value: AudioService()),
           Provider<StorageService>.value(value: storageService),
+          Provider<LevelLoaderService>.value(value: LevelLoaderService()),
         ],
         child: const TaxiGameApp(),
       ),

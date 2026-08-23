@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
+import 'package:flame/camera.dart';
 import 'package:flame/game.dart';
-import 'package:flame/components.dart';
 import 'package:flame/events.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'components/player_vehicle.dart';
 import 'components/road_segment.dart';
@@ -11,9 +14,22 @@ import 'components/pickup_zone.dart';
 import 'components/dropoff_zone.dart';
 import 'levels/level.dart';
 import '../models/passenger_data.dart';
+import '../services/game_state_service.dart';
+import '../services/level_loader_service.dart';
 
 /// Main game class that manages the entire game loop and components
-class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
+class TaxiGame extends FlameGame
+    with HasCollisionDetection, TapCallbacks, KeyboardEvents {
+  TaxiGame({
+    required this.levelLoader,
+    required this.gameState,
+  }) : super(
+          camera: CameraComponent.withFixedResolution(width: 400, height: 800),
+        );
+
+  final LevelLoaderService levelLoader;
+  final GameStateService gameState;
+
   late PlayerVehicle player;
   late GameLevel currentLevel;
   late TrafficSpawner trafficSpawner;
@@ -24,56 +40,75 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   bool isGameActive = false;
   int currentLevelNumber = 1;
 
+  // The road spans x 100..300 in world coordinates (center 200, width 200).
+  static const double roadCenterX = 200;
+  static const double roadWidth = 200;
+
   // Touch position tracking for steering
   Vector2? _touchPosition;
-  
+
   @override
-  Color backgroundColor() => const Color(0xFF87CEEB); // Sky blue
-  
+  Color backgroundColor() => const Color(0xFF1A1A1A); // Letterbox outside the viewport
+
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    
-    // Add camera
-    camera = CameraComponent.withFixedResolution(
-      width: 400,
-      height: 800,
-    );
-    
-    // Initialize game
-    await _initializeGame();
+
+    // Static sky/scenery behind the scrolling world
+    camera.backdrop.add(Background());
+
+    // If the save points past the last level (all levels beaten),
+    // replay the final level instead of silently falling back.
+    var levelNumber = gameState.currentLevel;
+    if (!await levelLoader.levelExists(levelNumber)) {
+      final total = await levelLoader.getTotalLevels();
+      levelNumber = total > 0 ? total : 1;
+    }
+    await loadLevel(levelNumber);
   }
-  
-  Future<void> _initializeGame() async {
-    // Add background
-    final background = Background();
-    add(background);
 
-    // Create a simple test level
-    currentLevel = GameLevel.createTestLevel();
+  /// Loads the given level, replacing whatever was on screen before.
+  Future<void> loadLevel(int levelNumber) async {
+    isGameActive = false;
+    currentLevelNumber = levelNumber;
+    currentLevel = await levelLoader.loadLevel(levelNumber);
 
-    // Add road
-    final road = RoadSegment(
-      position: Vector2(200, 0),
-      length: 1000,
-    );
-    add(road);
+    // Tear down the previous level, if any.
+    world.removeAll(world.children.toList());
 
-    // Add player vehicle
+    // The player can only drive forward (up), so it must start below every
+    // pickup point. Dropoffs extend upward into negative y.
+    final allPoints = [
+      ...currentLevel.pickupPoints,
+      ...currentLevel.dropoffPoints,
+    ];
+    final lowestPointY =
+        allPoints.map((p) => p.y).fold(0.0, math.max); // largest y
+    final highestPointY =
+        allPoints.map((p) => p.y).fold(0.0, math.min); // smallest y
+    final playerStartY = lowestPointY + 250;
+
+    // Road long enough to cover the whole route with margin on both ends.
+    final roadTop = highestPointY - 900;
+    final roadBottom = playerStartY + 500;
+    world.add(RoadSegment(
+      position: Vector2(roadCenterX, roadTop),
+      length: roadBottom - roadTop,
+    ));
+
     player = PlayerVehicle(
-      position: Vector2(200, 600),
+      startPosition: Vector2(roadCenterX, playerStartY),
     );
-    add(player);
+    world.add(player);
 
-    // Add traffic spawner based on level pattern
+    // Camera: locked horizontally on the road, follows the taxi vertically.
+    camera.viewfinder.position = Vector2(roadCenterX, playerStartY);
+    camera.follow(player, verticalOnly: true);
+
     trafficSpawner = TrafficSpawner(pattern: currentLevel.trafficPattern);
-    add(trafficSpawner);
+    world.add(trafficSpawner);
 
-    // Create passengers from level data
     _createPassengers();
-
-    // Don't follow player - keep camera fixed so player can see ahead
-    // This gives better visibility of oncoming traffic
 
     isGameActive = true;
   }
@@ -98,125 +133,82 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
 
       passengers.add(passenger);
 
-      // Add pickup zone
-      final pickupZone = PickupZone(
+      world.add(PickupZone(
         position: pickupPoint,
         passenger: passenger,
         onPickup: () => _onPassengerPickup(passenger),
-      );
-      add(pickupZone);
+      ));
 
-      // Add dropoff zone
-      final dropoffZone = DropoffZone(
+      world.add(DropoffZone(
         position: dropoffPoint,
         passenger: passenger,
         onDropoff: () => _onPassengerDropoff(passenger),
-      );
-      add(dropoffZone);
-    }
-
-    // Start by navigating to first pickup (optional - can keep manual for now)
-    if (passengers.isNotEmpty) {
-      // Auto-navigate to first pickup point
-      // player.navigateTo(passengers.first.pickupLocation);
-      // For now, keep it manual so player has full control
+      ));
     }
   }
 
   void _onPassengerPickup(PassengerData passenger) {
-    // Update player visual state
     player.hasPassenger = true;
-
-    // Auto-navigate to dropoff location (OPTIONAL - enable for autopilot)
-    // player.navigateTo(passenger.dropoffLocation);
-
-    // Could add pickup sound effect here
-    // audioService.playSound('pickup');
   }
 
   void _onPassengerDropoff(PassengerData passenger) {
     passengersDelivered++;
+    player.hasPassenger =
+        passengers.any((p) => p.isPickedUp && !p.isDelivered);
 
-    // Update player visual state
-    player.hasPassenger = false;
-
-    // Stop autopilot if it was active
-    player.stopNavigation();
-
-    // Could add dropoff sound effect here
-    // audioService.playSound('dropoff');
-
-    // Check if there are more passengers
-    if (passengersDelivered < passengers.length) {
-      // Find next passenger that hasn't been picked up
-      final nextPassenger = passengers.firstWhere(
-        (p) => !p.isPickedUp,
-        orElse: () => passenger,
-      );
-
-      // Auto-navigate to next pickup (OPTIONAL - enable for autopilot)
-      // if (nextPassenger != passenger) {
-      //   player.navigateTo(nextPassenger.pickupLocation);
-      // }
-    } else {
-      // All passengers delivered!
+    if (passengersDelivered >= passengers.length) {
       _completeLevel();
     }
   }
 
   void _completeLevel() {
-    // Level complete!
-    onLevelComplete();
-  }
-  
-  @override
-  void update(double dt) {
-    super.update(dt);
-    
-    if (!isGameActive) return;
-    
-    // Game logic updates here
-  }
-  
-  void restartLevel() {
-    // Reset player position
-    player.reset();
-
-    // Clear and restart traffic
-    trafficSpawner.clear();
-    trafficSpawner.resume();
-
-    // Recreate passengers and zones
-    _createPassengers();
-
-    // Remove any overlays
-    overlays.remove('levelFailed');
-    overlays.remove('levelComplete');
-
-    isGameActive = true;
-  }
-  
-  void onLevelComplete() {
     isGameActive = false;
-    // Show level complete overlay
-    overlays.add('levelComplete');
-  }
-  
-  void onLevelFailed() {
-    isGameActive = false;
-
-    // Pause traffic spawning
+    _freezePlayer();
     trafficSpawner.pause();
 
-    // Show level failed overlay
+    // Award coins and unlock the next level.
+    gameState.completeLevel(currentLevelNumber, currentLevel.coinReward);
+
+    overlays.add('levelComplete');
+  }
+
+  /// Restarts the current level from scratch (after a crash).
+  void restartLevel() {
+    overlays.remove('levelFailed');
+    overlays.remove('levelComplete');
+    loadLevel(currentLevelNumber);
+  }
+
+  /// Advances to the next level. Returns false if there is none.
+  Future<bool> startNextLevel() async {
+    final next = currentLevelNumber + 1;
+    if (!await levelLoader.levelExists(next)) {
+      return false;
+    }
+    overlays.remove('levelComplete');
+    await loadLevel(next);
+    return true;
+  }
+
+  void onLevelFailed() {
+    if (!isGameActive) return;
+    isGameActive = false;
+    _freezePlayer();
+    trafficSpawner.pause();
     overlays.add('levelFailed');
   }
-  
+
+  void _freezePlayer() {
+    _touchPosition = null;
+    player.stopAccelerating();
+    player.setSteering(0);
+  }
+
   void pauseGame() {
     paused = true;
     overlays.add('pauseMenu');
   }
-  
+
   void resumeGame() {
     paused = false;
     overlays.remove('pauseMenu');
@@ -226,7 +218,7 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
   void onTapDown(TapDownEvent event) {
     super.onTapDown(event);
     if (isGameActive) {
-      _touchPosition = event.localPosition;
+      _touchPosition = event.canvasPosition;
       player.startAccelerating();
       _updateSteeringFromTouch();
     }
@@ -248,17 +240,44 @@ class TaxiGame extends FlameGame with HasCollisionDetection, TapCallbacks {
     player.setSteering(0);
   }
 
+  @override
+  KeyEventResult onKeyEvent(
+    KeyEvent event,
+    Set<LogicalKeyboardKey> keysPressed,
+  ) {
+    if (!isGameActive) return KeyEventResult.ignored;
+
+    final accelerate = keysPressed.contains(LogicalKeyboardKey.arrowUp) ||
+        keysPressed.contains(LogicalKeyboardKey.keyW) ||
+        keysPressed.contains(LogicalKeyboardKey.space);
+    final left = keysPressed.contains(LogicalKeyboardKey.arrowLeft) ||
+        keysPressed.contains(LogicalKeyboardKey.keyA);
+    final right = keysPressed.contains(LogicalKeyboardKey.arrowRight) ||
+        keysPressed.contains(LogicalKeyboardKey.keyD);
+
+    // Keyboard input only overrides "stop" when no touch is active, so
+    // touch and keyboard can be used together.
+    if (accelerate) {
+      player.startAccelerating();
+    } else if (_touchPosition == null) {
+      player.stopAccelerating();
+    }
+    if (left != right) {
+      player.setSteering(left ? -1 : 1);
+    } else if (_touchPosition == null) {
+      player.setSteering(0);
+    }
+    return KeyEventResult.handled;
+  }
+
   void _updateSteeringFromTouch() {
     if (_touchPosition == null || !isGameActive) return;
 
-    // Calculate steering based on touch position relative to screen center
-    final screenCenter = size.x / 2;
-    final touchX = _touchPosition!.x;
-    final deltaX = touchX - screenCenter;
-
-    // Convert to steering input (-1 to 1)
-    // Divide by half screen width to normalize
-    final steeringInput = (deltaX / (size.x / 2)).clamp(-1.0, 1.0);
+    // Steer based on touch position relative to the screen center:
+    // left half steers left, right half steers right.
+    final screenCenter = canvasSize.x / 2;
+    final deltaX = _touchPosition!.x - screenCenter;
+    final steeringInput = (deltaX / (canvasSize.x / 2)).clamp(-1.0, 1.0);
     player.setSteering(steeringInput);
   }
 }

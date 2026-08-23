@@ -33,9 +33,10 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
   Future<void> onLoad() async {
     await super.onLoad();
 
-    // Add collision detection
+    // Add collision detection, centered on the visible circle
     add(CircleHitbox(
       radius: detectionRadius,
+      position: Vector2.all(baseRadius),
       anchor: Anchor.center,
     ));
   }
@@ -60,20 +61,23 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
   void render(Canvas canvas) {
     if (_isCompleted) return;
 
-    super.render(canvas);
+    // Skip CircleComponent's default paint and draw centered on the
+    // component (local origin is the top-left corner, not the center).
+    canvas.save();
+    canvas.translate(size.x / 2, size.y / 2);
 
     final color = _isActive ? Colors.blue : Colors.grey;
     final opacity = _isActive ? 0.6 : 0.3;
 
     // Draw outer glow
     final glowPaint = Paint()
-      ..color = color.withOpacity(opacity * 0.5)
+      ..color = color.withValues(alpha: opacity * 0.5)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(Offset.zero, radius + 10, glowPaint);
 
     // Draw main circle
     final paint = Paint()
-      ..color = color.withOpacity(opacity)
+      ..color = color.withValues(alpha: opacity)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(Offset.zero, radius, paint);
 
@@ -86,6 +90,8 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
 
     // Draw flag icon
     _drawFlagIcon(canvas, color);
+
+    canvas.restore();
   }
 
   void _drawFlagIcon(Canvas canvas, Color color) {

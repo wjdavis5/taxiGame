@@ -39,23 +39,13 @@ flutter:
     # Vehicle images
     - assets/images/vehicles/player/
     - assets/images/vehicles/traffic/
-    
-    # Environment
-    - assets/images/environment/buildings/
-    - assets/images/environment/roads/
-    - assets/images/environment/scenery/
-    - assets/images/environment/sky/
-    
+
     # UI
     - assets/images/ui/icons/
-    - assets/images/ui/markers/
-    - assets/images/ui/backgrounds/
-    
+
     # Audio - Sound Effects
-    - assets/audio/sfx/vehicle/
-    - assets/audio/sfx/ambient/
     - assets/audio/sfx/ui/
-    
+
     # Audio - Music
     - assets/audio/music/
 

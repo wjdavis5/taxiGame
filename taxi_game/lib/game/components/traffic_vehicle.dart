@@ -42,7 +42,7 @@ class TrafficVehicle extends PositionComponent
     Random? random,
   }) {
     final rng = random ?? Random();
-    final types = TrafficVehicleType.values;
+    const types = TrafficVehicleType.values;
     final randomType = types[rng.nextInt(types.length)];
 
     return TrafficVehicle(
@@ -74,6 +74,12 @@ class TrafficVehicle extends PositionComponent
     if (path.length > 1) {
       _updateVelocityTowardsWaypoint();
     }
+
+    // The sprite is drawn facing up; oncoming vehicles (moving down the
+    // screen) face the player.
+    if (velocity.y > 0) {
+      angle = pi;
+    }
   }
 
   @override
@@ -95,6 +101,11 @@ class TrafficVehicle extends PositionComponent
 
       // Update position
       position += velocity * dt;
+    } else {
+      // Path exhausted - despawn instead of idling forever at the path end
+      shouldRemove = true;
+      removeFromParent();
+      return;
     }
 
     // Check if vehicle is off screen (below player view)
@@ -127,7 +138,7 @@ class TrafficVehicle extends PositionComponent
 
     // Draw windows (darker)
     final windowPaint = Paint()
-      ..color = Colors.black.withOpacity(0.3)
+      ..color = Colors.black.withValues(alpha: 0.3)
       ..style = PaintingStyle.fill;
 
     // Front window
@@ -150,10 +161,10 @@ class TrafficVehicle extends PositionComponent
       ..color = Colors.black
       ..style = PaintingStyle.fill;
 
-    final wheelRadius = 3.0;
+    const wheelRadius = 3.0;
 
     // Left wheels
-    canvas.drawCircle(Offset(6, 8), wheelRadius, wheelPaint);
+    canvas.drawCircle(const Offset(6, 8), wheelRadius, wheelPaint);
     canvas.drawCircle(Offset(6, vehicleSize.y - 8), wheelRadius, wheelPaint);
 
     // Right wheels

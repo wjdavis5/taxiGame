@@ -52,10 +52,11 @@ class GameStateService extends ChangeNotifier {
     return false;
   }
   
-  /// Complete current level and unlock next
-  void completeLevel(int coinsEarned) {
+  /// Complete a level: award coins and, if it was the player's furthest
+  /// level, unlock the next one. Replaying an old level only earns coins.
+  void completeLevel(int levelNumber, int coinsEarned) {
     addCoins(coinsEarned);
-    if (_saveData.currentLevel == currentLevel) {
+    if (levelNumber == _saveData.currentLevel) {
       _saveData.currentLevel++;
       notifyListeners();
       save();

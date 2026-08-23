@@ -24,11 +24,19 @@ class RoadSegment extends PositionComponent {
   void render(Canvas canvas) {
     super.render(canvas);
     
+    // Draw sidewalks on both sides (where passengers wait)
+    final sidewalkPaint = Paint()
+      ..color = const Color(0xFFBDBDBD)
+      ..style = PaintingStyle.fill;
+
+    canvas.drawRect(Rect.fromLTWH(-30, 0, 30, size.y), sidewalkPaint);
+    canvas.drawRect(Rect.fromLTWH(size.x, 0, 30, size.y), sidewalkPaint);
+
     // Draw road surface (dark gray)
     final roadPaint = Paint()
       ..color = const Color(0xFF404040)
       ..style = PaintingStyle.fill;
-    
+
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.x, size.y),
       roadPaint,
@@ -57,7 +65,7 @@ class RoadSegment extends PositionComponent {
       ..style = PaintingStyle.stroke;
     
     canvas.drawLine(
-      Offset(0, 0),
+      const Offset(0, 0),
       Offset(0, size.y),
       edgePaint,
     );

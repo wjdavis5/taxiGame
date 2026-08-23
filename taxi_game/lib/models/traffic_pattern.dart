@@ -13,7 +13,7 @@ class TrafficPattern {
   });
 
   /// Light traffic - easy difficulty
-  static TrafficPattern get light => TrafficPattern(
+  static TrafficPattern get light => const TrafficPattern(
     name: 'light',
     spawnInterval: 4.0, // Increased from 3.0 - spawn less often
     lanes: [
@@ -21,17 +21,19 @@ class TrafficPattern {
         laneX: 140, // Left lane - moved more to left
         speedRange: SpeedRange(min: 80, max: 120), // Slower traffic
         spawnProbability: 0.3, // Reduced from 0.5 - spawn less
+        oncoming: true,
       ),
       TrafficLaneConfig(
         laneX: 260, // Right lane - moved more to right
         speedRange: SpeedRange(min: 80, max: 120), // Slower traffic
         spawnProbability: 0.2, // Even less in right lane to avoid blocking
+        oncoming: false,
       ),
     ],
   );
 
   /// Medium traffic - moderate difficulty
-  static TrafficPattern get medium => TrafficPattern(
+  static TrafficPattern get medium => const TrafficPattern(
     name: 'medium',
     spawnInterval: 2.0,
     lanes: [
@@ -39,17 +41,19 @@ class TrafficPattern {
         laneX: 160,
         speedRange: SpeedRange(min: 120, max: 180),
         spawnProbability: 0.7,
+        oncoming: true,
       ),
       TrafficLaneConfig(
         laneX: 240,
         speedRange: SpeedRange(min: 120, max: 180),
         spawnProbability: 0.7,
+        oncoming: false,
       ),
     ],
   );
 
   /// Heavy traffic - hard difficulty
-  static TrafficPattern get heavy => TrafficPattern(
+  static TrafficPattern get heavy => const TrafficPattern(
     name: 'heavy',
     spawnInterval: 1.5,
     lanes: [
@@ -57,11 +61,13 @@ class TrafficPattern {
         laneX: 160,
         speedRange: SpeedRange(min: 150, max: 220),
         spawnProbability: 0.85,
+        oncoming: true,
       ),
       TrafficLaneConfig(
         laneX: 240,
         speedRange: SpeedRange(min: 150, max: 220),
         spawnProbability: 0.85,
+        oncoming: false,
       ),
     ],
   );
@@ -91,17 +97,26 @@ class TrafficLaneConfig {
   final SpeedRange speedRange;
   final double spawnProbability; // 0.0 to 1.0
 
+  /// Whether this lane's traffic drives toward the player (oncoming) or in
+  /// the same direction (slower, to be overtaken).
+  final bool oncoming;
+
   const TrafficLaneConfig({
     required this.laneX,
     required this.speedRange,
     required this.spawnProbability,
+    required this.oncoming,
   });
 
   factory TrafficLaneConfig.fromJson(Map<String, dynamic> json) {
+    final laneX = (json['laneX'] as num).toDouble();
     return TrafficLaneConfig(
-      laneX: (json['laneX'] as num).toDouble(),
+      laneX: laneX,
       speedRange: SpeedRange.fromJson(json['speedRange']),
       spawnProbability: (json['spawnProbability'] as num).toDouble(),
+      // Default: left half of the road (and the center line) is oncoming,
+      // the right lane flows with the player.
+      oncoming: json['oncoming'] as bool? ?? laneX <= 200,
     );
   }
 
@@ -110,6 +125,7 @@ class TrafficLaneConfig {
       'laneX': laneX,
       'speedRange': speedRange.toJson(),
       'spawnProbability': spawnProbability,
+      'oncoming': oncoming,
     };
   }
 }

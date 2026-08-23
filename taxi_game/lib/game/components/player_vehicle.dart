@@ -23,12 +23,15 @@ class PlayerVehicle extends PositionComponent
   // Pathfinding
   final PathfindingSystem pathfinding = PathfindingSystem();
   bool useAutopilot = false; // Toggle between manual and auto navigation
-  
+
   // Visual properties
   final Color vehicleColor = Colors.yellow;
   final Vector2 vehicleSize = Vector2(40, 60);
-  
-  PlayerVehicle({required Vector2 position}) : super(position: position);
+
+  final Vector2 startPosition;
+
+  PlayerVehicle({required this.startPosition})
+      : super(position: startPosition.clone());
   
   @override
   Future<void> onLoad() async {
@@ -62,18 +65,17 @@ class PlayerVehicle extends PositionComponent
     // Update position
     position += velocity * dt;
 
-    // Keep within bounds (horizontally)
-    if (position.x < vehicleSize.x / 2) {
-      position.x = vehicleSize.x / 2;
-    } else if (position.x > game.size.x - vehicleSize.x / 2) {
-      position.x = game.size.x - vehicleSize.x / 2;
-    }
+    // Keep the taxi on the road (world x 100..300)
+    final minX = TaxiGame.roadCenterX - TaxiGame.roadWidth / 2 + vehicleSize.x / 2;
+    final maxX = TaxiGame.roadCenterX + TaxiGame.roadWidth / 2 - vehicleSize.x / 2;
+    position.x = position.x.clamp(minX, maxX);
   }
 
   void _updateManualMovement(double dt) {
     // Forward/backward movement
     if (isAccelerating) {
-      velocity.y = -maxSpeed; // Move upward (forward in game)
+      // Ramp up gradually (spec: ~0.5s from stop to full speed)
+      velocity.y = (velocity.y - acceleration * dt).clamp(-maxSpeed, 0.0);
     } else {
       // Decelerate quickly
       if (velocity.y < 0) {
@@ -135,7 +137,7 @@ class PlayerVehicle extends PositionComponent
     
     // Draw windows (darker rectangles)
     final windowPaint = Paint()
-      ..color = Colors.black.withOpacity(0.3)
+      ..color = Colors.black.withValues(alpha: 0.3)
       ..style = PaintingStyle.fill;
     
     // Front window
@@ -156,7 +158,7 @@ class PlayerVehicle extends PositionComponent
       ..style = PaintingStyle.fill;
     
     // Left wheels
-    canvas.drawCircle(Offset(8, 10), 4, wheelPaint);
+    canvas.drawCircle(const Offset(8, 10), 4, wheelPaint);
     canvas.drawCircle(Offset(8, vehicleSize.y - 10), 4, wheelPaint);
     
     // Right wheels
@@ -177,7 +179,7 @@ class PlayerVehicle extends PositionComponent
   }
 
   void reset() {
-    position = Vector2(200, 600);
+    position = startPosition.clone();
     velocity = Vector2.zero();
     isAccelerating = false;
     hasPassenger = false;

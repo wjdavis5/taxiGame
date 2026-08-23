@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../game/levels/level.dart';
 
@@ -28,8 +29,8 @@ class LevelLoaderService {
       return level;
     } catch (e) {
       // If level file doesn't exist, return a default test level
-      print('Error loading level $levelNumber: $e');
-      print('Falling back to test level');
+      debugPrint('Error loading level $levelNumber: $e');
+      debugPrint('Falling back to test level');
       return GameLevel.createTestLevel();
     }
   }

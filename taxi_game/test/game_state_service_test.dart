@@ -39,6 +39,21 @@ void main() {
     expect(gameStateService.unlockedVehicles, contains('sport_taxi'));
   });
 
+  test('completeLevel awards coins and unlocks the next level', () {
+    gameStateService.completeLevel(1, 50);
+
+    expect(gameStateService.totalCoins, 50);
+    expect(gameStateService.currentLevel, 2);
+  });
+
+  test('replaying an old level earns coins but does not re-advance', () {
+    gameStateService.completeLevel(1, 50);
+    gameStateService.completeLevel(1, 50);
+
+    expect(gameStateService.totalCoins, 100);
+    expect(gameStateService.currentLevel, 2);
+  });
+
   test('toggle settings flips the flags', () {
     gameStateService.toggleSound();
     gameStateService.toggleMusic();

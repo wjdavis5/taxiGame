@@ -43,19 +43,16 @@ Pick Me Up 3D is a casual taxi simulation game featuring:
 
 ## Current Status
 
-**Phase 1: Project Setup & Core Architecture** ✅
-- Project structure created
-- Core game files implemented
-- Basic game loop established
-- Service layer implemented
-- UI screens created
-- Planning documentation complete
+**Playable MVP** — the full game loop works end to end:
+- 10 JSON levels load and are played in sequence (`assets/levels/`)
+- Camera follows the taxi up the road; road length is sized per level
+- Traffic spawns in left/center/right lanes with per-level patterns
+- Pickup → dropoff → level complete → coins awarded and saved
+- Crash → retry restarts the level cleanly; pause works from the HUD
 
-**Next Phase: Core Gameplay Mechanics**
-- Implement full tap-hold-release control
-- Add collision detection
-- Create pickup/dropoff system
-- Build first playable level
+**Not yet done:** sprite/audio assets are on disk but unused (everything is
+canvas-drawn and silent), no garage/settings screens, no autopilot
+(pathfinding system exists but is disabled by design).
 
 ## Technology Stack
 

@@ -32,9 +32,10 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
   Future<void> onLoad() async {
     await super.onLoad();
 
-    // Add collision detection
+    // Add collision detection, centered on the visible circle
     add(CircleHitbox(
       radius: detectionRadius,
+      position: Vector2.all(baseRadius),
       anchor: Anchor.center,
     ));
   }
@@ -54,17 +55,20 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
   void render(Canvas canvas) {
     if (_isPickedUp) return;
 
-    super.render(canvas);
+    // Skip CircleComponent's default paint and draw centered on the
+    // component (local origin is the top-left corner, not the center).
+    canvas.save();
+    canvas.translate(size.x / 2, size.y / 2);
 
     // Draw outer glow
     final glowPaint = Paint()
-      ..color = Colors.green.withOpacity(0.3)
+      ..color = Colors.green.withValues(alpha: 0.3)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(Offset.zero, radius + 10, glowPaint);
 
     // Draw main circle
     final paint = Paint()
-      ..color = Colors.green.withOpacity(0.6)
+      ..color = Colors.green.withValues(alpha: 0.6)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(Offset.zero, radius, paint);
 
@@ -77,6 +81,8 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
 
     // Draw passenger icon (simple person shape)
     _drawPassengerIcon(canvas);
+
+    canvas.restore();
   }
 
   void _drawPassengerIcon(Canvas canvas) {
