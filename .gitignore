@@ -57,3 +57,7 @@ __azurite_db_blob_extent__.json
 *.p12
 *.mobileprovision
 *.p8
+
+# Local credentials (App Store Connect key IDs, etc.)
+.env
+.env.*
