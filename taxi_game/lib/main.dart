@@ -8,14 +8,29 @@ import 'services/storage_service.dart';
 import 'services/level_loader_service.dart';
 import 'ui/screens/main_menu_screen.dart';
 
+/// The orientations this app supports.
+///
+/// `ios/Runner/Info.plist` declares the same set under
+/// `UISupportedInterfaceOrientations` and `UISupportedInterfaceOrientations~ipad`.
+/// The two must stay in sync: a declared-but-unreachable orientation is the
+/// first thing a reviewer finds by rotating the device.
+const supportedOrientations = <DeviceOrientation>[
+  DeviceOrientation.portraitUp,
+  DeviceOrientation.portraitDown,
+];
+
+/// Locks the app to [supportedOrientations].
+///
+/// Extracted from [main] so it can be exercised without booting the service
+/// graph.
+Future<void> lockOrientation() {
+  return SystemChrome.setPreferredOrientations(supportedOrientations);
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Set preferred orientations (portrait mode for mobile)
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
+
+  await lockOrientation();
   
   // Initialize services
   final storageService = StorageService();
