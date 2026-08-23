@@ -26,6 +26,7 @@ platform :ios do
 
     deliver(
       api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
       app_version: version,
       build_number: build_number,
       submit_for_review: true,

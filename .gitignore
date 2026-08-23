@@ -50,3 +50,10 @@ app.*.map.json
 /tmp/
 __azurite_db_blob__.json
 __azurite_db_blob_extent__.json
+
+# Code-signing material. Certificates, keys, and profiles never belong in the
+# repo - CI gets them from GitHub secrets (see .github/workflows/ios-release.yml).
+*.cer
+*.p12
+*.mobileprovision
+*.p8
