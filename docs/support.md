@@ -35,7 +35,7 @@ Always. Cab Hustle makes no network requests at all.
 Not in this version. Audio is planned for a future release.
 
 **Which devices are supported?**
-iPhone and iPad running iOS 13 or later. The game is portrait-only.
+iPhone running iOS 15 or later. The game is portrait-only and iPhone-only.
 
 ## Privacy
 

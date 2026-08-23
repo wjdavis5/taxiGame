@@ -11,9 +11,13 @@ import 'ui/screens/main_menu_screen.dart';
 /// The orientations this app supports.
 ///
 /// `ios/Runner/Info.plist` declares the same set under
-/// `UISupportedInterfaceOrientations` and `UISupportedInterfaceOrientations~ipad`.
-/// The two must stay in sync: a declared-but-unreachable orientation is the
-/// first thing a reviewer finds by rotating the device.
+/// `UISupportedInterfaceOrientations`. The two must stay in sync: a
+/// declared-but-unreachable orientation is the first thing a reviewer finds by
+/// rotating the device.
+///
+/// The app ships iPhone-only. Declaring iPad support would require all four
+/// orientations and resizable-window support, since iPadOS 26 removed the
+/// multitasking opt-out.
 const supportedOrientations = <DeviceOrientation>[
   DeviceOrientation.portraitUp,
   DeviceOrientation.portraitDown,
