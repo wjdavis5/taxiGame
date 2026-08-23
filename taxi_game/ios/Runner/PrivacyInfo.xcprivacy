@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+		Cab Hustle collects nothing and transmits nothing.
+
+		The app makes no network calls: no analytics, no advertising, no crash
+		reporting, no third-party SDKs beyond the Flutter plugins below. Game
+		progress is written to UserDefaults on the device via shared_preferences
+		and never leaves it.
+
+		Required-reason API usage is declared by the plugins that make the calls.
+		shared_preferences ships its own PrivacyInfo.xcprivacy covering its
+		UserDefaults access (CA92.1), so this app-level manifest does not restate
+		it. Keep NSPrivacyCollectedDataTypes consistent with the App Privacy
+		answers in App Store Connect.
+	-->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>
