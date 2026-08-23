@@ -6,7 +6,7 @@
 // into one screen, chosen at build time:
 //
 //   flutter run -d <simulator-id> -t tool/screenshot_entry.dart \
-//     --dart-define=SHOT=menu     # or: game, credits
+//     --dart-define=SHOT=menu     # or: game, credits, settings
 //
 // Then capture with `xcrun simctl io <simulator-id> screenshot out.png`.
 // `tool/capture_screenshots.sh` wraps the whole sequence.
@@ -24,6 +24,7 @@ import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/credits_screen.dart';
 import 'package:taxi_game/ui/screens/game_screen.dart';
 import 'package:taxi_game/ui/screens/main_menu_screen.dart';
+import 'package:taxi_game/ui/screens/settings_screen.dart';
 
 /// Which screen to launch into. Mirrors the production startup path so the
 /// captures show the real app rather than a mock.
@@ -68,6 +69,7 @@ class _ScreenshotApp extends StatelessWidget {
   Widget get _home => switch (shot) {
         'game' => const GameScreen(),
         'credits' => const CreditsScreen(),
+        'settings' => const SettingsScreen(),
         _ => const MainMenuScreen(),
       };
 
