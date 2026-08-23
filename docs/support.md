@@ -6,7 +6,7 @@ title: Support
 
 ## Contact
 
-Email: **william.j.davis5@gmail.com**
+Email: **cabhustle@wjd.io**
 
 Bug reports and feature requests are also welcome on GitHub:
 <https://github.com/wjdavis5/taxiGame/issues>

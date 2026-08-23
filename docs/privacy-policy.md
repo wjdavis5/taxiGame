@@ -48,6 +48,6 @@ be updated before that version ships, and the change will be described here.
 
 ## Contact
 
-Questions about this policy: **william.j.davis5@gmail.com**
+Questions about this policy: **cabhustle@wjd.io**
 
 Source and issue tracker: <https://github.com/wjdavis5/taxiGame>
