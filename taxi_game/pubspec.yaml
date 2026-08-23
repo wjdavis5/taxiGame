@@ -12,7 +12,6 @@ dependencies:
   
   # Game engine
   flame: ^1.11.0
-  flame_audio: ^2.1.0
   
   # UI
   flutter_svg: ^2.0.9
@@ -42,12 +41,6 @@ flutter:
 
     # UI
     - assets/images/ui/icons/
-
-    # Audio - Sound Effects
-    - assets/audio/sfx/ui/
-
-    # Audio - Music
-    - assets/audio/music/
 
     # Level data
     - assets/levels/

@@ -1,87 +1,98 @@
-# Asset Licenses for Taxi Game
+# Asset Licenses for Cab Hustle
 
-## Visual Assets
-
-### Vehicles, UI, Environment (Kenney.nl)
-Source: https://kenney.nl
-Artist: Kenney Vleugels
-License: CC0 1.0 Universal (Public Domain)
-Files: All PNG files in assets/images/
-Note: No attribution required, but appreciated
-
-### Additional Vehicles (OpenGameArt - Optional)
-Source: https://opengameart.org/content/free-top-down-car-sprites-by-unlucky-studio
-Artist: Unlucky Studio
-License: Royalty-free (attribution appreciated)
-Files: Specific vehicle sprites if used
-Attribution: "Vehicle sprites by Unlucky Studio (opengameart.org)"
-
-## Audio Assets
-
-### Background Music (Incompetech)
-Source: https://incompetech.com
-Composer: Kevin MacLeod
-License: CC-BY 4.0 (http://creativecommons.org/licenses/by/4.0/)
-Files: 
-  - menu_music.mp3 (Track: Cipher - RECOMMENDED, or your chosen track)
-Attribution Required:
-  "Music by Kevin MacLeod (incompetech.com)
-   Licensed under Creative Commons: By Attribution 4.0 License
-   Track: Cipher" (or your chosen track name)
-
-### Sound Effects (Multiple Sources)
-
-#### Sonniss GDC Bundle (if used)
-Source: https://sonniss.com/gameaudiogdc/
-License: 100% Royalty-Free, Commercial Use, No Attribution Required
-Files: [List specific SFX files when added]
-
-#### Freesound.org (if used)
-Individual sound attributions:
-[Add as you download sounds - include artist name, Freesound ID, and license type]
-
-#### JSFXR Generated (if used)
-Source: https://sfxr.me
-License: Royalty-free (generated sounds)
-Files: [List generated sounds when added]
+Every file shipped in this app's bundle is listed below with its source and
+license. Audio assets were removed from the bundle (see "Removed assets"), so
+no attribution-required asset currently ships.
 
 ---
 
-## Instructions
+## Visual Assets
 
-When you add assets to the project:
-1. Update this file with the specific asset names
-2. Include the source, artist, and license
-3. Add any required attribution text
-4. Keep this file updated as you add more assets
+### Vehicle sprites and UI icons (Kenney.nl)
 
-## In-Game Credits
+Source: https://kenney.nl
+Artist: Kenney Vleugels
+License: CC0 1.0 Universal (Public Domain Dedication)
+Attribution: Not required. A courtesy credit is shown in the app's Credits screen.
 
-Copy this section to your in-game credits screen:
+Player vehicles — `assets/images/vehicles/player/`:
+  compact_red.png
+  luxury_white.png
+  minivan_gray.png
+  sedan_blue.png
+  sports_black.png
+  suv_green.png
+  taxi_yellow.png
 
-CREDITS
+Traffic vehicles — `assets/images/vehicles/traffic/`:
+  bus_yellow.png
+  compact_white.png
+  motorcycle_black.png
+  sedan_gray.png
+  sports_red.png
+  suv_blue.png
+  truck_red.png
+  van_white.png
 
-GAME DEVELOPMENT
-[Your Name/Studio]
+UI icons — `assets/images/ui/icons/`:
+  back.png
+  checkmark.png
+  coin.png
+  lock.png
+  pause.png
+  play.png
+  settings.png
+  star.png
 
-VISUAL ASSETS
-Kenney Vleugels (kenney.nl)
-CC0 License - Public Domain
+CC0 permits commercial use, modification, and redistribution with no
+attribution requirement and no share-alike obligation.
 
-MUSIC
-Kevin MacLeod (incompetech.com)
-Licensed under Creative Commons: By Attribution 4.0
-http://creativecommons.org/licenses/by/4.0/
+---
 
-Tracks Used:
-- [Track Name 1]
-- [Track Name 2]
-- [Track Name 3]
+## Application Assets
 
-SOUND EFFECTS
-Sonniss GameAudioGDC (sonniss.com)
-Freesound.org community
-[Individual artist credits if using CC-BY sounds]
+### App icon and launch image
 
-SPECIAL THANKS
-The open-source game development community
+Source: Generated for this project.
+License: Owned by the project. No third-party rights.
+Files:
+  ios/Runner/Assets.xcassets/AppIcon.appiconset/*.png
+  ios/Runner/Assets.xcassets/LaunchImage.imageset/*.png
+
+### Level data
+
+Source: Authored for this project.
+License: Owned by the project.
+Files: `assets/levels/level_001.json` through `level_010.json`
+
+---
+
+## Removed assets
+
+The following were removed from the bundle because `AudioService` is a stub —
+no audio is played anywhere in the app, so these shipped as dead weight while
+carrying live license obligations.
+
+  assets/audio/music/menu_music.mp3   — Kevin MacLeod / Incompetech, CC-BY 4.0.
+                                        Required attribution; 8.7 MB.
+  assets/audio/sfx/ui/button_click.wav   — provenance never established.
+  assets/audio/sfx/ui/coin_collect.wav   — provenance never established.
+  assets/audio/sfx/ui/level_complete.wav — provenance never established.
+
+The `flame_audio` dependency was removed alongside them; nothing imported it.
+
+If audio is reintroduced, each file must be re-listed above with a confirmed
+source and license before it ships, and any attribution-required asset must be
+credited in the app's Credits screen. A CC-BY asset obligates attribution on
+distribution, not merely on playback — bundling one without credit is a license
+violation even if it never plays.
+
+---
+
+## Maintaining this file
+
+When an asset is added to the bundle:
+1. Add it under its source heading with the exact filename.
+2. Record source URL, artist, and license.
+3. If the license requires attribution, add the credit to the Credits screen.
+4. Never ship an asset whose provenance cannot be established.
