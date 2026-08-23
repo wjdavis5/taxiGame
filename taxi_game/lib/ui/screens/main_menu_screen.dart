@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/game_state_service.dart';
+import 'credits_screen.dart';
 import 'game_screen.dart';
 
 /// Main menu screen - entry point of the app
@@ -22,103 +23,130 @@ class MainMenuScreen extends StatelessWidget {
           ),
         ),
         child: SafeArea(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Game Title
-              const Padding(
-                padding: EdgeInsets.all(20.0),
-                child: Text(
-                  'TAXI GAME',
-                  style: TextStyle(
-                    fontSize: 48,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                    shadows: [
-                      Shadow(
-                        offset: Offset(2, 2),
-                        blurRadius: 4,
-                        color: Colors.black45,
-                      ),
-                    ],
-                  ),
-                ),
+          // Scrolls so the menu survives short viewports — five buttons plus the
+          // title and stats overflow a fixed Column on small phones.
+          child: SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: MediaQuery.of(context).size.height -
+                    MediaQuery.of(context).padding.vertical,
               ),
-              
-              const SizedBox(height: 40),
-              
-              // Game stats
-              Consumer<GameStateService>(
-                builder: (context, gameState, child) {
-                  return Column(
-                    children: [
-                      _buildStatRow(
-                        Icons.star,
-                        'Level ${gameState.currentLevel}',
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // Game Title
+                  const Padding(
+                    padding: EdgeInsets.all(20.0),
+                    child: Text(
+                      'CAB HUSTLE',
+                      style: TextStyle(
+                        fontSize: 48,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        shadows: [
+                          Shadow(
+                            offset: Offset(2, 2),
+                            blurRadius: 4,
+                            color: Colors.black45,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 10),
-                      _buildStatRow(
-                        Icons.monetization_on,
-                        '${gameState.totalCoins} Coins',
-                      ),
-                    ],
-                  );
-                },
-              ),
-              
-              const SizedBox(height: 60),
-              
-              // Play Button
-              _MenuButton(
-                buttonKey: const Key('play_button'),
-                icon: Icons.play_arrow,
-                label: 'PLAY',
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const GameScreen(),
                     ),
-                  );
-                },
+                  ),
+
+                  const SizedBox(height: 40),
+
+                  // Game stats
+                  Consumer<GameStateService>(
+                    builder: (context, gameState, child) {
+                      return Column(
+                        children: [
+                          _buildStatRow(
+                            Icons.star,
+                            'Level ${gameState.currentLevel}',
+                          ),
+                          const SizedBox(height: 10),
+                          _buildStatRow(
+                            Icons.monetization_on,
+                            '${gameState.totalCoins} Coins',
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 60),
+
+                  // Play Button
+                  _MenuButton(
+                    buttonKey: const Key('play_button'),
+                    icon: Icons.play_arrow,
+                    label: 'PLAY',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const GameScreen(),
+                        ),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Garage Button
+                  _MenuButton(
+                    buttonKey: const Key('garage_button'),
+                    icon: Icons.directions_car,
+                    label: 'GARAGE',
+                    onPressed: () {
+                      // TODO: Navigate to garage screen
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Garage coming soon!')),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Settings Button
+                  _MenuButton(
+                    buttonKey: const Key('settings_button'),
+                    icon: Icons.settings,
+                    label: 'SETTINGS',
+                    onPressed: () {
+                      // TODO: Navigate to settings screen
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Settings coming soon!')),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Credits Button
+                  _MenuButton(
+                    buttonKey: const Key('credits_button'),
+                    icon: Icons.info_outline,
+                    label: 'CREDITS',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const CreditsScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                ],
               ),
-              
-              const SizedBox(height: 20),
-              
-              // Garage Button
-              _MenuButton(
-                buttonKey: const Key('garage_button'),
-                icon: Icons.directions_car,
-                label: 'GARAGE',
-                onPressed: () {
-                  // TODO: Navigate to garage screen
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Garage coming soon!')),
-                  );
-                },
-              ),
-              
-              const SizedBox(height: 20),
-              
-              // Settings Button
-              _MenuButton(
-                buttonKey: const Key('settings_button'),
-                icon: Icons.settings,
-                label: 'SETTINGS',
-                onPressed: () {
-                  // TODO: Navigate to settings screen
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Settings coming soon!')),
-                  );
-                },
-              ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
-  
+
   Widget _buildStatRow(IconData icon, String text) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -143,7 +171,7 @@ class _MenuButton extends StatelessWidget {
   final String label;
   final VoidCallback onPressed;
   final Key? buttonKey;
-  
+
   const _MenuButton({
     required this.icon,
     required this.label,

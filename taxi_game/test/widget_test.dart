@@ -41,6 +41,6 @@ void main() {
 
     await tester.pump();
 
-    expect(find.text('TAXI GAME'), findsOneWidget);
+    expect(find.text('CAB HUSTLE'), findsOneWidget);
   });
 }

@@ -39,7 +39,7 @@ void main() {
 
     expect(find.text('Level 1'), findsOneWidget);
     expect(find.text('75 Coins'), findsOneWidget);
-    expect(find.text('TAXI GAME'), findsOneWidget);
+    expect(find.text('CAB HUSTLE'), findsOneWidget);
   });
 
   testWidgets('play button is present and enabled', (tester) async {
