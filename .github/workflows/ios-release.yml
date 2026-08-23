@@ -236,8 +236,7 @@ jobs:
             -exportArchive \
             -archivePath build/ios/archive/Runner.xcarchive \
             -exportOptionsPlist ios/ExportOptions-ci.plist \
-            -exportPath build/ios/ipa \
-            -keychain "$SIGNING_KEYCHAIN"
+            -exportPath build/ios/ipa
 
           # The archive was unsigned, so confirm the export actually applied the
           # distribution identity rather than producing an unsigned .ipa.
