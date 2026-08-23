@@ -1,0 +1,94 @@
+# Submission lane for the iOS release workflow.
+#
+# Only submission lives here. Building, signing, and the TestFlight upload are
+# done by xcodebuild and altool in .github/workflows/ios-release.yml — fastlane
+# is used for the one job those tools cannot do, which is creating an App Store
+# version and putting it in front of review.
+
+default_platform(:ios)
+
+APP_IDENTIFIER = "com.wjdavis5.taxigame".freeze
+
+platform :ios do
+  desc "Attach the current build to its App Store version and submit for review"
+  lane :submit do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_PRIVATE_KEY"),
+      in_house: false,
+    )
+
+    version = ENV.fetch("DELIVER_APP_VERSION")
+    build_number = ENV.fetch("DELIVER_BUILD_NUMBER")
+
+    wait_until_processed(api_key, version, build_number)
+
+    deliver(
+      api_key: api_key,
+      app_version: version,
+      build_number: build_number,
+      submit_for_review: true,
+
+      # Release manually once approved, so shipping to users stays a decision
+      # rather than a side effect of a merge.
+      automatic_release: false,
+
+      # Listing copy and screenshots are maintained in App Store Connect. This
+      # lane submits what is already there and never overwrites it.
+      skip_metadata: true,
+      skip_screenshots: true,
+      skip_binary_upload: true,
+
+      # Non-interactive: no HTML preview, no confirmation prompt.
+      force: true,
+      run_precheck_before_submit: false,
+
+      submission_information: {
+        add_id_info_uses_idfa: false,
+        export_compliance_uses_encryption: false,
+        content_rights_contains_third_party_content: false,
+      },
+    )
+  end
+end
+
+# Apple processes an upload asynchronously and a build cannot be attached to a
+# version until that finishes. Poll rather than guess at a fixed sleep:
+# processing is usually a few minutes but is not bounded by anything we control.
+def wait_until_processed(api_key, version, build_number, timeout_minutes: 45)
+  deadline = Time.now + (timeout_minutes * 60)
+  target = build_number.to_s
+
+  loop do
+    latest = begin
+      latest_testflight_build_number(
+        api_key: api_key,
+        app_identifier: APP_IDENTIFIER,
+        version: version,
+        initial_build_number: 0,
+      ).to_s
+    rescue StandardError => e
+      # A build that has not finished processing may not be queryable yet;
+      # that is expected early on and is not a failure.
+      UI.important("Could not read the latest build yet: #{e.message}")
+      nil
+    end
+
+    if latest == target
+      UI.success("Build #{target} for #{version} has finished processing.")
+      return
+    end
+
+    if Time.now > deadline
+      UI.user_error!(
+        "Build #{target} for #{version} was still not processed after " \
+        "#{timeout_minutes} minutes (latest seen: #{latest.inspect}). " \
+        "The upload may have been rejected — check App Store Connect."
+      )
+    end
+
+    UI.message("Waiting for build #{target} to process (latest: #{latest.inspect})...")
+    sleep(60)
+  end
+end

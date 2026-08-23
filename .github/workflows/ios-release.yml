@@ -1,0 +1,251 @@
+name: iOS Release
+
+# Builds, signs, and ships an iOS build on every push to main.
+#
+# Two stages of delivery:
+#   - Every push to main uploads a build to TestFlight.
+#   - App Store review submission fires only when the `version:` string in
+#     pubspec.yaml changes. Apple will not accept two submissions for the same
+#     version string, so "submit on every push" cannot be literal — bumping the
+#     version is the signal that you intend a new release.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   ASC_KEY_ID       App Store Connect API key ID
+#   ASC_ISSUER_ID    App Store Connect API issuer ID
+#   ASC_PRIVATE_KEY  Full contents of the AuthKey_<KEY_ID>.p8 file
+#
+# Signing is cloud-managed: xcodebuild authenticates with the API key above and
+# fetches the distribution certificate and provisioning profile from Apple. No
+# .p12 or .mobileprovision is stored in this repository.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      submit_for_review:
+        description: 'Submit the build for App Store review'
+        type: boolean
+        default: false
+
+env:
+  PROJECT_PATH: taxi_game
+  BUNDLE_ID: com.wjdavis5.taxigame
+
+concurrency:
+  # Never let two releases upload builds at once — build numbers must be
+  # strictly increasing and a race would burn one.
+  group: ios-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.PROJECT_PATH }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+  release:
+    name: Build, sign, and upload
+    needs: verify
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the previous commit to tell whether the version string moved.
+          fetch-depth: 2
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve build and version numbers
+        id: version
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_PATH"
+
+          # pubspec version is "x.y.z+build"; the marketing version is the part
+          # before the '+'. The build number comes from the run counter instead,
+          # so it is monotonic and never collides with a manual upload.
+          marketing="$(grep '^version:' pubspec.yaml | sed 's/^version: *//' | cut -d'+' -f1)"
+
+          # Offset past any build number uploaded by hand before CI existed.
+          build_number=$(( ${{ github.run_number }} + 1000 ))
+
+          echo "marketing=$marketing" >> "$GITHUB_OUTPUT"
+          echo "build=$build_number" >> "$GITHUB_OUTPUT"
+          echo "Building $marketing ($build_number)"
+
+      - name: Detect a version bump
+        id: bump
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_PATH"
+
+          current="${{ steps.version.outputs.marketing }}"
+
+          # On the first commit, or when the previous revision is unavailable,
+          # treat it as no bump rather than submitting something unintended.
+          if previous_raw="$(git show 'HEAD~1:taxi_game/pubspec.yaml' 2>/dev/null)"; then
+            previous="$(printf '%s' "$previous_raw" | grep '^version:' | sed 's/^version: *//' | cut -d'+' -f1)"
+          else
+            previous="$current"
+          fi
+
+          # Empty on a push event; "true" only when dispatched with the box ticked.
+          manual="${{ inputs.submit_for_review }}"
+
+          if [ "$current" != "$previous" ] || [ "$manual" = "true" ]; then
+            echo "submit=true" >> "$GITHUB_OUTPUT"
+            echo "Version $previous -> $current: will submit for App Store review."
+          else
+            echo "submit=false" >> "$GITHUB_OUTPUT"
+            echo "Version unchanged at $current: TestFlight only."
+          fi
+
+      - name: Install the App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          # xcodebuild looks for the key in this directory by convention, and
+          # fastlane is handed the path explicitly below.
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s' "$ASC_PRIVATE_KEY" > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+      - name: Get dependencies
+        working-directory: ${{ env.PROJECT_PATH }}
+        run: flutter pub get
+
+      - name: Build Flutter assets
+        working-directory: ${{ env.PROJECT_PATH }}
+        # Runs first so Generated.xcconfig carries the version and build number
+        # that the Xcode archive below reads.
+        run: |
+          flutter build ios --release --no-codesign \
+            --build-name=${{ steps.version.outputs.marketing }} \
+            --build-number=${{ steps.version.outputs.build }}
+
+      - name: Install CocoaPods dependencies
+        working-directory: ${{ env.PROJECT_PATH }}/ios
+        run: pod install
+
+      - name: Archive
+        working-directory: ${{ env.PROJECT_PATH }}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/ios/archive/Runner.xcarchive \
+            archive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Export IPA
+        working-directory: ${{ env.PROJECT_PATH }}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/ios/archive/Runner.xcarchive \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -exportPath build/ios/ipa \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Verify the exported bundle
+        working-directory: ${{ env.PROJECT_PATH }}
+        run: |
+          set -euo pipefail
+          app=build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app
+          plist="$app/Info.plist"
+
+          # Guard the two things that got the first manual upload rejected, so a
+          # regression fails here rather than after a ten-minute upload.
+          family="$(plutil -extract UIDeviceFamily json -o - "$plist")"
+          minimum="$(plutil -extract MinimumOSVersion raw -o - "$plist")"
+          identifier="$(plutil -extract CFBundleIdentifier raw -o - "$plist")"
+
+          echo "device family: $family, minimum OS: $minimum, bundle: $identifier"
+
+          [ "$family" = "[1]" ] || { echo "::error::expected iPhone-only (UIDeviceFamily [1]), got $family"; exit 1; }
+          [ "$identifier" = "$BUNDLE_ID" ] || { echo "::error::bundle id is $identifier, expected $BUNDLE_ID"; exit 1; }
+          awk -v v="$minimum" 'BEGIN { split(v, p, "."); if (p[1] < 15) { print "::error::MinimumOSVersion " v " is below the 15.0 Apple requires"; exit 1 } }'
+
+          [ -f "$app/PrivacyInfo.xcprivacy" ] || { echo "::error::privacy manifest missing from the bundle"; exit 1; }
+
+      - name: Upload to TestFlight
+        working-directory: ${{ env.PROJECT_PATH }}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          ipa="$(find build/ios/ipa -name '*.ipa' -maxdepth 1 | head -1)"
+          [ -n "$ipa" ] || { echo "::error::no .ipa produced by the export step"; exit 1; }
+
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$ipa" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: Submit for App Store review
+        if: steps.bump.outputs.submit == 'true'
+        working-directory: ${{ env.PROJECT_PATH }}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          DELIVER_BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          DELIVER_APP_VERSION: ${{ steps.version.outputs.marketing }}
+        run: |
+          set -euo pipefail
+          # Waits for Apple to finish processing the build, then attaches it to
+          # the version and submits. Listing metadata and screenshots are managed
+          # in App Store Connect, not here.
+          fastlane ios submit
+
+      - name: Upload the IPA as a build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-release-${{ steps.version.outputs.marketing }}-${{ steps.version.outputs.build }}
+          path: ${{ env.PROJECT_PATH }}/build/ios/ipa/*.ipa
+          if-no-files-found: warn
+          retention-days: 14
