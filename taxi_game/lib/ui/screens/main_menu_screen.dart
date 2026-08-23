@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../services/game_state_service.dart';
 import 'credits_screen.dart';
 import 'game_screen.dart';
+import 'settings_screen.dart';
 
 /// Main menu screen - entry point of the app
 class MainMenuScreen extends StatelessWidget {
@@ -94,30 +95,17 @@ class MainMenuScreen extends StatelessWidget {
 
                   const SizedBox(height: 20),
 
-                  // Garage Button
-                  _MenuButton(
-                    buttonKey: const Key('garage_button'),
-                    icon: Icons.directions_car,
-                    label: 'GARAGE',
-                    onPressed: () {
-                      // TODO: Navigate to garage screen
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Garage coming soon!')),
-                      );
-                    },
-                  ),
-
-                  const SizedBox(height: 20),
-
                   // Settings Button
                   _MenuButton(
                     buttonKey: const Key('settings_button'),
                     icon: Icons.settings,
                     label: 'SETTINGS',
                     onPressed: () {
-                      // TODO: Navigate to settings screen
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Settings coming soon!')),
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const SettingsScreen(),
+                        ),
                       );
                     },
                   ),
