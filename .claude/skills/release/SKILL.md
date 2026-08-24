@@ -1,0 +1,178 @@
+---
+name: release
+description: Ship a Cab Hustle release. Bumps the version, pushes to main, watches the CI pipeline build/sign/upload to TestFlight, and reports whether the App Store submission fired. Use when the user wants to release, ship, cut a version, publish to TestFlight, or submit for App Store review.
+---
+
+# Release
+
+Ships an iOS release of Cab Hustle through the GitHub Actions pipeline. The
+user never handles an `.ipa` — pushing to `main` builds, signs, uploads, and
+(on a version bump) submits.
+
+**Never upload manually when the pipeline can do it.** Manual Xcode Organizer
+uploads exist only as a fallback for when CI is broken.
+
+## The one rule that shapes everything
+
+**App Store review submission fires only when `version:` in `pubspec.yaml`
+changes.** Apple permanently rejects a second submission for a version string
+already submitted, so bumping the version is the signal that a release is
+intended.
+
+- Version changed → build, upload to TestFlight, **and submit for review**.
+- Version unchanged → build and upload to TestFlight **only**.
+
+Build numbers come from `github.run_number + 1000` and are set by CI. The
+`+build` suffix in `pubspec.yaml` is ignored — never hand-edit it to control
+the build number.
+
+## Steps
+
+### 1. Establish where things stand
+
+Run all of these before proposing anything:
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+git status --short                      # must be clean
+git branch --show-current               # must be main
+git fetch -q origin && git log --oneline origin/main..main   # unpushed commits
+grep '^version:' taxi_game/pubspec.yaml
+ruby .claude/skills/release/scripts/asc.rb status
+```
+
+The `asc.rb status` output is authoritative — read it rather than assuming.
+It reports every build and its processing state, the editable version and its
+state, whether a build is attached, whether a submission exists, and whether
+the listing has description, keywords, support URL, and screenshots.
+
+### 2. Check the blockers
+
+Stop and tell the user if any of these hold. Do not push through them.
+
+- **A version is already `WAITING_FOR_REVIEW` or `IN_REVIEW`.** A new version
+  cannot be submitted while one is in review. The user must either wait for
+  Apple, or remove the current submission in App Store Connect first. Say which
+  version is blocking.
+- **Working tree is dirty, or the branch is not `main`.** Releases come from
+  `main`; anything else is a mistake.
+- **The listing is missing description, keywords, support URL, or
+  screenshots.** `asc.rb status` prints `*** EMPTY ***` for missing fields.
+- **Screenshots do not match what the build will look like.** If UI changed
+  since the screenshots were captured, they must be recaptured — a reviewer
+  comparing a screenshot to the app is a real rejection path. See CLAUDE.md
+  for the capture pipeline.
+
+Also **remind, do not check**: App Privacy is not exposed on this API version
+(`appDataUsages` and friends 404). If this is the first submission, the user
+must have answered it in the App Store Connect UI.
+
+### 3. Decide the release type
+
+Ask the user, unless they already said which they want:
+
+- **TestFlight only** — no version change. For testing a build on device
+  before committing to a release.
+- **Patch** (`1.0.0` → `1.0.1`) — bug fixes.
+- **Minor** (`1.0.0` → `1.1.0`) — new functionality.
+- **Major** (`1.0.0` → `2.0.0`) — a significant rework.
+
+### 4. Verify locally before spending CI minutes
+
+```bash
+cd taxi_game && flutter analyze && flutter test
+```
+
+CI gates the release on both, so a failure here is a failure there — catch it
+in seconds instead of minutes.
+
+### 5. Bump and push
+
+For a TestFlight-only release, skip the version edit and push whatever commits
+are pending.
+
+For a real release, edit only the marketing version in `taxi_game/pubspec.yaml`
+(`version: 1.0.1+1` — leave the `+1`, CI overrides it), then:
+
+```bash
+git commit -am "release: 1.0.1"
+git push origin main
+```
+
+### 6. Watch the run and verify the result
+
+```bash
+sleep 20
+ID=$(gh run list --repo wjdavis5/taxiGame --workflow=ios-release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run watch "$ID" --repo wjdavis5/taxiGame --exit-status --interval 20
+```
+
+If it fails, read the actual failure rather than guessing:
+
+```bash
+gh run view "$ID" --repo wjdavis5/taxiGame --log-failed | tail -40
+```
+
+Then confirm the build genuinely arrived — a green run is not proof Apple
+accepted it. Processing takes a few minutes, so allow for a delay:
+
+```bash
+sleep 90
+ruby .claude/skills/release/scripts/asc.rb status
+```
+
+Expect a new build numbered `run_number + 1000` in state `PROCESSING` then
+`VALID`. Get the run number with:
+
+```bash
+gh run view "$ID" --repo wjdavis5/taxiGame --json number --jq .number
+```
+
+### 7. Report
+
+Tell the user, concretely:
+
+- The build number that landed and its processing state.
+- Whether the App Store submission fired, or that it was TestFlight-only and
+  why.
+- For a submission: that the version is `WAITING_FOR_REVIEW` and that release
+  is `AFTER_APPROVAL`, so nothing reaches users without them pressing the
+  button.
+
+## Known failure modes
+
+- **`Process completed with exit code 64`** in a build step — an invalid
+  `xcodebuild` flag. Exit 64 is a usage error and xcodebuild dumps its help
+  text. Read the flags, not the help.
+- **Duplicate build number** — should be impossible given the run-number
+  offset. If it happens, someone uploaded manually; check `asc.rb builds`.
+- **The submit lane fails while the upload succeeded** — the build is safely in
+  TestFlight. Fix the lane and force a submission via Actions → *iOS Release* →
+  Run workflow → tick *Submit for App Store review*, rather than re-pushing.
+- **Signing failure in CI** — the distribution certificate expires
+  **2027-08-23**. Renewal means regenerating `IOS_DIST_CERT_P12_BASE64` and
+  `IOS_PROVISION_PROFILE_BASE64`. See CLAUDE.md.
+
+## Force a submission without a version bump
+
+Only when a previous run uploaded a build but the submit step failed:
+
+```bash
+gh workflow run ios-release.yml --repo wjdavis5/taxiGame -f submit_for_review=true
+```
+
+## Manual fallback
+
+Use only when CI is broken and a release cannot wait. Full commands are in
+CLAUDE.md under *Publishing → Manual*. The essentials:
+
+```bash
+cd taxi_game
+xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner \
+  -configuration Release -destination 'generic/platform=iOS' \
+  -archivePath build/ios/archive/Runner.xcarchive archive -allowProvisioningUpdates
+open build/ios/archive/Runner.xcarchive   # then Distribute App in Organizer
+```
+
+Never pass signing settings to `xcodebuild archive` — they apply to every
+target and CocoaPods/SPM targets reject a provisioning profile.

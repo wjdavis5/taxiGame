@@ -171,6 +171,11 @@ round trip.
 
 ## Publishing
 
+Run **`/release`** — it handles the whole flow: preflight checks, version bump,
+push, watching the pipeline, and verifying the build reached App Store Connect.
+The rest of this section is what that skill automates, for when you need to do
+it by hand or debug it.
+
 ### Automatic (preferred)
 
 Pushing to `main` runs `.github/workflows/ios-release.yml`: analyze, test,
@@ -210,6 +215,19 @@ open build/ios/archive/Runner.xcarchive
 ---
 
 ## Querying App Store Connect
+
+Quickest path is the helper the release skill uses:
+
+```bash
+ruby .claude/skills/release/scripts/asc.rb status   # builds, version, listing gaps
+ruby .claude/skills/release/scripts/asc.rb builds
+ruby .claude/skills/release/scripts/asc.rb version
+```
+
+It needs `.env` (gitignored) with `ASC_KEY_ID` and `ASC_ISSUER_ID`, plus the
+`AuthKey_*.p8` in `~/Downloads` or `~/.appstoreconnect/private_keys`.
+
+### Raw API
 
 Faster and more reliable than clicking through the site, and the only way to
 answer "did my build actually arrive". Needs `.env` (gitignored) holding
