@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flame/components.dart';
 
+import '../../models/fare_type.dart';
 import 'difficulty_curve.dart';
 import 'run_environment.dart';
 
@@ -13,6 +14,7 @@ class EndlessFare {
     required this.pickup,
     required this.dropoff,
     required this.reward,
+    this.fareType = FareType.standard,
   });
 
   /// Position of this fare in the run's sequence (0-based).
@@ -26,6 +28,11 @@ class EndlessFare {
 
   /// Coins paid on delivery.
   final int reward;
+
+  /// What kind of fare this is (issue #25) — the deal the player weighs at
+  /// the kerb. Standard fares are the everyday ride; the other kinds bend
+  /// the geometry, the payout, or the clock (see [FareType]).
+  final FareType fareType;
 
   /// Distance the ride covers, in px.
   double get rideLength => pickup.y - dropoff.y;
@@ -75,14 +82,31 @@ class EndlessCourse {
   static const double rideGrowthMax = 125.0;
   static const double slotTailMargin = 150.0;
 
+  /// The long-haul fare's ride (issue #25): the longest ride the slot can
+  /// legally hold — the pickup at the slot's earliest inset and the
+  /// dropoff exactly at the slot's tail margin. Sits past the worst
+  /// standard ride (maxRideLength + rideGrowthMax), which is the point: a
+  /// long-haul is visibly, uncomfortably further.
+  static const double longHaulRideLength =
+      slotLength - slotTailMargin - minPickupInset;
+
+  /// The awkward fare's ride (issue #25): the shortest crossing the course
+  /// draws, so the forced lane change has to happen now. One px above
+  /// [minRideLength] — not exactly on it — because the world's [Vector2]s
+  /// store float32, and deep in a run the storage rounding can read a
+  /// floor-pinned ride a few thousandths *under* the floor, which would
+  /// quietly break the course's "every ride is at least [minRideLength]"
+  /// invariant. One px is invisible; the invariant stays exact.
+  static const double awkwardRideLength = minRideLength + 1.0;
+
   /// Generates fare [index]. Deterministic and order-independent.
   EndlessFare fare(int index) {
     final random = Random(_slotSeed(index));
 
     // Draw in a fixed order — reordering these lines changes the course.
     final pickupOnLeft = random.nextBool();
-    final dropoffOnLeft = random.nextBool();
-    final pickupInset = minPickupInset +
+    var dropoffOnLeft = random.nextBool();
+    var pickupInset = minPickupInset +
         random.nextDouble() * (maxPickupInset - minPickupInset);
     var rideLength = minRideLength +
         random.nextDouble() * (maxRideLength - minRideLength);
@@ -92,6 +116,28 @@ class EndlessCourse {
     // ramp, but never far enough to spill into the next slot.
     rideLength += DifficultyCurve.rampFractionFor(index * slotLength) *
         rideGrowthMax;
+
+    // The fare's kind (issue #25), drawn *after* every geometry draw so
+    // the seven-in-ten standard slots keep byte-identical geometry to the
+    // pre-variety courses — adding the types never rewrites the road a
+    // seed already knew, it only decorates some of its slots.
+    final fareType = FareType.draw(random);
+    switch (fareType) {
+      case FareType.longHaul:
+        // The distant dropoff: earliest possible pickup, longest possible
+        // ride — the whole slot, tail margin respected.
+        pickupInset = minPickupInset;
+        rideLength = longHaulRideLength;
+      case FareType.awkward:
+        // The far-side crossing: the dropoff waits on the opposite kerb,
+        // and the ride is the shortest the course draws so the lane
+        // change has to happen now, under the clock.
+        dropoffOnLeft = !pickupOnLeft;
+        rideLength = awkwardRideLength;
+      case FareType.vip:
+      case FareType.standard:
+        break; // Standard geometry; the VIP's deal is payout and clock.
+    }
 
     final pickupY = -(index * slotLength) - pickupInset;
     final dropoffY = pickupY - rideLength;
@@ -107,15 +153,19 @@ class EndlessCourse {
     final dropoffLeft = environment?.leftCurbXAt(-dropoffY) ?? leftCurbX;
     final dropoffRight = environment?.rightCurbXAt(-dropoffY) ?? rightCurbX;
 
-    // ~40–70 coins a fare: in band with the 50-coin level rewards the
-    // economy was tuned around.
-    final reward = 20 + (rideLength / 30).round() + rewardBonus;
+    // ~40–70 coins a standard fare: in band with the 50-coin level
+    // rewards the economy was tuned around. Special kinds scale that base
+    // by their [FareType.rewardMultiplier] — the VIP's tripled fare is
+    // what the tight clock is bought with.
+    final baseReward = 20 + (rideLength / 30).round() + rewardBonus;
+    final reward = (baseReward * fareType.rewardMultiplier).round();
 
     return EndlessFare(
       index: index,
       pickup: Vector2(pickupOnLeft ? pickupLeft : pickupRight, pickupY),
       dropoff: Vector2(dropoffOnLeft ? dropoffLeft : dropoffRight, dropoffY),
       reward: reward,
+      fareType: fareType,
     );
   }
 

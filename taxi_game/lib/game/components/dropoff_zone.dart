@@ -39,6 +39,24 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
       position: Vector2.all(baseRadius),
       anchor: Anchor.center,
     ));
+
+    // A special fare's destination names itself too (issue #25): with
+    // several fares live at once, the flag the meter is running toward
+    // has to be findable — the awkward fare's far-side kerb above all.
+    if (!passenger.fareType.isStandard) {
+      add(TextComponent(
+        text: passenger.fareType.zoneLabel,
+        anchor: Anchor.center,
+        position: Vector2(baseRadius, 2 * baseRadius + 18),
+        textRenderer: TextPaint(
+          style: TextStyle(
+            color: passenger.fareType.markerColor,
+            fontSize: 14,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ));
+    }
   }
 
   @override

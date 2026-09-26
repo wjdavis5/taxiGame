@@ -5,6 +5,7 @@ import 'dart:math' as math;
 
 import '../taxi_game.dart';
 import 'player_vehicle.dart';
+import '../../models/fare_type.dart';
 import '../../models/passenger_data.dart';
 
 /// Visual marker for passenger pickup location
@@ -38,6 +39,26 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
       position: Vector2.all(baseRadius),
       anchor: Anchor.center,
     ));
+
+    // The fare kind is legible from driving distance (issue #25): a
+    // special fare names itself under its marker, in its own colour, so
+    // the player can weigh the deal and steer past it without ever
+    // touching the kerb. Standard fares stay unlabelled — no marker
+    // should shout about an ordinary ride.
+    if (!passenger.fareType.isStandard) {
+      add(TextComponent(
+        text: passenger.fareType.zoneLabel,
+        anchor: Anchor.center,
+        position: Vector2(baseRadius, 2 * baseRadius + 18),
+        textRenderer: TextPaint(
+          style: TextStyle(
+            color: passenger.fareType.markerColor,
+            fontSize: 14,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ));
+    }
   }
 
   @override
@@ -55,6 +76,11 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
   void render(Canvas canvas) {
     if (_isPickedUp) return;
 
+    // The marker wears the fare kind's colour (issue #25): gold for a
+    // VIP, purple for a long-haul, orange for an awkward crossing, and
+    // the classic green for the everyday ride.
+    final color = passenger.fareType.markerColor;
+
     // Skip CircleComponent's default paint and draw centered on the
     // component (local origin is the top-left corner, not the center).
     canvas.save();
@@ -62,19 +88,19 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
 
     // Draw outer glow
     final glowPaint = Paint()
-      ..color = Colors.green.withValues(alpha: 0.3)
+      ..color = color.withValues(alpha: 0.3)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(Offset.zero, radius + 10, glowPaint);
 
     // Draw main circle
     final paint = Paint()
-      ..color = Colors.green.withValues(alpha: 0.6)
+      ..color = color.withValues(alpha: 0.6)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(Offset.zero, radius, paint);
 
     // Draw border
     final borderPaint = Paint()
-      ..color = Colors.green
+      ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
     canvas.drawCircle(Offset.zero, radius, borderPaint);
@@ -103,6 +129,21 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
       ..lineTo(8, 15)
       ..close();
     canvas.drawPath(bodyPath, iconPaint);
+
+    // A crown marks the VIP (issue #25) — the highest-paying fare on the
+    // street should be readable at a glance, not just by colour.
+    if (passenger.fareType == FareType.vip) {
+      final crownPath = Path()
+        ..moveTo(-8, -9)
+        ..lineTo(-8, -19)
+        ..lineTo(-4, -14)
+        ..lineTo(0, -21)
+        ..lineTo(4, -14)
+        ..lineTo(8, -19)
+        ..lineTo(8, -9)
+        ..close();
+      canvas.drawPath(crownPath, iconPaint);
+    }
   }
 
   @override

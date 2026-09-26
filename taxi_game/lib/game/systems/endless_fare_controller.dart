@@ -50,6 +50,12 @@ class EndlessFareController extends Component
   int faresDelivered = 0;
   int faresMissed = 0;
 
+  /// Fares the player explicitly declined (issue #25). Tracked apart from
+  /// [faresMissed] because a decline is a decision, not a slip — the
+  /// on-device history can tell "drove past" from "looked at it and
+  /// refused it".
+  int faresDeclined = 0;
+
   final List<_ActiveFare> _active = [];
 
   /// Generate fares this far above the camera centre (px past the view top).
@@ -61,11 +67,57 @@ class EndlessFareController extends Component
   /// Safety valve so a pathological frame can never spin the generator.
   static const int _maxSpawnsPerUpdate = 8;
 
+  /// How far above the camera centre a pending pickup may sit and still
+  /// count as an offer on screen (issue #25). A little past the 400 px
+  /// half-viewport, so the player sees the marker before the HUD does.
+  static const double offerAbove = 460.0;
+
+  /// How far below the camera centre a pending pickup may sit and still
+  /// count as an offer on screen.
+  static const double offerBelow = 400.0;
+
   int get activeFareCount => _active.length;
 
   /// True while the player is carrying a fare's passenger.
   bool get hasActivePickup =>
       _active.any((f) => f.passenger.isPickedUp && !f.passenger.isDelivered);
+
+  /// The fare currently on offer (issue #25): the pending pickup highest
+  /// up the visible road — the one the player is about to reach, whose
+  /// kind they can read and decline before committing to the kerb. Null
+  /// when nothing waitable is on screen.
+  PassengerData? get offerOnScreen {
+    final cameraY = game.camera.viewfinder.position.y;
+    _ActiveFare? offer;
+    for (final f in _active) {
+      if (f.passenger.isPickedUp) continue;
+      final pickupY = f.fare.pickup.y;
+      if (pickupY < cameraY - offerAbove) continue; // too far up yet
+      if (pickupY > cameraY + offerBelow) continue; // already behind
+      if (offer == null || pickupY < offer.fare.pickup.y) offer = f;
+    }
+    return offer?.passenger;
+  }
+
+  /// Declines a fare offer (issue #25): its zones come off the street, no
+  /// timer starts, nothing is paid and nothing is penalised — the cost of
+  /// declining is only the fare itself. The whole point of fare variety:
+  /// a VIP you cannot refuse would be a modifier, not a decision.
+  ///
+  /// Returns false when [passenger] is not a pending offer (already
+  /// aboard, delivered, or never spawned) — declining a fare you already
+  /// picked up is not a thing.
+  bool declineOffer(PassengerData passenger) {
+    if (passenger.isPickedUp || passenger.isDelivered) return false;
+    final index = _active.indexWhere((f) => f.passenger == passenger);
+    if (index == -1) return false;
+
+    final fare = _active.removeAt(index);
+    fare.pickupZone.removeFromParent();
+    fare.dropoffZone.removeFromParent();
+    faresDeclined++;
+    return true;
+  }
 
   @override
   void update(double dt) {
@@ -106,6 +158,7 @@ class EndlessFareController extends Component
       pickupLocation: fare.pickup.clone(),
       dropoffLocation: fare.dropoff.clone(),
       reward: fare.reward,
+      fareType: fare.fareType,
     );
 
     final pickupZone = PickupZone(

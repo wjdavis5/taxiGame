@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
+import 'package:taxi_game/models/fare_type.dart';
 
 /// The seeded course generator (issue #11): the same seed must reproduce
 /// the same course exactly, whatever order fares are queried in.
@@ -51,15 +52,25 @@ void main() {
             reason: 'fare $i pickup above fare ${i - 1}');
         expect(fare.dropoff.y, lessThan(fare.pickup.y),
             reason: 'fare $i dropoff above its pickup');
-        expect(fare.rideLength, greaterThanOrEqualTo(EndlessCourse.minRideLength),
-            reason: 'fare $i ride length');
-        expect(
-          fare.rideLength,
-          lessThanOrEqualTo(EndlessCourse.maxRideLength +
-              EndlessCourse.rideGrowthMax +
-              0.001),
-          reason: 'fare $i ride length',
-        );
+        // Long-hauls take the whole slot (issue #25); every other kind
+        // rides inside the standard band. (closeTo, not equals: the world
+        // stores float32, and deep slots read the ride a few thousandths
+        // off its true length.)
+        if (fare.fareType == FareType.longHaul) {
+          expect(fare.rideLength, closeTo(EndlessCourse.longHaulRideLength, 0.01),
+              reason: 'fare $i long-haul ride length');
+        } else {
+          expect(fare.rideLength,
+              greaterThanOrEqualTo(EndlessCourse.minRideLength),
+              reason: 'fare $i ride length');
+          expect(
+            fare.rideLength,
+            lessThanOrEqualTo(EndlessCourse.maxRideLength +
+                EndlessCourse.rideGrowthMax +
+                0.001),
+            reason: 'fare $i ride length',
+          );
+        }
 
         previous = fare;
       }
@@ -102,9 +113,8 @@ void main() {
       final course = EndlessCourse(seed: 5);
 
       for (var i = 0; i < 300; i++) {
-        final reward = course.fare(i).reward;
-        expect(reward, greaterThanOrEqualTo(20));
-        expect(reward, lessThanOrEqualTo(70));
+        final fare = course.fare(i);
+        expectRewardInBand(fare, 'fare $i');
       }
     });
 
@@ -114,9 +124,23 @@ void main() {
       expectFaresEqual(a.fare(1000), b.fare(1000), 'fare 1000');
 
       final huge = EndlessCourse(seed: 0x7FFFFFFFFFFFFFFF);
-      expect(huge.fare(0).reward, greaterThanOrEqualTo(20));
+      expectRewardInBand(huge.fare(0), 'fare 0 (huge seed)');
     });
   });
+}
+
+/// The reward must sit in its fare kind's band: the distance-scaled base
+/// (20 coins + 1 per 30 px + a 0-15 slot bonus) times the kind's
+/// [FareType.rewardMultiplier], with rounding slop on each edge. The slot
+/// bonus scales with the multiplier, so it is added before scaling.
+void expectRewardInBand(EndlessFare fare, String label) {
+  final base = 20 + (fare.rideLength / 30).round();
+  final mult = fare.fareType.rewardMultiplier;
+  expect(fare.reward, greaterThanOrEqualTo((base * mult).round() - 1),
+      reason: '$label reward lower bound');
+  expect(fare.reward,
+      lessThanOrEqualTo(((base + 15) * mult).round() + 1),
+      reason: '$label reward upper bound (incl. slot bonus)');
 }
 
 void expectFaresEqual(EndlessFare a, EndlessFare b, String label) {
@@ -126,4 +150,5 @@ void expectFaresEqual(EndlessFare a, EndlessFare b, String label) {
   expect(a.dropoff.x, closeTo(b.dropoff.x, 1e-9), reason: '$label dropoff x');
   expect(a.dropoff.y, closeTo(b.dropoff.y, 1e-9), reason: '$label dropoff y');
   expect(a.reward, b.reward, reason: label);
+  expect(a.fareType, b.fareType, reason: '$label fare type');
 }

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import '../../models/fare_type.dart';
 import '../../models/passenger_data.dart';
 
 /// How a delivered fare settled against its countdown (issue #12).
@@ -128,15 +129,30 @@ class FareChain {
   /// floor still clamps, so the tightest budget never dips under what the
   /// worst ride needs at a conservative pace: no fare is unwinnable at any
   /// distance.
-  static double secondsForRide(double rideDistance, {double pressure = 0.0}) {
+  ///
+  /// [fareType] (issue #25) scales every term by the kind's
+  /// [FareType.timeScale]: a VIP runs the whole budget — flat allowance,
+  /// per-px rate, floor, and ceiling — at 60%, which is what "much tighter
+  /// timer" means here. The scale stays inside the course's ride domain:
+  /// at the realistic deep-traffic cruise (~110 px/s) even the tightest
+  /// VIP budget covers its ride, and the fares that trade that slack for
+  /// triple coins are exactly the ones the player can see and decline.
+  static double secondsForRide(
+    double rideDistance, {
+    double pressure = 0.0,
+    FareType fareType = FareType.standard,
+  }) {
     final p = pressure.clamp(0.0, 1.0).toDouble();
+    final scale = fareType.timeScale;
     final base =
-        baseFareSeconds + (_tightBaseFareSeconds - baseFareSeconds) * p;
-    final rate = secondsPerPx + (_tightSecondsPerPx - secondsPerPx) * p;
+        (baseFareSeconds + (_tightBaseFareSeconds - baseFareSeconds) * p) *
+            scale;
+    final rate =
+        (secondsPerPx + (_tightSecondsPerPx - secondsPerPx) * p) * scale;
     final floor =
-        minFareSeconds + (_tightMinFareSeconds - minFareSeconds) * p;
+        (minFareSeconds + (_tightMinFareSeconds - minFareSeconds) * p) * scale;
     final ceiling =
-        maxFareSeconds + (_tightMaxFareSeconds - maxFareSeconds) * p;
+        (maxFareSeconds + (_tightMaxFareSeconds - maxFareSeconds) * p) * scale;
     final raw = base + rideDistance * rate;
     return raw.clamp(floor, ceiling).toDouble();
   }
@@ -162,22 +178,32 @@ class FareChain {
     return urgent;
   }
 
-  /// Starts [passenger]'s countdown, sized to their ride. Endless runs pass
-  /// the fare timer pressure at the pickup point (issue #18); level mode
-  /// omits it and keeps the original budgets.
+  /// Starts [passenger]'s countdown, sized to their ride and to their fare
+  /// kind (issue #25) — a VIP boards onto a much tighter meter than the
+  /// same ride would get as a standard fare. Endless runs pass the fare
+  /// timer pressure at the pickup point (issue #18); level mode omits it
+  /// and keeps the original budgets.
   void startFare(PassengerData passenger, {double pressure = 0.0}) {
     final rideDistance =
         (passenger.dropoffLocation - passenger.pickupLocation).length;
     _timers[passenger.id] = FareTimer(
       passengerId: passenger.id,
-      totalSeconds: secondsForRide(rideDistance, pressure: pressure),
+      totalSeconds: secondsForRide(
+        rideDistance,
+        pressure: pressure,
+        fareType: passenger.fareType,
+      ),
     );
   }
 
   /// Settles [passenger]'s fare at [fareValue] coins. On-time deliveries
-  /// score `fareValue x multiplier` and step the multiplier up; late ones
-  /// score `fareValue x 1` (the expiry in [update] already reset it) and
-  /// leave the chain broken. Returns how it settled so callers can react.
+  /// score `fareValue x multiplier` and step the multiplier up — by
+  /// [multiplierStep] for an ordinary fare, and by
+  /// [FareType.chainStepBonus] extra for the kinds that boost the chain
+  /// (issue #25): a delivered long-haul jumps the multiplier three steps
+  /// at once, which is its payout. Late ones score `fareValue x 1` (the
+  /// expiry in [update] already reset it) and leave the chain broken.
+  /// Returns how it settled so callers can react.
   FareSettlement completeFare(
     PassengerData passenger, {
     required int fareValue,
@@ -186,7 +212,9 @@ class FareChain {
     final onTime = timer != null && !timer.isExpired;
 
     score += fareValue * multiplier;
-    multiplier = onTime ? multiplier + multiplierStep : 1;
+    multiplier = onTime
+        ? multiplier + multiplierStep + passenger.fareType.chainStepBonus
+        : 1;
     _trackBest();
 
     return onTime ? FareSettlement.onTime : FareSettlement.late;

@@ -238,6 +238,23 @@ class TaxiGame extends FlameGame
   /// Fares delivered so far in this endless run.
   int get faresDelivered => fareController?.faresDelivered ?? 0;
 
+  /// The fare currently on offer ahead of the taxi (issue #25) — a
+  /// waiting passenger whose kind the player can read and decline before
+  /// committing to the kerb. Null when nothing waitable is on screen, and
+  /// always null outside an endless run: a level's pickups are mandatory
+  /// objectives, so there is nothing there to decline.
+  PassengerData? get currentFareOffer => fareController?.offerOnScreen;
+
+  /// Declines the current fare offer (issue #25): its zones come off the
+  /// street, no meter starts, nothing is paid and nothing is penalised —
+  /// the cost is only the fare itself. Returns false when there is
+  /// nothing to decline.
+  bool declineCurrentOffer() {
+    final offer = currentFareOffer;
+    if (offer == null) return false;
+    return fareController!.declineOffer(offer);
+  }
+
   /// How far ahead (+) or behind (−) the ghost is, in metres on the
   /// same scale the HUD's distance badge uses (issue #20). Null when
   /// there is no ghost on the road — the HUD hides its badge rather
@@ -540,7 +557,12 @@ class TaxiGame extends FlameGame
     passengers.clear();
     passengersDelivered = 0;
 
-    // Create a passenger for each pickup/dropoff pair in the level
+    // Create a passenger for each pickup/dropoff pair in the level. Level
+    // fares are all standard (issue #25): the ladder is the tutorial,
+    // every pickup is a mandatory objective with an authored dropoff, and
+    // a VIP clock or a far-side swap has no take-it-or-leave-it decision
+    // to live in there. The special fares belong to the endless course —
+    // see [EndlessCourse.fare] — where a fare is an offer.
     for (int i = 0; i < currentLevel.pickupPoints.length; i++) {
       final pickupPoint = currentLevel.pickupPoints[i];
       final dropoffPoint = i < currentLevel.dropoffPoints.length

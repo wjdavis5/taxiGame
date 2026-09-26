@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../game/systems/fare_chain.dart';
 import '../../game/systems/lives.dart';
 import '../../game/taxi_game.dart';
+import '../../models/fare_type.dart';
 import '../../services/game_state_service.dart';
 
 /// HUD overlay that displays during gameplay
@@ -117,6 +118,10 @@ class HudOverlay extends StatelessWidget {
             // fare countdown (issue #12).
             const SizedBox(height: 10),
             _ScoringBar(game: game),
+
+            // The fare offer bar (issue #25): what kind of fare is
+            // waiting ahead, and the decline that makes it a choice.
+            _FareOfferBar(game: game),
 
             const Spacer(),
             
@@ -449,6 +454,103 @@ class _FareTimerBadge extends StatelessWidget {
               fontSize: 16,
               fontWeight: FontWeight.bold,
               fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The fare offer bar (issue #25): while a passenger waits on a kerb
+/// ahead, it names the fare's kind, what it pays, and offers the decline
+/// that turns variety into a decision — a VIP you cannot refuse would be
+/// a modifier, not a choice. Hidden outside endless runs (a level's
+/// pickups are mandatory) and whenever nothing waitable is on screen.
+/// Polls the game like the scoring bar does.
+class _FareOfferBar extends StatefulWidget {
+  const _FareOfferBar({required this.game});
+
+  final TaxiGame game;
+
+  @override
+  State<_FareOfferBar> createState() => _FareOfferBarState();
+}
+
+class _FareOfferBarState extends State<_FareOfferBar> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  /// The icon that names the fare kind at a glance.
+  static IconData _iconFor(FareType type) => switch (type) {
+        FareType.standard => Icons.person,
+        FareType.vip => Icons.workspace_premium,
+        FareType.longHaul => Icons.straighten,
+        FareType.awkward => Icons.swap_horiz,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.game.isEndless) return const SizedBox.shrink();
+    final offer = widget.game.currentFareOffer;
+    if (offer == null) return const SizedBox.shrink();
+
+    final type = offer.fareType;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _HudPill(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(_iconFor(type), color: type.markerColor, size: 16),
+                const SizedBox(width: 6),
+                Text(
+                  type.offerBlurb(offer.reward),
+                  style: TextStyle(
+                    color: type.markerColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                // The decline: removes the waiting fare from the street —
+                // no pay, no penalty. The whole decision is here.
+                TextButton(
+                  key: const ValueKey('decline_fare_button'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 32),
+                  ),
+                  onPressed: () => widget.game.declineCurrentOffer(),
+                  child: const Text(
+                    'SKIP',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
