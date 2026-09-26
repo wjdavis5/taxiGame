@@ -124,12 +124,19 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   /// despawned once the player passes them).
   List<Vector2> _createStraightPath(Vector2 startPosition, {required bool oncoming}) {
     final step = oncoming ? 500.0 : -3000.0;
-    return [
-      startPosition,
-      Vector2(startPosition.x, startPosition.y + step),
-      Vector2(startPosition.x, startPosition.y + step * 2),
-      Vector2(startPosition.x, startPosition.y + step * 3),
-    ];
+    // Same-direction traffic in an endless run lives only 3000 px past its
+    // spawn point (issue #18): on the level-mode paths it travels 9000 px
+    // up-road and accumulates into a standing wall of slow cars whose
+    // density is set by minutes of history, not by the difficulty curve at
+    // the player's distance — the run simulator showed the curve's shape
+    // drowning in stale stock. Level mode keeps the long paths; its levels
+    // are short enough that no wall forms.
+    final sameDirectionWaypoints = _profileOf != null ? 1 : 3;
+    final path = <Vector2>[startPosition];
+    for (var i = 1; i <= (oncoming ? 3 : sameDirectionWaypoints); i++) {
+      path.add(Vector2(startPosition.x, startPosition.y + step * i));
+    }
+    return path;
   }
 
   /// Pauses traffic spawning

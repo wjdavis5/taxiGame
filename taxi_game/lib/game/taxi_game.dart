@@ -424,8 +424,15 @@ class TaxiGame extends FlameGame
     player.hasPassenger = true;
 
     // The meter starts running: this passenger's countdown begins now
-    // (issue #12).
-    fareChain.startFare(passenger);
+    // (issue #12). In an endless run the budget tightens with the
+    // difficulty curve's fare pressure at this distance (issue #18) —
+    // deep-run fares ride shorter clocks, easing off in the relief lulls
+    // like everything else. Level mode keeps the original budgets.
+    fareChain.startFare(
+      passenger,
+      pressure:
+          isEndless ? DifficultyCurve.farePressureFor(runDistance) : 0.0,
+    );
 
     // Green burst: a passenger boarded (issue #7).
     world.add(BurstParticles(

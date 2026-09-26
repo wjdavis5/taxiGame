@@ -45,6 +45,67 @@ void main() {
     });
   });
 
+  group('fare time budget under timer pressure (issue #18)', () {
+    test('pressure 0 keeps the original, teaching-friendly budgets', () {
+      expect(FareChain.secondsForRide(700),
+          closeTo(FareChain.baseFareSeconds + 700 / 75, 1e-9));
+    });
+
+    test('pressure tightens every term of the budget', () {
+      // The worst ride the course can draw: max length plus its full
+      // wave-growth bonus (EndlessCourse maxRideLength + rideGrowthMax).
+      const worstRide = 975.0;
+      final loose = FareChain.secondsForRide(worstRide);
+      final mid = FareChain.secondsForRide(worstRide, pressure: 0.5);
+      final tight = FareChain.secondsForRide(worstRide, pressure: 1.0);
+
+      expect(tight, lessThan(mid));
+      expect(mid, lessThan(loose));
+      expect(tight, greaterThan(0));
+    });
+
+    test('is continuous in pressure', () {
+      var previous = FareChain.secondsForRide(700);
+      for (var p = 0.05; p <= 1.0; p += 0.05) {
+        final budget = FareChain.secondsForRide(700, pressure: p);
+        expect(budget, lessThanOrEqualTo(previous + 1e-9),
+            reason: 'monotone tightening at pressure $p');
+        expect(previous - budget, lessThan(1.0),
+            reason: 'no perceptible jumps at pressure $p');
+        previous = budget;
+      }
+    });
+
+    test('the tightest budget is still winnable at the worst ride',
+        () {
+      // Winnability floor: the budget must cover the worst ride the
+      // course can draw (975 px) at a conservative deep-traffic pace of
+      // 100 px/s, plus a flat two seconds of kerb manoeuvring. Below
+      // this, deep-run fares become unwinnable and the chain economy
+      // stops being about driving.
+      const worstRide = 975.0;
+      const conservativePace = 100.0;
+      const kerbSeconds = 2.0;
+      expect(FareChain.secondsForRide(worstRide, pressure: 1.0),
+          greaterThanOrEqualTo(worstRide / conservativePace + kerbSeconds));
+    });
+
+    test('out-of-range pressure clamps instead of throwing', () {
+      expect(FareChain.secondsForRide(700, pressure: -1),
+          FareChain.secondsForRide(700));
+      expect(FareChain.secondsForRide(700, pressure: 2),
+          FareChain.secondsForRide(700, pressure: 1));
+    });
+
+    test('startFare passes the pressure through to the countdown', () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300); // 700 px ride
+      chain.startFare(passenger, pressure: 1.0);
+      expect(chain.timerFor(passenger)!.totalSeconds,
+          closeTo(FareChain.secondsForRide(700, pressure: 1.0), 1e-9));
+    });
+  });
+
   group('the chain', () {
     test('starts empty at 1x', () {
       final chain = FareChain();

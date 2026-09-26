@@ -57,6 +57,13 @@ class FareChain {
   // player averages [paceForBudget] px/s — roughly half the starter cab's
   // top speed — plus a flat loading allowance, so early fares are forgiving
   // and deep-run traffic (which slows the average) tightens them naturally.
+  //
+  // Issue #18 makes that deep-run tightening explicit: budgets now scale
+  // with a timer pressure in 0..1 (endless runs pass
+  // [DifficultyCurve.farePressureFor] at pickup; level mode passes nothing
+  // and keeps the original, teaching-friendly budgets). The pressure-1
+  // anchors below are the deep-run values the run simulator validated as
+  // still winnable at the worst ride the course can draw.
 
   /// Flat allowance on every fare, regardless of distance.
   static const double baseFareSeconds = 6.0;
@@ -68,6 +75,13 @@ class FareChain {
   /// free no matter how the generator draws its geometry.
   static const double minFareSeconds = 8.0;
   static const double maxFareSeconds = 25.0;
+
+  // Pressure-1 (fully tightened) anchors. Each budget term lerps from its
+  // pressure-0 value above to its pressure-1 value here.
+  static const double _tightBaseFareSeconds = 4.0;
+  static const double _tightSecondsPerPx = 1.0 / 85.0;
+  static const double _tightMinFareSeconds = 7.0;
+  static const double _tightMaxFareSeconds = 18.0;
 
   /// Multiplier added per on-time delivery. 1 = a linear 1x, 2x, 3x...
   /// curve; raise to make long chains accelerate.
@@ -93,10 +107,24 @@ class FareChain {
 
   final Map<String, FareTimer> _timers = {};
 
-  /// The time budget for a ride of [rideDistance] px.
-  static double secondsForRide(double rideDistance) {
-    final raw = baseFareSeconds + rideDistance * secondsPerPx;
-    return raw.clamp(minFareSeconds, maxFareSeconds).toDouble();
+  /// The time budget for a ride of [rideDistance] px under fare timer
+  /// [pressure] (0..1, from [DifficultyCurve.farePressureFor]). Pressure 0 —
+  /// the default, and all of level mode — gives the original issue #12
+  /// budgets; pressure 1 gives the fully tightened deep-run budget. The
+  /// floor still clamps, so the tightest budget never dips under what the
+  /// worst ride needs at a conservative pace: no fare is unwinnable at any
+  /// distance.
+  static double secondsForRide(double rideDistance, {double pressure = 0.0}) {
+    final p = pressure.clamp(0.0, 1.0).toDouble();
+    final base =
+        baseFareSeconds + (_tightBaseFareSeconds - baseFareSeconds) * p;
+    final rate = secondsPerPx + (_tightSecondsPerPx - secondsPerPx) * p;
+    final floor =
+        minFareSeconds + (_tightMinFareSeconds - minFareSeconds) * p;
+    final ceiling =
+        maxFareSeconds + (_tightMaxFareSeconds - maxFareSeconds) * p;
+    final raw = base + rideDistance * rate;
+    return raw.clamp(floor, ceiling).toDouble();
   }
 
   /// True while at least one passenger with a running countdown is aboard.
@@ -120,13 +148,15 @@ class FareChain {
     return urgent;
   }
 
-  /// Starts [passenger]'s countdown, sized to their ride.
-  void startFare(PassengerData passenger) {
+  /// Starts [passenger]'s countdown, sized to their ride. Endless runs pass
+  /// the fare timer pressure at the pickup point (issue #18); level mode
+  /// omits it and keeps the original budgets.
+  void startFare(PassengerData passenger, {double pressure = 0.0}) {
     final rideDistance =
         (passenger.dropoffLocation - passenger.pickupLocation).length;
     _timers[passenger.id] = FareTimer(
       passengerId: passenger.id,
-      totalSeconds: secondsForRide(rideDistance),
+      totalSeconds: secondsForRide(rideDistance, pressure: pressure),
     );
   }
 
