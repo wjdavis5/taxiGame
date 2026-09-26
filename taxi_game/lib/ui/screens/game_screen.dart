@@ -9,7 +9,11 @@ import '../widgets/hud_overlay.dart';
 
 /// Game screen that contains the actual game widget
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key});
+  const GameScreen({super.key, this.endlessSeed});
+
+  /// When non-null, the screen runs an endless procedural shift seeded
+  /// with this value instead of the next hand-made level (issue #11).
+  final int? endlessSeed;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -24,6 +28,7 @@ class _GameScreenState extends State<GameScreen> {
     game = TaxiGame(
       levelLoader: context.read<LevelLoaderService>(),
       gameState: context.read<GameStateService>(),
+      endlessSeed: widget.endlessSeed,
     );
   }
 

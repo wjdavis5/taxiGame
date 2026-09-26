@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -21,7 +23,7 @@ class HudOverlay extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Level number
+                // Level number, or distance driven in an endless shift
                 Consumer<GameStateService>(
                   builder: (context, gameState, child) {
                     return Container(
@@ -33,14 +35,16 @@ class HudOverlay extends StatelessWidget {
                         color: Colors.black54,
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: Text(
-                        'Level ${game.currentLevelNumber}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      child: game.isEndless
+                          ? _EndlessDistanceBadge(game: game)
+                          : Text(
+                              'Level ${game.currentLevelNumber}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                     );
                   },
                 ),
@@ -133,6 +137,58 @@ class HudOverlay extends StatelessWidget {
             const SizedBox(height: 20),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Live distance readout for endless shifts (issue #11). The game world
+/// has no per-frame Flutter rebuilds, so the badge polls the run distance
+/// on a short timer — cheap, and plenty for a counter.
+class _EndlessDistanceBadge extends StatefulWidget {
+  const _EndlessDistanceBadge({required this.game});
+
+  final TaxiGame game;
+
+  @override
+  State<_EndlessDistanceBadge> createState() => _EndlessDistanceBadgeState();
+}
+
+class _EndlessDistanceBadgeState extends State<_EndlessDistanceBadge> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  /// World px to metres: 10 px = 1 m, so a full-speed minute reads as
+  /// ~900 m. A made-but-fixed scale — the number only needs to mean
+  /// "further is deeper into the shift".
+  static const double pixelsPerMetre = 10.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final metres = widget.game.runDistance / pixelsPerMetre;
+    final label = metres >= 1000
+        ? '${(metres / 1000).toStringAsFixed(1)} km'
+        : '${metres.round()} m';
+
+    return Text(
+      label,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 18,
+        fontWeight: FontWeight.bold,
       ),
     );
   }

@@ -4,11 +4,35 @@ import 'dart:math';
 import '../taxi_game.dart';
 import 'traffic_vehicle.dart';
 import '../../models/traffic_pattern.dart';
+import '../systems/difficulty_curve.dart';
 
 /// Manages spawning of traffic vehicles based on patterns
 class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
-  final TrafficPattern pattern;
-  final Random random = Random();
+  /// Level mode: a fixed per-level pattern for the whole level.
+  TrafficSpawner({required TrafficPattern pattern})
+      : _fixedPattern = pattern,
+        _profileOf = null,
+        _distanceOf = null,
+        random = Random();
+
+  /// Endless mode (issue #11): density and speed come from a continuous
+  /// profile curve evaluated at the run's current distance, and the RNG is
+  /// injectable so the same seed reproduces the same traffic exactly.
+  TrafficSpawner.distanceBased({
+    required TrafficProfile Function(double distance) profileOf,
+    required double Function() distanceOf,
+    Random? random,
+  })  : _fixedPattern = null,
+        _profileOf = profileOf,
+        _distanceOf = distanceOf,
+        random = random ?? Random();
+
+  final TrafficPattern? _fixedPattern;
+  final TrafficProfile Function(double distance)? _profileOf;
+  final double Function()? _distanceOf;
+
+  /// The RNG driving every spawn decision. Seeded in endless mode.
+  final Random random;
 
   double _timeSinceLastSpawn = 0.0;
   bool _isActive = true;
@@ -18,12 +42,22 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   // Spawn area (ahead of camera view)
   static const double spawnDistanceAhead = 500.0;
 
-  TrafficSpawner({required this.pattern});
-
   /// Factory constructors for common patterns
   factory TrafficSpawner.light() => TrafficSpawner(pattern: TrafficPattern.light);
   factory TrafficSpawner.medium() => TrafficSpawner(pattern: TrafficPattern.medium);
   factory TrafficSpawner.heavy() => TrafficSpawner(pattern: TrafficPattern.heavy);
+
+  /// The traffic pressure in effect right now: the level's fixed pattern,
+  /// or the distance curve for endless runs.
+  TrafficProfile get _profile {
+    final profileOf = _profileOf;
+    if (profileOf != null) return profileOf(_distanceOf!());
+    final pattern = _fixedPattern!;
+    return TrafficProfile(
+      spawnInterval: pattern.spawnInterval,
+      lanes: pattern.lanes,
+    );
+  }
 
   @override
   void update(double dt) {
@@ -34,18 +68,18 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     _timeSinceLastSpawn += dt;
 
     // Spawn new vehicles based on interval
-    if (_timeSinceLastSpawn >= pattern.spawnInterval) {
+    if (_timeSinceLastSpawn >= _profile.spawnInterval) {
       _timeSinceLastSpawn = 0.0;
-      _spawnVehicles();
+      _spawnVehicles(_profile);
     }
 
     // Clean up vehicles that are off-screen
     _activeVehicles.removeWhere((vehicle) => vehicle.shouldRemove);
   }
 
-  void _spawnVehicles() {
+  void _spawnVehicles(TrafficProfile profile) {
     // Try to spawn a vehicle in each lane based on probability
-    for (final laneConfig in pattern.lanes) {
+    for (final laneConfig in profile.lanes) {
       if (random.nextDouble() <= laneConfig.spawnProbability) {
         _spawnVehicleInLane(laneConfig);
       }

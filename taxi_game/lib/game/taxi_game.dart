@@ -19,6 +19,10 @@ import 'components/speed_lines.dart';
 import 'levels/level.dart';
 import '../models/passenger_data.dart';
 import 'systems/collision_rules.dart';
+import 'systems/difficulty_curve.dart';
+import 'systems/endless_course.dart';
+import 'systems/endless_fare_controller.dart';
+import 'systems/road_chunk_manager.dart';
 import 'systems/impact_fx.dart';
 import '../services/game_state_service.dart';
 import '../services/level_loader_service.dart';
@@ -29,6 +33,7 @@ class TaxiGame extends FlameGame
   TaxiGame({
     required this.levelLoader,
     required this.gameState,
+    this.endlessSeed,
   }) : super(
           camera: CameraComponent.withFixedResolution(width: 400, height: 800),
         );
@@ -36,15 +41,39 @@ class TaxiGame extends FlameGame
   final LevelLoaderService levelLoader;
   final GameStateService gameState;
 
+  /// When non-null the game runs an endless procedural run (issue #11)
+  /// instead of a hand-made level: recycled road chunks, continuously
+  /// generated fares, and distance-curve traffic. The same seed always
+  /// reproduces the identical course.
+  final int? endlessSeed;
+
+  bool get isEndless => endlessSeed != null;
+
+  /// The seed of the endless run in progress; null in level mode.
+  int get runSeed => endlessSeed!;
+
   late PlayerVehicle player;
   late GameLevel currentLevel;
   late TrafficSpawner trafficSpawner;
+
+  /// Endless-run systems (issue #11); null in level mode.
+  EndlessCourse? course;
+  EndlessFareController? fareController;
+  RoadChunkManager? roadChunks;
 
   List<PassengerData> passengers = [];
   int passengersDelivered = 0;
 
   bool isGameActive = false;
   int currentLevelNumber = 1;
+
+  /// How far into an endless run the taxi has driven, in px. Zero in
+  /// level mode.
+  double get runDistance =>
+      (isEndless && isGameActive) ? math.max(0.0, -player.position.y) : 0.0;
+
+  /// Fares delivered so far in this endless run.
+  int get faresDelivered => fareController?.faresDelivered ?? 0;
 
   /// Telemetry for the most recent player–traffic contact — a scrape or a
   /// crash — so overlays and logs can explain exactly what happened
@@ -95,6 +124,12 @@ class TaxiGame extends FlameGame
     _speedLines = SpeedLines();
     camera.viewport.add(_speedLines!);
 
+    // Endless runs skip the level system entirely (issue #11).
+    if (endlessSeed != null) {
+      await startEndlessRun(seed: endlessSeed!);
+      return;
+    }
+
     // If the save points past the last level (all levels beaten),
     // replay the final level instead of silently falling back.
     var levelNumber = gameState.currentLevel;
@@ -103,6 +138,64 @@ class TaxiGame extends FlameGame
       levelNumber = total > 0 ? total : 1;
     }
     await loadLevel(levelNumber);
+  }
+
+  /// Starts an endless procedural run (issue #11): recycled road chunks,
+  /// fares generated continuously from the seeded course, and traffic on
+  /// the distance curve. The same [seed] always builds the same run.
+  Future<void> startEndlessRun({required int seed}) async {
+    isGameActive = false;
+    lastImpact = null;
+
+    // Clear any impact juice left over from the previous run (issue #7).
+    shake.reset();
+    hitStop.reset();
+    _pendingFailureOverlay = false;
+    _speedLines?.intensity = 0;
+    _applyShake(0); // restores the viewport position, dropping any shake
+
+    course = EndlessCourse(seed: seed);
+    passengers.clear();
+    passengersDelivered = 0;
+
+    // Tear down the previous run, if any.
+    world.removeAll(world.children.toList());
+
+    // The endless road: chunks are added ahead of the camera and culled
+    // behind it forever (issue #11).
+    final chunks = RoadChunkManager();
+    roadChunks = chunks;
+    world.add(chunks);
+
+    // The player starts at y 0 and only drives upward (negative y); chunk
+    // indices below 0 already cover the road behind the start line.
+    player = PlayerVehicle(
+      startPosition: Vector2(roadCenterX, 0),
+      vehicleId: gameState.selectedVehicle,
+    );
+    world.add(player);
+
+    // Camera: locked horizontally on the road, follows the taxi vertically.
+    camera.viewfinder.position = Vector2(roadCenterX, 0);
+    camera.follow(player, verticalOnly: true);
+
+    trafficSpawner = TrafficSpawner.distanceBased(
+      profileOf: DifficultyCurve.trafficForDistance,
+      distanceOf: () => runDistance,
+      // A spawner RNG derived from the run seed — never Dart's default
+      // clock-seeded Random, or replays of one seed would diverge.
+      random: math.Random(seed ^ 0x5EEDCAB5),
+    );
+    world.add(trafficSpawner);
+
+    fareController = EndlessFareController(
+      course: course!,
+      onPickup: _onPassengerPickup,
+      onDropoff: _onEndlessFareDelivered,
+    );
+    world.add(fareController!);
+
+    isGameActive = true;
   }
 
   /// Loads the given level, replacing whatever was on screen before.
@@ -231,6 +324,27 @@ class TaxiGame extends FlameGame
     }
   }
 
+  /// Delivery in an endless run (issue #11): the fare pays out on the
+  /// spot — there is no level completion to settle up at.
+  void _onEndlessFareDelivered(PassengerData passenger) {
+    player.hasPassenger = fareController?.hasActivePickup ?? false;
+
+    // Blue-and-gold burst: the fare is paid (issue #7).
+    world.add(BurstParticles(
+      position: passenger.dropoffLocation,
+      colors: ImpactFxPalettes.dropoff,
+    ));
+    // Coins fly from the dropoff to the HUD counter, and the wallet is
+    // credited immediately — per-fare, the endless economy's unit.
+    for (var i = 0; i < 3; i++) {
+      world.add(CoinPop(
+        startPosition: passenger.dropoffLocation,
+        delay: 0.06 * i,
+      ));
+    }
+    gameState.addCoins(passenger.reward);
+  }
+
   void _completeLevel() {
     isGameActive = false;
     _freezePlayer();
@@ -251,10 +365,15 @@ class TaxiGame extends FlameGame
     overlays.add('levelComplete');
   }
 
-  /// Restarts the current level from scratch (after a crash).
+  /// Restarts the current level from scratch (after a crash). In an
+  /// endless run the same seed restarts the same course (issue #11).
   void restartLevel() {
     overlays.remove('levelFailed');
     overlays.remove('levelComplete');
+    if (isEndless) {
+      startEndlessRun(seed: runSeed);
+      return;
+    }
     loadLevel(currentLevelNumber);
   }
 

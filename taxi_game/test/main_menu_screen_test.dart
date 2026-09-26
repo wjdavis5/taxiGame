@@ -67,4 +67,18 @@ void main() {
     expect(garageButton, findsOneWidget);
     expect(tester.widget<ElevatedButton>(garageButton).onPressed, isNotNull);
   });
+
+  testWidgets('endless shift button is present and enabled', (tester) async {
+    final storageService = StorageService();
+    await storageService.init();
+    final gameStateService = GameStateService(storageService);
+
+    await tester.pumpWidget(buildMenu(gameStateService, storageService));
+    await tester.pump();
+
+    final endlessButton = find.byKey(const ValueKey('endless_button'));
+    expect(endlessButton, findsOneWidget);
+    expect(tester.widget<ElevatedButton>(endlessButton).onPressed, isNotNull);
+    expect(find.text('ENDLESS SHIFT'), findsOneWidget);
+  });
 }

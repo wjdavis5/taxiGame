@@ -25,8 +25,8 @@ class MainMenuScreen extends StatelessWidget {
           ),
         ),
         child: SafeArea(
-          // Scrolls so the menu survives short viewports — five buttons plus the
-          // title and stats overflow a fixed Column on small phones.
+          // Scrolls so the menu survives short viewports — six buttons plus
+          // the title and stats overflow a fixed Column on small phones.
           child: SingleChildScrollView(
             child: ConstrainedBox(
               constraints: BoxConstraints(
@@ -89,6 +89,28 @@ class MainMenuScreen extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (context) => const GameScreen(),
+                        ),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Endless shift: a procedurally generated run (issue #11).
+                  // Each shift gets a fresh seed; the seed fully determines
+                  // the course, so identical seeds replay identical runs.
+                  _MenuButton(
+                    buttonKey: const ValueKey('endless_button'),
+                    icon: Icons.all_inclusive,
+                    label: 'ENDLESS SHIFT',
+                    onPressed: () {
+                      final seed =
+                          DateTime.now().microsecondsSinceEpoch & 0x3FFFFFFF;
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              GameScreen(endlessSeed: seed),
                         ),
                       );
                     },
