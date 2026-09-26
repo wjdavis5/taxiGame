@@ -13,9 +13,13 @@ import 'components/traffic_spawner.dart';
 import 'components/pickup_zone.dart';
 import 'components/dropoff_zone.dart';
 import 'components/scrape_marker.dart';
+import 'components/burst_particles.dart';
+import 'components/coin_pop.dart';
+import 'components/speed_lines.dart';
 import 'levels/level.dart';
 import '../models/passenger_data.dart';
 import 'systems/collision_rules.dart';
+import 'systems/impact_fx.dart';
 import '../services/game_state_service.dart';
 import '../services/level_loader_service.dart';
 
@@ -50,6 +54,25 @@ class TaxiGame extends FlameGame
   /// Rate-limits scrape feedback so a jittering grind cannot spam markers.
   double _scrapeMarkerCooldown = 0;
 
+  // --- Impact juice (issue #7) -------------------------------------------
+  /// Decaying screen-shake envelope, driven onto the camera viewport in
+  /// [update]. Crashes shake hard (scaled to impact speed), scrapes jolt.
+  final ShakeEnvelope shake = ShakeEnvelope();
+
+  /// The brief world freeze at a crash.
+  final HitStop hitStop = HitStop();
+
+  /// Screen-space speed lines over the windshield; null until [onLoad].
+  SpeedLines? _speedLines;
+
+  /// Shake offset currently baked into [camera.viewport.position], so the
+  /// next frame can add a fresh delta on top of the untouched position.
+  final Vector2 _appliedShakeOffset = Vector2.zero();
+
+  /// Set when a crash defers its failure overlay until the hit-stop ends
+  /// (issue #7): the impact lands first, then the panel explains it.
+  bool _pendingFailureOverlay = false;
+
   // The road spans x 100..300 in world coordinates (center 200, width 200).
   static const double roadCenterX = 200;
   static const double roadWidth = 200;
@@ -67,6 +90,11 @@ class TaxiGame extends FlameGame
     // Static sky/scenery behind the scrolling world
     camera.backdrop.add(Background());
 
+    // Speed lines live on the viewport: screen-space, drawn over the
+    // world but under the Flutter HUD (issue #7).
+    _speedLines = SpeedLines();
+    camera.viewport.add(_speedLines!);
+
     // If the save points past the last level (all levels beaten),
     // replay the final level instead of silently falling back.
     var levelNumber = gameState.currentLevel;
@@ -82,6 +110,14 @@ class TaxiGame extends FlameGame
     isGameActive = false;
     currentLevelNumber = levelNumber;
     lastImpact = null;
+
+    // Clear any impact juice left over from the previous run (issue #7).
+    shake.reset();
+    hitStop.reset();
+    _pendingFailureOverlay = false;
+    _speedLines?.intensity = 0;
+    _applyShake(0); // restores the viewport position, dropping any shake
+
     currentLevel = await levelLoader.loadLevel(levelNumber);
 
     // Tear down the previous level, if any.
@@ -162,12 +198,33 @@ class TaxiGame extends FlameGame
 
   void _onPassengerPickup(PassengerData passenger) {
     player.hasPassenger = true;
+
+    // Green burst: a passenger boarded (issue #7).
+    world.add(BurstParticles(
+      position: passenger.pickupLocation,
+      colors: ImpactFxPalettes.pickup,
+    ));
   }
 
   void _onPassengerDropoff(PassengerData passenger) {
     passengersDelivered++;
     player.hasPassenger =
         passengers.any((p) => p.isPickedUp && !p.isDelivered);
+
+    // Blue-and-gold burst: the fare is paid (issue #7).
+    world.add(BurstParticles(
+      position: passenger.dropoffLocation,
+      colors: ImpactFxPalettes.dropoff,
+    ));
+    // Coins fly from the dropoff to the HUD counter. The total itself
+    // still updates at level completion — the economy is unchanged; this
+    // only makes the award visible.
+    for (var i = 0; i < 3; i++) {
+      world.add(CoinPop(
+        startPosition: passenger.dropoffLocation,
+        delay: 0.06 * i,
+      ));
+    }
 
     if (passengersDelivered >= passengers.length) {
       _completeLevel();
@@ -178,6 +235,15 @@ class TaxiGame extends FlameGame
     isGameActive = false;
     _freezePlayer();
     trafficSpawner.pause();
+
+    // A volley of coins streams from the taxi to the HUD counter as the
+    // reward lands (issue #7).
+    for (var i = 0; i < 6; i++) {
+      world.add(CoinPop(
+        startPosition: player.position,
+        delay: 0.05 * i,
+      ));
+    }
 
     // Award coins and unlock the next level.
     gameState.completeLevel(currentLevelNumber, currentLevel.coinReward);
@@ -210,11 +276,36 @@ class TaxiGame extends FlameGame
     lastImpact = report;
     if (report != null) {
       debugPrint('[crash] ${report.explanation}');
+      _spawnCrashFx(report);
     }
     isGameActive = false;
     _freezePlayer();
     trafficSpawner.pause();
-    overlays.add('levelFailed');
+
+    // The failure overlay waits out the hit-stop (issue #7): the sparks,
+    // shake, and freeze land first, then the panel explains what happened.
+    if (hitStop.isActive) {
+      _pendingFailureOverlay = true;
+    } else {
+      overlays.add('levelFailed');
+    }
+  }
+
+  /// Crash juice (issue #7): a hot spark burst at the contact point,
+  /// a hit-stop, and a shake scaled to how fast the impact closed.
+  void _spawnCrashFx(CrashReport report) {
+    world.add(BurstParticles(
+      position: report.contactPoint.clone(),
+      colors: ImpactFxPalettes.crash,
+      count: 18,
+      maxSpeed: 240,
+      lifetime: 0.6,
+    ));
+    shake.trigger(
+      ImpactFx.crashShakeMagnitudeFor(report.closingSpeedAlongImpact),
+      duration: ImpactFx.crashShakeDuration,
+    );
+    hitStop.trigger();
   }
 
   /// Records a low-speed glancing scrape: no life is lost, the player was
@@ -222,6 +313,21 @@ class TaxiGame extends FlameGame
   /// what was hit.
   void onScrape(CrashReport report) {
     lastImpact = report;
+
+    // Sparks and a short jolt — enough to feel the sheet metal, without
+    // crowding out the crash feedback (issue #7).
+    world.add(BurstParticles(
+      position: report.contactPoint.clone(),
+      colors: ImpactFxPalettes.scrape,
+      count: 6,
+      maxSpeed: 130,
+      lifetime: 0.35,
+    ));
+    shake.trigger(
+      ImpactFx.scrapeShakeMagnitude,
+      duration: ImpactFx.scrapeShakeDuration,
+    );
+
     if (_scrapeMarkerCooldown <= 0) {
       _scrapeMarkerCooldown = 0.4;
       world.add(ScrapeMarker(
@@ -233,16 +339,50 @@ class TaxiGame extends FlameGame
 
   @override
   void update(double dt) {
+    if (hitStop.isActive) {
+      // Hit-stop (issue #7): the world holds still for a beat — no
+      // component updates, no collisions — while the shake keeps jittering
+      // the frozen frame.
+      hitStop.update(dt);
+      _applyShake(dt);
+      if (!hitStop.isActive && _pendingFailureOverlay) {
+        _pendingFailureOverlay = false;
+        overlays.add('levelFailed');
+      }
+      return;
+    }
+
     super.update(dt);
+    _applyShake(dt);
+
+    // Speed lines track the taxi's forward speed so velocity reads
+    // without looking at a number (issue #7).
+    if (_speedLines != null) {
+      _speedLines!.intensity = isGameActive
+          ? ImpactFx.speedLineIntensityFor(-player.velocity.y)
+          : 0;
+    }
+
     if (_scrapeMarkerCooldown > 0) {
       _scrapeMarkerCooldown = math.max(0.0, _scrapeMarkerCooldown - dt);
     }
+  }
+
+  /// Applies one frame of screen shake as a delta on the viewport
+  /// position, so it never fights the camera's follow logic (which owns
+  /// the viewfinder) and leaves no residue when it decays.
+  void _applyShake(double dt) {
+    final base = camera.viewport.position - _appliedShakeOffset;
+    _appliedShakeOffset.setFrom(shake.update(dt));
+    camera.viewport.position = base + _appliedShakeOffset;
   }
 
   void _freezePlayer() {
     _touchPosition = null;
     player.stopAccelerating();
     player.setSteering(0);
+    // The run is over; the windshield effect ends with it (issue #7).
+    _speedLines?.intensity = 0;
   }
 
   void pauseGame() {

@@ -48,32 +48,43 @@ class HudOverlay extends StatelessWidget {
                 // Coins
                 Consumer<GameStateService>(
                   builder: (context, gameState, child) {
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 15,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.monetization_on,
-                            color: Colors.yellow,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            '${gameState.totalCoins}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
+                    // Keyed on the total so a coin award restarts the
+                    // pulse: the counter pops as the coin pops land in it
+                    // (issue #7).
+                    return TweenAnimationBuilder<double>(
+                      key: ValueKey('coin-pulse-${gameState.totalCoins}'),
+                      tween: Tween(begin: 1.3, end: 1.0),
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOut,
+                      builder: (context, scale, child) =>
+                          Transform.scale(scale: scale, child: child),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 15,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.monetization_on,
+                              color: Colors.yellow,
+                              size: 20,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 5),
+                            Text(
+                              '${gameState.totalCoins}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   },

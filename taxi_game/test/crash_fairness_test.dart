@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/scrape_marker.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/systems/collision_rules.dart';
+import 'package:taxi_game/game/systems/impact_fx.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/traffic_pattern.dart';
 import 'package:taxi_game/services/game_state_service.dart';
@@ -150,6 +151,10 @@ void main() {
       player.onCollisionStart({Vector2(200, 70)}, bus);
 
       expect(game.isGameActive, isFalse);
+      // The failure overlay waits out the crash hit-stop (issue #7).
+      expect(game.hitStop.isActive, isTrue);
+      expect(game.overlays.activeOverlays, isNot(contains('levelFailed')));
+      game.update(ImpactFx.crashHitStopDuration + 0.01);
       expect(game.overlays.activeOverlays, contains('levelFailed'));
       expect(player.isAccelerating, isFalse);
       expect(player.steeringInput, 0);
@@ -205,10 +210,13 @@ void main() {
       game.world.add(bus);
 
       // A frame to mount the bus, then frames for the collision detection
-      // to spot the (already overlapping) hitboxes and raise the crash.
+      // to spot the (already overlapping) hitboxes and raise the crash,
+      // and for the crash hit-stop to elapse so the failure overlay
+      // appears (issue #7).
       await tester.pump(const Duration(milliseconds: 16));
-      for (var i = 0; i < 10 && game.isGameActive; i++) {
+      for (var i = 0; i < 40; i++) {
         await tester.pump(const Duration(milliseconds: 16));
+        if (game.overlays.activeOverlays.contains('levelFailed')) break;
       }
 
       expect(game.isGameActive, isFalse);
@@ -269,6 +277,9 @@ void main() {
       expect(bus.isTelegraphing, isTrue);
 
       player.onCollisionStart({Vector2(200, 70)}, bus); // crash
+      // The crash hit-stop holds the world still first (issue #7); once
+      // it ends, the resumed tick re-runs the telegraph check and hides.
+      game.update(ImpactFx.crashHitStopDuration + 0.01);
       game.update(1 / 60);
 
       expect(bus.isTelegraphing, isFalse);
