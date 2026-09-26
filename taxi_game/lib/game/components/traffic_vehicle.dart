@@ -34,6 +34,17 @@ class TrafficVehicle extends PositionComponent
   bool get isTelegraphing => _danger.isDangerous;
   double get dangerTimeToImpact => _danger.timeToImpact;
 
+  /// True once this vehicle has touched the player this episode — a
+  /// scrape or a crash ruled in [PlayerVehicle.onCollisionStart]. A pass
+  /// that follows a touch is not a *near* miss (issue #23): the contact
+  /// already happened and named itself.
+  bool contactedPlayer = false;
+
+  /// True once this vehicle has been judged for a close call at the pass
+  /// (issue #23) — judged exactly once, however the ruling went, so no
+  /// vehicle can pay twice.
+  bool _nearMissJudged = false;
+
   late final DangerIndicator _dangerIndicator;
 
   /// The telegraph visual; exposed so tests (and callers) can read its
@@ -154,7 +165,10 @@ class TrafficVehicle extends PositionComponent
     if (position.y > game.camera.viewfinder.position.y + 1000) {
       shouldRemove = true;
       removeFromParent();
+      return;
     }
+
+    _updateNearMissWatch();
   }
 
   void _updateVelocityTowardsWaypoint() {
@@ -196,6 +210,23 @@ class TrafficVehicle extends PositionComponent
       // when the vehicle itself is flipped to face the player (oncoming).
       _dangerIndicator.position = vehicleSize / 2;
       _dangerIndicator.angle = -angle;
+    }
+  }
+
+  /// Close-call watch (issue #23): the frame this vehicle first sits
+  /// at-or-behind the player — the pass moment, since the taxi only ever
+  /// travels up-screen so the relationship flips exactly once — is the
+  /// one chance to judge the pass, and it is taken however it rules.
+  /// Judged vehicles never re-arm, and ones the player touched are
+  /// disqualified before geometry is consulted. The game owns the ruling
+  /// ([NearMissRules.isCloseCall]) and the feedback.
+  void _updateNearMissWatch() {
+    if (_nearMissJudged || !game.isGameActive) return;
+    if (game.player.position.y > position.y) return;
+
+    _nearMissJudged = true;
+    if (!contactedPlayer) {
+      game.onNearMiss(this);
     }
   }
 }

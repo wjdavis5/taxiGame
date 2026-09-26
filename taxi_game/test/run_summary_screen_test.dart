@@ -46,6 +46,7 @@ void main() {
     score: 240,
     bestChain: 4,
     faresDelivered: 12,
+    nearMisses: 9,
     distancePx: 12340,
     coinsEarned: 195,
     isPersonalBest: true,
@@ -101,6 +102,8 @@ void main() {
     expect(find.text('\u00d74'), findsOneWidget);
     expect(find.text('Fares delivered'), findsOneWidget);
     expect(find.text('12'), findsOneWidget);
+    expect(find.text('Close calls'), findsOneWidget);
+    expect(find.text('9'), findsOneWidget);
     expect(find.text('Distance'), findsOneWidget);
     expect(find.text('1.2 km'), findsOneWidget);
     expect(find.text('Coins earned'), findsOneWidget);

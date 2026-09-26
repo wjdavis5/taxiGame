@@ -18,6 +18,7 @@ class RunSummary {
     required this.coinsEarned,
     required this.isPersonalBest,
     required this.previousBest,
+    this.nearMisses = 0,
     this.achievementsUnlocked = const [],
   });
 
@@ -34,6 +35,13 @@ class RunSummary {
 
   /// Fares delivered over the whole shift.
   final int faresDelivered;
+
+  /// Close calls cleared over the whole shift (issue #23) — passes the
+  /// taxi threaded within a car-third of traffic at speed, each paying
+  /// into the chain score. Surfaced on the summary so the player sees
+  /// the skill credited, and so the on-device history can answer the
+  /// issue's kill criterion: whether near-misses read as skill or luck.
+  final int nearMisses;
 
   /// How far the taxi drove, in world px — raw material for
   /// [distanceLabel].

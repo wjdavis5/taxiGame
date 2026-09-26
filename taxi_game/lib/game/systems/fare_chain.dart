@@ -93,6 +93,14 @@ class FareChain {
   /// than a banked-at-the-first-chance one ever sees.
   static const int pushBonusStep = 1;
 
+  /// Base points for one close call (issue #23): a pass cleared within a
+  /// car-third of traffic at speed. Deliberately well under a typical
+  /// fare's payout — close calls are the seasoning on the delivery
+  /// chain, never a replacement for it — and they only get interesting
+  /// when the multiplier is live, which is the point: shaving traffic
+  /// pays best exactly when keeping the chain alive matters most.
+  static const int nearMissScore = 15;
+
   int score = 0;
 
   /// The multiplier the next delivery is scored at. Starts at 1x; grows by
@@ -104,6 +112,12 @@ class FareChain {
   /// chain" line on the run summary. A break lowers [multiplier] but never
   /// this: the record of what the chain once was is the whole point.
   int bestMultiplier = 1;
+
+  /// Close calls cleared this run (issue #23). Recorded per run like the
+  /// score, and surfaced on the run summary — the count is the raw
+  /// material for the issue's kill criterion, judging from the on-device
+  /// history whether near-misses read as skill or as luck.
+  int nearMisses = 0;
 
   final Map<String, FareTimer> _timers = {};
 
@@ -187,6 +201,27 @@ class FareChain {
     _trackBest();
   }
 
+  /// Awards one close call (issue #23). Near-misses ride the existing
+  /// chain rather than a second parallel score: the payout is
+  /// [nearMissScore] × the live [multiplier], into the same run-local,
+  /// at-risk-until-banked [score] every fare pays into — so a close call
+  /// banked at a dropoff is worth exactly what it would have paid the
+  /// moment it happened, and one made on a broken chain pays 1x until
+  /// deliveries rebuild the multiplier.
+  ///
+  /// The multiplier itself is untouched: only deliveries and pushes step
+  /// it (issues #12, #13), so the chain economy issue #18 tuned is
+  /// undisturbed — defensive players build the same chains they always
+  /// did, and shaving traffic monetises risk the chain already prices.
+  ///
+  /// Returns the points awarded, so the on-road feedback can name them.
+  int awardNearMiss() {
+    nearMisses++;
+    final points = nearMissScore * multiplier;
+    score += points;
+    return points;
+  }
+
   /// Folds a multiplier increase into the run's best-chain record.
   void _trackBest() {
     if (multiplier > bestMultiplier) bestMultiplier = multiplier;
@@ -214,12 +249,13 @@ class FareChain {
     if (expired) multiplier = 1;
   }
 
-  /// Clears the chain: score, multiplier, best chain, and every live
-  /// countdown. Called whenever a run or level (re)starts.
+  /// Clears the chain: score, multiplier, best chain, close calls, and
+  /// every live countdown. Called whenever a run or level (re)starts.
   void reset() {
     score = 0;
     multiplier = 1;
     bestMultiplier = 1;
+    nearMisses = 0;
     _timers.clear();
   }
 }

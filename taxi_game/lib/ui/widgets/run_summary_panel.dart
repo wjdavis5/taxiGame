@@ -224,6 +224,7 @@ class RunSummaryPanel extends StatelessWidget {
               _statRow('Score', '${summary.score}'),
               _statRow('Best chain', '\u00d7${summary.bestChain}'),
               _statRow('Fares delivered', '${summary.faresDelivered}'),
+              _statRow('Close calls', '${summary.nearMisses}'),
               _statRow('Distance', summary.distanceLabel),
               _statRow('Coins earned', '${summary.coinsEarned}'),
               const SizedBox(height: 20),

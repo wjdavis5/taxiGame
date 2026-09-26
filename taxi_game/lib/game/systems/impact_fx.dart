@@ -95,6 +95,17 @@ class ImpactFxPalettes {
     Color(0xFFFFE082),
     Color(0xFFFFFFFF),
   ];
+
+  /// A close call (issue #23): a cool rush of cyan-and-white air — the
+  /// displaced slipstream of a pass that nearly was a touch. Cool where
+  /// every metal event (scrape, crash) is hot, so the two outcomes of a
+  /// tight pass can never be confused in the periphery.
+  static const List<Color> closeCall = [
+    Color(0xFF4DD0E1),
+    Color(0xFF80DEEA),
+    Color(0xFFB2EBF2),
+    Color(0xFFFFFFFF),
+  ];
 }
 
 /// Decaying random screen-shake envelope.

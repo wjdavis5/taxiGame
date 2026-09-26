@@ -11,10 +11,12 @@ import 'components/road_segment.dart';
 import 'components/background.dart';
 import 'components/ghost_car.dart';
 import 'components/traffic_spawner.dart';
+import 'components/traffic_vehicle.dart';
 import 'components/pickup_zone.dart';
 import 'components/dropoff_zone.dart';
 import 'components/scrape_marker.dart';
 import 'components/burst_particles.dart';
+import 'components/close_call_pop.dart';
 import 'components/coin_pop.dart';
 import 'components/speed_lines.dart';
 import 'levels/level.dart';
@@ -30,6 +32,7 @@ import 'systems/bank_prompt.dart';
 import 'systems/fare_chain.dart';
 import 'systems/ghost_replay.dart';
 import 'systems/lives.dart';
+import 'systems/near_miss.dart';
 import 'systems/run_summary.dart';
 import 'systems/road_chunk_manager.dart';
 import 'systems/impact_fx.dart';
@@ -695,6 +698,7 @@ class TaxiGame extends FlameGame
       distancePx: runDistance,
       score: fareChain.score,
       faresDelivered: faresDelivered,
+      nearMisses: fareChain.nearMisses,
       longestChain: fareChain.bestMultiplier,
       livesLost: _lifeLossDistancesPx.length,
       lifeLossDistancesPx: List.of(_lifeLossDistancesPx),
@@ -727,6 +731,7 @@ class TaxiGame extends FlameGame
       score: fareChain.score,
       bestChain: fareChain.bestMultiplier,
       faresDelivered: faresDelivered,
+      nearMisses: fareChain.nearMisses,
       distancePx: runDistance,
       coinsEarned: _runCoinsEarned,
       isPersonalBest: isPersonalBest,
@@ -986,6 +991,52 @@ class TaxiGame extends FlameGame
         vehicleKind: report.vehicleKind,
       ));
     }
+  }
+
+  /// A pass the taxi just cleared, reported by [vehicle] at the moment
+  /// its y sank past the vehicle's (issue #23). The ruling is made here:
+  /// a close call needs [NearMissRules]' clearance and speed, so most
+  /// passes report in and rule out. A pass that rules in pays through
+  /// the fare chain ([FareChain.awardNearMiss]) — there is no second
+  /// score — and the feedback is loud on every channel the game has,
+  /// because a near-miss the player does not notice scores nothing
+  /// psychologically.
+  void onNearMiss(TrafficVehicle vehicle) {
+    if (!isGameActive) return;
+
+    final gap = NearMissRules.lateralGap(
+      playerPosition: player.position,
+      playerSize: player.vehicleSize,
+      vehiclePosition: vehicle.position,
+      vehicleSize: vehicle.vehicleSize,
+    );
+    final isCloseCall = NearMissRules.isCloseCall(
+      gap: gap,
+      playerForwardSpeed: -player.velocity.y,
+    );
+    if (!isCloseCall) return;
+
+    final points = fareChain.awardNearMiss();
+    debugPrint('[near-miss] Cleared a ${vehicle.vehicleType.name} for '
+        '$points pts — ${fareChain.nearMisses} this run.');
+
+    // A cool slipstream burst in the gap the pass threaded, and the
+    // award floating up out of it — the same beat the other feedback
+    // pops play, in the close-call palette's cyan.
+    final midPoint = (player.position + vehicle.position) / 2;
+    world.add(BurstParticles(
+      position: midPoint,
+      colors: ImpactFxPalettes.closeCall,
+      count: 10,
+      maxSpeed: 150,
+      lifetime: 0.35,
+      gravity: 40,
+    ));
+    world.add(CloseCallPop(position: midPoint, points: points));
+
+    // Haptic thump plus the OS click (the game ships no audio assets —
+    // see [CloseCallFeedback]) under the save's existing sound setting.
+    CloseCallFeedback.play(soundEnabled: gameState.soundEnabled);
   }
 
   @override

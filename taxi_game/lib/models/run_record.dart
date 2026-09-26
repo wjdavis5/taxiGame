@@ -23,6 +23,7 @@ class RunRecord {
     required this.lifeLossDistancesPx,
     required this.banked,
     required this.durationSeconds,
+    this.nearMisses = 0,
   });
 
   /// When the shift ended, in epoch milliseconds. Not used by the
@@ -39,6 +40,13 @@ class RunRecord {
 
   /// Fares delivered over the whole shift.
   final int faresDelivered;
+
+  /// Close calls cleared over the whole shift (issue #23): passes
+  /// threaded within the near-miss window at speed, each paying into the
+  /// chain score. The frequency of these in the history is the raw
+  /// material for the issue's kill criterion — near-misses that fire
+  /// constantly are luck, not skill.
+  final int nearMisses;
 
   /// The highest the chain multiplier reached — the run's longest chain.
   final int longestChain;
@@ -81,6 +89,7 @@ class RunRecord {
       distancePx: (json['distancePx'] as num?)?.toDouble() ?? 0.0,
       score: (json['score'] as num?)?.toInt() ?? 0,
       faresDelivered: (json['faresDelivered'] as num?)?.toInt() ?? 0,
+      nearMisses: (json['nearMisses'] as num?)?.toInt() ?? 0,
       longestChain: (json['longestChain'] as num?)?.toInt() ?? 1,
       livesLost: (json['livesLost'] as num?)?.toInt() ?? 0,
       lifeLossDistancesPx: (json['lifeLossDistancesPx'] as List? ?? const [])
@@ -98,6 +107,7 @@ class RunRecord {
       'distancePx': distancePx,
       'score': score,
       'faresDelivered': faresDelivered,
+      'nearMisses': nearMisses,
       'longestChain': longestChain,
       'livesLost': livesLost,
       'lifeLossDistancesPx': lifeLossDistancesPx,

@@ -165,6 +165,10 @@ class PlayerVehicle extends PositionComponent
     // No rulings while the level is already over or frozen.
     if (!game.isGameActive) return;
 
+    // This episode had its touch: whatever the severity, this vehicle is
+    // out of the running for a close call at the pass (issue #23).
+    other.contactedPlayer = true;
+
     final contactPoint = intersectionPoints.isEmpty
         ? (position + other.position) / 2
         : intersectionPoints.first;

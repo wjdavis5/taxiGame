@@ -15,6 +15,7 @@ void main() {
         lifeLossDistancesPx: [3000.0, 9800.25],
         banked: false,
         durationSeconds: 214.5,
+        nearMisses: 11,
       );
 
   group('RunRecord JSON round-trip', () {
@@ -26,6 +27,9 @@ void main() {
       expect(restored.distancePx, 12345.5);
       expect(restored.score, 480);
       expect(restored.faresDelivered, 7);
+      expect(restored.nearMisses, 11,
+          reason: 'the close-call count is tuning data like the rest '
+              '(issue #23)');
       expect(restored.longestChain, 5);
       expect(restored.livesLost, 2);
       expect(restored.lifeLossDistancesPx, [3000.0, 9800.25]);
@@ -71,6 +75,8 @@ void main() {
       expect(record.endedAtMs, 0);
       expect(record.distancePx, 0.0);
       expect(record.faresDelivered, 0);
+      expect(record.nearMisses, 0,
+          reason: 'records older than issue #23 never shaved traffic');
       expect(record.longestChain, 1, reason: 'a chain record starts at 1x');
       expect(record.livesLost, 0);
       expect(record.lifeLossDistancesPx, isEmpty);
