@@ -57,14 +57,17 @@ void main() {
   }
 
   /// Headless games have no overlay builder map; the crash path adds
-  /// 'levelFailed' (an endless run can crash mid-test), so register a
-  /// stand-in as [GameScreen] does in production.
+  /// 'levelFailed' and the bank-or-push flow (issue #13) adds
+  /// 'bankOrPush' at a delivery and 'shiftBanked' at a bank, so register
+  /// stand-ins as [GameScreen] does in production.
   TaxiGame endlessGame(int seed) => TaxiGame(
         levelLoader: LevelLoaderService(),
         gameState: gameState,
         endlessSeed: seed,
       )
-        ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink());
+        ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink());
 
   /// Puts every vehicle sprite in the game's image cache so traffic
   /// `onLoad`s complete after a single microtask hop — that keeps

@@ -22,6 +22,7 @@ import 'systems/collision_rules.dart';
 import 'systems/difficulty_curve.dart';
 import 'systems/endless_course.dart';
 import 'systems/endless_fare_controller.dart';
+import 'systems/bank_prompt.dart';
 import 'systems/fare_chain.dart';
 import 'systems/road_chunk_manager.dart';
 import 'systems/impact_fx.dart';
@@ -68,6 +69,17 @@ class TaxiGame extends FlameGame
 
   /// Score accrued this run or level (issue #12).
   int get score => fareChain.score;
+
+  /// The timed bank-or-push choice offered at every endless dropoff
+  /// (issue #13). Inactive in level mode — levels settle at completion.
+  final BankPrompt bankPrompt = BankPrompt();
+
+  /// What the most recent bank paid out, in coins, for the banked-shift
+  /// panel. Null until a shift is banked; cleared when a new run starts.
+  int? lastBankedScore;
+
+  /// How far into the shift the taxi had driven when it was banked, in px.
+  double lastBankedDistance = 0;
 
   List<PassengerData> passengers = [];
   int passengersDelivered = 0;
@@ -166,6 +178,9 @@ class TaxiGame extends FlameGame
     passengers.clear();
     passengersDelivered = 0;
     fareChain.reset();
+    _dismissBankPrompt();
+    lastBankedScore = null;
+    lastBankedDistance = 0;
 
     // Tear down the previous run, if any.
     world.removeAll(world.children.toList());
@@ -222,6 +237,7 @@ class TaxiGame extends FlameGame
 
     currentLevel = await levelLoader.loadLevel(levelNumber);
     fareChain.reset();
+    _dismissBankPrompt();
 
     // Tear down the previous level, if any.
     world.removeAll(world.children.toList());
@@ -365,6 +381,65 @@ class TaxiGame extends FlameGame
       ));
     }
     gameState.addCoins(passenger.reward);
+
+    // Every completed dropoff asks the question (issue #13): bank the
+    // score and end the shift, or push on at an increased multiplier. The
+    // prompt rides above the live game — the street keeps moving under it.
+    _offerBankOrPush();
+  }
+
+  // --- Bank or push (issue #13) -------------------------------------------
+
+  /// Puts the bank-or-push choice on screen after an endless dropoff.
+  void _offerBankOrPush() {
+    bankPrompt.offer();
+    overlays.add('bankOrPush');
+  }
+
+  /// The choice is gone: resolved, superseded by a crash, or left behind
+  /// by a restart. Only ever tears down — consequences are applied by the
+  /// caller that resolved the prompt.
+  void _dismissBankPrompt() {
+    bankPrompt.dismiss();
+    overlays.remove('bankOrPush');
+  }
+
+  /// Bank: the accumulated score becomes permanent — paid into the wallet
+  /// 1:1 in coins — and the shift ends. Everything unbanked would have
+  /// been forfeited by ending the shift any other way (a crash, or
+  /// later, the third life — issue #14), which is exactly the pressure
+  /// the choice is designed to apply.
+  void bankShift() {
+    if (bankPrompt.bank() == null) return;
+    _endShiftAsBanked();
+  }
+
+  /// Push on: keep driving at the increased multiplier. The window
+  /// closing without a choice lands here too — pushing is the default,
+  /// and it must pay the same whether it was chosen or merely allowed.
+  void pushOn() {
+    if (bankPrompt.push() == null) return;
+    _applyPushBonus();
+  }
+
+  void _applyPushBonus() {
+    fareChain.applyPushBonus();
+    _dismissBankPrompt();
+  }
+
+  /// Freezes the shift and pays the banked score out. The score itself
+  /// stays readable for the panel until the next run resets it.
+  void _endShiftAsBanked() {
+    lastBankedScore = fareChain.score;
+    lastBankedDistance = runDistance;
+
+    isGameActive = false;
+    _freezePlayer();
+    trafficSpawner.pause();
+    _dismissBankPrompt();
+
+    gameState.addCoins(lastBankedScore!);
+    overlays.add('shiftBanked');
   }
 
   void _completeLevel() {
@@ -392,6 +467,7 @@ class TaxiGame extends FlameGame
   void restartLevel() {
     overlays.remove('levelFailed');
     overlays.remove('levelComplete');
+    overlays.remove('shiftBanked');
     if (isEndless) {
       startEndlessRun(seed: runSeed);
       return;
@@ -415,6 +491,11 @@ class TaxiGame extends FlameGame
   void onLevelFailed([CrashReport? report]) {
     if (!isGameActive) return;
     lastImpact = report;
+
+    // A crash forfeits everything unbanked (issue #13): the open choice
+    // dies with the run, and whatever the chain held stays unbanked.
+    _dismissBankPrompt();
+
     if (report != null) {
       debugPrint('[crash] ${report.explanation}');
       _spawnCrashFx(report);
@@ -502,6 +583,13 @@ class TaxiGame extends FlameGame
     // isGameActive false first.)
     if (isGameActive) {
       fareChain.update(dt);
+
+      // The bank-or-push window ticks with the same clock (issue #13).
+      // When it closes without a choice the player rides on — push is
+      // the default, so the game never stops dead waiting for an answer.
+      if (bankPrompt.update(dt) == BankDecision.pushed) {
+        _applyPushBonus();
+      }
     }
 
     // Speed lines track the taxi's forward speed so velocity reads

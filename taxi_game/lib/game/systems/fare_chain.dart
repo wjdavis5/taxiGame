@@ -39,8 +39,9 @@ class FareTimer {
 /// Every passenger picked up carries a countdown sized to their ride.
 /// Delivering inside the window banks `fare value x current multiplier` and
 /// steps the multiplier up; letting a countdown run out breaks the chain
-/// back down to 1x. Score is run-local: it resets with every new run or
-/// level (issue #13 adds the bank-or-push decision that makes it permanent).
+/// back down to 1x. The score is run-local and at risk until the player
+/// banks it at a dropoff (issue #13): banking converts it to coins and ends
+/// the shift; crashing or losing the shift forfeits everything unbanked.
 ///
 /// Several passengers can be aboard at once (a level can let the player
 /// stack pickups), so each carries their own countdown and the chain breaks
@@ -72,10 +73,17 @@ class FareChain {
   /// curve; raise to make long chains accelerate.
   static const int multiplierStep = 1;
 
+  /// Extra multiplier granted for choosing to push on at a dropoff
+  /// (issue #13) — the payout for refusing the bank. Stacks with
+  /// [multiplierStep], so a pushed chain climbs a step a delivery faster
+  /// than a banked-at-the-first-chance one ever sees.
+  static const int pushBonusStep = 1;
+
   int score = 0;
 
   /// The multiplier the next delivery is scored at. Starts at 1x; grows by
-  /// [multiplierStep] per on-time delivery; any expiry resets it to 1x.
+  /// [multiplierStep] per on-time delivery and [pushBonusStep] per
+  /// push-on; any expiry resets it to 1x.
   int multiplier = 1;
 
   final Map<String, FareTimer> _timers = {};
@@ -132,6 +140,14 @@ class FareChain {
     multiplier = onTime ? multiplier + multiplierStep : 1;
 
     return onTime ? FareSettlement.onTime : FareSettlement.late;
+  }
+
+  /// The reward for pushing on at a dropoff (issue #13): the multiplier
+  /// the next fare rides at steps up once more. Applied whether the player
+  /// chose to push or let the choice window run out — riding on is the
+  /// default, and it must cost the same either way.
+  void applyPushBonus() {
+    multiplier += pushBonusStep;
   }
 
   /// Ticks every live countdown. Any that runs out breaks the chain back to

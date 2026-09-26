@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../game/taxi_game.dart';
 import '../../services/game_state_service.dart';
 import '../../services/level_loader_service.dart';
+import '../widgets/bank_prompt_overlay.dart';
 import '../widgets/hud_overlay.dart';
 
 /// Game screen that contains the actual game widget
@@ -47,6 +48,12 @@ class _GameScreenState extends State<GameScreen> {
                   _buildLevelComplete(context),
               'levelFailed': (context, TaxiGame game) =>
                   LevelFailedOverlay(game: game),
+              // The timed bank-or-push choice at every endless dropoff
+              // (issue #13) — asked over live traffic, not a modal.
+              'bankOrPush': (context, TaxiGame game) =>
+                  BankPromptOverlay(game: game),
+              'shiftBanked': (context, TaxiGame game) =>
+                  _ShiftBankedPanel(game: game),
             },
             initialActiveOverlays: const ['hud'],
           ),
@@ -173,6 +180,99 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+}
+
+/// The end-of-shift panel after banking (issue #13). Static content: the
+/// shift is over, the numbers on it are final.
+class _ShiftBankedPanel extends StatelessWidget {
+  const _ShiftBankedPanel({required this.game});
+
+  final TaxiGame game;
+
+  /// World px to metres — the same scale the HUD's distance badge uses.
+  static const double pixelsPerMetre = 10.0;
+
+  String get _distanceLabel {
+    final metres = game.lastBankedDistance / pixelsPerMetre;
+    return metres >= 1000
+        ? '${(metres / 1000).toStringAsFixed(1)} km'
+        : '${metres.round()} m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        margin: const EdgeInsets.symmetric(horizontal: 40),
+        decoration: BoxDecoration(
+          color: Colors.blueGrey.shade800,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.savings,
+              size: 80,
+              color: Colors.white,
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'SHIFT BANKED',
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 10),
+            // The payout: the whole run score, now permanent in the
+            // wallet — the thing pushing would have grown and a crash
+            // would have taken.
+            Text(
+              '+${game.lastBankedScore ?? 0} Coins',
+              style: const TextStyle(
+                fontSize: 24,
+                color: Colors.yellow,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Score ${game.score} · ${game.faresDelivered} fares · $_distanceLabel',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                color: Colors.white70,
+              ),
+            ),
+            const SizedBox(height: 30),
+            ElevatedButton(
+              onPressed: () {
+                // A fresh shift: a new seed draws a new city.
+                game.overlays.remove('shiftBanked');
+                final seed =
+                    DateTime.now().microsecondsSinceEpoch & 0x3FFFFFFF;
+                game.startEndlessRun(seed: seed);
+              },
+              child: const Text('DRIVE AGAIN'),
+            ),
+            const SizedBox(height: 10),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text(
+                'MAIN MENU',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// The crash overlay. Names what hit the player and how fast, from the

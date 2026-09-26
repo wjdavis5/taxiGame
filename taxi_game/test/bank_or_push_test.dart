@@ -1,0 +1,320 @@
+import 'package:flame/components.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/systems/bank_prompt.dart';
+import 'package:taxi_game/game/systems/endless_course.dart';
+import 'package:taxi_game/game/taxi_game.dart';
+import 'package:taxi_game/services/game_state_service.dart';
+import 'package:taxi_game/services/level_loader_service.dart';
+import 'package:taxi_game/services/storage_service.dart';
+import 'package:taxi_game/ui/widgets/bank_prompt_overlay.dart';
+
+/// The bank-or-push decision at every endless dropoff (issue #13): a
+/// timed choice that never stops the game, where banking is the only way
+/// to make the score permanent and pushing raises the multiplier.
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  late GameStateService gameState;
+
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    final storage = StorageService();
+    await storage.init();
+    gameState = GameStateService(storage);
+    await gameState.loadSaveData();
+  });
+
+  /// Mounts [game] headlessly so component `onLoad` hooks run (the
+  /// endless-run test pattern; [Game.mount] is what GameWidget calls in
+  /// production).
+  Future<TaxiGame> mountGame(TaxiGame game) async {
+    game.onGameResize(Vector2(400, 800));
+    await game.onLoad();
+    // ignore: invalid_use_of_internal_member
+    game.mount();
+    await game.ready();
+    return game;
+  }
+
+  /// Headless games have no overlay builder map; the decision flow adds
+  /// and removes 'bankOrPush' and 'shiftBanked' (and a crash adds
+  /// 'levelFailed'), so register stand-ins as [GameScreen] does.
+  TaxiGame endlessGame(int seed) => TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: seed,
+      )
+        ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink());
+
+  /// Lets pending component mounts finish before the next simulated tick.
+  Future<void> drain() async {
+    for (var i = 0; i < 8; i++) {
+      await Future<void>.value();
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
+  Future<void> tickAndSettle(TaxiGame game) async {
+    game.update(1 / 60);
+    await drain();
+    game.update(1 / 60);
+    await drain();
+  }
+
+  /// Delivers [fare] by teleporting the taxi to its kerbs, the way the
+  /// endless-run tests do. Assumes the fare's zones are mounted.
+  void deliverFare(TaxiGame game, EndlessFare fare) {
+    game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+    game.update(1 / 60);
+    expect(game.player.hasPassenger, isTrue, reason: 'passenger boarded');
+    game.player.position = Vector2(fare.dropoff.x, fare.dropoff.y + 30);
+    game.update(1 / 60);
+  }
+
+  group('the choice at an endless dropoff', () {
+    test('a completed dropoff arms the choice without stopping the game',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      deliverFare(game, game.course!.fare(0));
+
+      expect(game.bankPrompt.isActive, isTrue);
+      expect(
+        game.bankPrompt.remainingSeconds,
+        closeTo(BankPrompt.windowSeconds, 1 / 30),
+        reason: 'the window opens fully stocked (less the dropoff frame)',
+      );
+      expect(game.overlays.isActive('bankOrPush'), isTrue);
+      // The prompt rides above a live street: the shift goes on whether
+      // or not the player answers.
+      expect(game.isGameActive, isTrue);
+    });
+
+    test('level deliveries arm nothing — levels settle at completion',
+        () async {
+      // Mounted headless with no endlessSeed: a level run.
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+      )
+        ..overlays.addEntry('levelComplete', (_, __) => const SizedBox.shrink());
+      await mountGame(game);
+
+      final pickup = game.currentLevel.pickupPoints.first;
+      final dropoff = game.currentLevel.dropoffPoints.first;
+      game.player.position = Vector2(pickup.x, pickup.y + 30);
+      game.update(1 / 60);
+      game.player.position = Vector2(dropoff.x, dropoff.y + 30);
+      game.update(1 / 60);
+
+      expect(game.score, greaterThan(0));
+      expect(game.bankPrompt.isActive, isFalse);
+      expect(game.overlays.isActive('bankOrPush'), isFalse);
+    });
+
+    test('letting the window close pushes on at the increased multiplier',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final fare0 = game.course!.fare(0);
+      deliverFare(game, fare0);
+      expect(game.fareChain.multiplier, 2, reason: 'the delivery stepped it');
+
+      // Six seconds of game time across a five-second window.
+      for (var i = 0; i < 6; i++) {
+        game.update(1.0);
+      }
+
+      expect(game.bankPrompt.isActive, isFalse);
+      expect(game.overlays.isActive('bankOrPush'), isFalse);
+      expect(game.fareChain.multiplier, 3,
+          reason: 'the default is pushing on, bonus and all');
+      expect(game.isGameActive, isTrue,
+          reason: 'the shift never stopped to ask');
+
+      // The increased multiplier prices the next fare.
+      await tickAndSettle(game);
+      final fare1 = game.course!.fare(1);
+      deliverFare(game, fare1);
+      expect(game.score, fare0.reward + 3 * fare1.reward,
+          reason: 'the next fare pays at the pushed multiplier');
+    });
+
+    test('banking pays the score into the wallet 1:1 and ends the shift',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      final coinsBefore = gameState.totalCoins;
+
+      final fare0 = game.course!.fare(0);
+      deliverFare(game, fare0);
+      // The fare itself already paid its base coins; the score sits
+      // unbanked on top.
+      expect(gameState.totalCoins, coinsBefore + fare0.reward);
+      expect(game.score, fare0.reward);
+
+      game.bankShift();
+
+      expect(game.lastBankedScore, fare0.reward);
+      expect(gameState.totalCoins, coinsBefore + fare0.reward + fare0.reward,
+          reason: 'banking converts the score 1:1 into coins');
+      expect(game.isGameActive, isFalse, reason: 'the shift is over');
+      expect(game.overlays.isActive('shiftBanked'), isTrue);
+      expect(game.overlays.isActive('bankOrPush'), isFalse);
+      expect(game.lastBankedDistance, greaterThan(0));
+    });
+
+    test('a crash forfeits the unbanked score and kills the open prompt',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      final coinsBefore = gameState.totalCoins;
+
+      final fare0 = game.course!.fare(0);
+      deliverFare(game, fare0);
+      expect(game.bankPrompt.isActive, isTrue);
+      expect(game.score, fare0.reward);
+
+      game.onLevelFailed();
+
+      expect(game.bankPrompt.isActive, isFalse);
+      expect(game.overlays.isActive('bankOrPush'), isFalse);
+      expect(game.fareChain.multiplier, 2,
+          reason: 'a dismissal owes no push bonus');
+      expect(game.isGameActive, isFalse);
+      // The unbanked score never reached the wallet: only the fare's
+      // base coins did. This is the forfeit the bank exists to escape.
+      expect(gameState.totalCoins, coinsBefore + fare0.reward);
+    });
+
+    test('pushing twice pays the bonus once', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      deliverFare(game, game.course!.fare(0));
+      expect(game.fareChain.multiplier, 2);
+
+      game.pushOn();
+      expect(game.fareChain.multiplier, 3);
+      expect(game.bankPrompt.isActive, isFalse);
+
+      game.pushOn();
+      expect(game.fareChain.multiplier, 3,
+          reason: 'a resolved prompt cannot pay out again');
+    });
+
+    test('a fresh shift clears the decision and the banked summary',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      deliverFare(game, game.course!.fare(0));
+      game.bankShift();
+      expect(game.lastBankedScore, isNotNull);
+
+      await game.startEndlessRun(seed: 43);
+
+      expect(game.lastBankedScore, isNull);
+      expect(game.lastBankedDistance, 0);
+      expect(game.bankPrompt.isActive, isFalse);
+      expect(game.overlays.isActive('bankOrPush'), isFalse);
+      expect(game.score, 0);
+      expect(game.isGameActive, isTrue);
+    });
+  });
+
+  group('the prompt widget', () {
+    /// Mounts an endless game and delivers [fare], inside [tester.runAsync]:
+    /// mounting loads real sprite assets, and real IO can only complete in
+    /// the test binding's real-async window — the fake-async zone of a
+    /// widget test would deadlock on it. Everything after this call is
+    /// synchronous game ticks, which the fake-async zone handles fine.
+    Future<TaxiGame> armedGame(
+      WidgetTester tester,
+      EndlessFare fare,
+    ) async {
+      // runAsync is declared Future<T?> — the callback cannot return null
+      // here, so unwrap.
+      final game = await tester.runAsync<TaxiGame>(() async {
+        final game = await mountGame(endlessGame(42));
+        await tickAndSettle(game);
+        deliverFare(game, fare);
+        return game;
+      });
+      return game!;
+    }
+
+    Future<void> showPrompt(WidgetTester tester, TaxiGame game) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: BankPromptOverlay(game: game)),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150)); // poll tick
+    }
+
+    testWidgets('offers both options priced, over a live game',
+        (tester) async {
+      // The course is a pure function of the seed, so the fare the
+      // mounted game will hold can be looked up before mounting.
+      final fare0 = EndlessCourse(seed: 42).fare(0);
+      final game = await armedGame(tester, fare0);
+      await showPrompt(tester, game);
+
+      expect(find.text('BANK ${fare0.reward}'), findsOneWidget);
+      expect(find.text('PUSH ON \u00d73'), findsOneWidget,
+          reason: 'the push button shows the multiplier it buys');
+      expect(find.text('SCORE ${fare0.reward}'), findsOneWidget);
+      expect(find.byKey(const ValueKey('bank_prompt_bar')), findsOneWidget,
+          reason: 'the window shows itself running out');
+    });
+
+    testWidgets('renders nothing while no choice is open', (tester) async {
+      final game = (await tester.runAsync<TaxiGame>(() async {
+        final game = await mountGame(endlessGame(42));
+        await tickAndSettle(game);
+        return game;
+      }))!;
+      await showPrompt(tester, game);
+
+      expect(find.text('BANK OR PUSH?'), findsNothing);
+    });
+
+    testWidgets('tapping PUSH ON raises the multiplier and stands down',
+        (tester) async {
+      final fare0 = EndlessCourse(seed: 42).fare(0);
+      final game = await armedGame(tester, fare0);
+      await showPrompt(tester, game);
+
+      await tester.tap(find.text('PUSH ON \u00d73'));
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(game.fareChain.multiplier, 3);
+      expect(game.bankPrompt.isActive, isFalse);
+      expect(game.isGameActive, isTrue, reason: 'pushing keeps the shift');
+      expect(find.text('BANK ${fare0.reward}'), findsNothing,
+          reason: 'the prompt stood down with the choice');
+    });
+
+    testWidgets('tapping BANK pays out and ends the shift', (tester) async {
+      final coinsBefore = gameState.totalCoins;
+      final fare0 = EndlessCourse(seed: 42).fare(0);
+      final game = await armedGame(tester, fare0);
+      await showPrompt(tester, game);
+
+      await tester.tap(find.text('BANK ${fare0.reward}'));
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(game.lastBankedScore, fare0.reward);
+      expect(gameState.totalCoins, coinsBefore + fare0.reward + fare0.reward);
+      expect(game.isGameActive, isFalse);
+      expect(game.overlays.isActive('shiftBanked'), isTrue);
+    });
+  });
+}

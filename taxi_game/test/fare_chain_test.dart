@@ -130,6 +130,59 @@ void main() {
       expect(chain.score, 0);
     });
 
+    test('pushing on steps the multiplier past the delivery step '
+        '(issue #13)', () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+
+      chain.completeFare(passenger, fareValue: 50);
+      expect(chain.multiplier, 2, reason: 'the delivery alone steps to 2x');
+
+      chain.applyPushBonus();
+      expect(chain.multiplier, 3,
+          reason: 'the push bonus rides on top of the delivery step');
+      expect(chain.score, 50, reason: 'pushing pays nothing by itself');
+
+      // The boosted multiplier prices the next fare.
+      final next = fareOf('b', 400, -300);
+      chain.startFare(next);
+      chain.completeFare(next, fareValue: 50);
+      expect(chain.score, 50 + 150);
+    });
+
+    test('push bonuses stack across a pushed chain', () {
+      final chain = FareChain();
+
+      var multiplier = 1;
+      for (var i = 0; i < 3; i++) {
+        final passenger = fareOf('p$i', 400, -300);
+        chain.startFare(passenger);
+        chain.completeFare(passenger, fareValue: 10);
+        multiplier += FareChain.multiplierStep;
+        chain.applyPushBonus();
+        multiplier += FareChain.pushBonusStep;
+        expect(chain.multiplier, multiplier);
+      }
+
+      // Two steps a dropoff: 1x -> 3x -> 5x -> 7x.
+      expect(chain.multiplier, 7);
+    });
+
+    test('an expiry wipes the push bonus with the rest of the chain', () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+      chain.completeFare(passenger, fareValue: 50);
+      chain.applyPushBonus();
+      expect(chain.multiplier, 3);
+
+      chain.startFare(fareOf('b', 400, -300));
+      chain.update(FareChain.maxFareSeconds + 2);
+      expect(chain.multiplier, 1,
+          reason: 'the reset is total — no pushed multiplier survives');
+    });
+
     test('every passenger aboard carries their own countdown', () {
       final chain = FareChain();
       final short = fareOf('short', 400, 0); // 400 px
@@ -240,6 +293,10 @@ void main() {
       expect(game.fareChain.isCarryingFare, isFalse);
       expect(gameState.totalCoins, 50,
           reason: 'the coin economy is unchanged by scoring');
+      // The bank-or-push offer is an endless-shift thing (issue #13):
+      // levels settle at completion, so no choice is armed here.
+      expect(game.bankPrompt.isActive, isFalse);
+      expect(game.overlays.isActive('bankOrPush'), isFalse);
     });
 
     test('reloading a level resets the score with the run', () async {
