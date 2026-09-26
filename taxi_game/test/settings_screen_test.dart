@@ -9,6 +9,7 @@ import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/credits_screen.dart';
 import 'package:taxi_game/ui/screens/garage_screen.dart';
 import 'package:taxi_game/ui/screens/main_menu_screen.dart';
+import 'package:taxi_game/ui/screens/records_screen.dart';
 import 'package:taxi_game/ui/screens/settings_screen.dart';
 import 'package:taxi_game/ui/screens/stats_screen.dart';
 
@@ -166,6 +167,19 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(CreditsScreen), findsOneWidget);
+    });
+
+    testWidgets('records is reachable from settings', (tester) async {
+      // The records screen (issue #21) is where personal bests and the
+      // achievement set live; the tile must lead to the real screen.
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('settings_records_tile')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(RecordsScreen), findsOneWidget);
+      expect(find.textContaining('coming soon'), findsNothing);
     });
 
     testWidgets('shift stats is reachable from settings', (tester) async {

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/systems/lives.dart';
 import 'package:taxi_game/game/systems/run_summary.dart';
+import 'package:taxi_game/models/achievements.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
@@ -202,6 +203,44 @@ void main() {
       expect(game.isDailyShift, isFalse,
           reason: "the day's attempt is spent; the drive on is free play");
       expect(game.isGameActive, isTrue);
+    });
+  });
+
+  group('achievement unlock banners (issue #21)', () {
+    testWidgets('a shift that earned achievements names each one',
+        (tester) async {
+      final game = endlessGame();
+      const summary = RunSummary(
+        outcome: ShiftOutcome.banked,
+        score: 240,
+        bestChain: 5,
+        faresDelivered: 12,
+        distancePx: 12340,
+        coinsEarned: 195,
+        isPersonalBest: true,
+        previousBest: 180,
+        achievementsUnlocked: [
+          AchievementCatalog.chain3,
+          AchievementCatalog.chain5,
+        ],
+      );
+      await showPanel(tester, game, summary);
+
+      expect(find.text('ACHIEVEMENT UNLOCKED'), findsNWidgets(2));
+      expect(find.byKey(const ValueKey('achievement_unlock_chain_3')),
+          findsOneWidget);
+      expect(find.byKey(const ValueKey('achievement_unlock_chain_5')),
+          findsOneWidget);
+      expect(find.text(AchievementCatalog.chain3.title), findsOneWidget);
+      expect(find.text(AchievementCatalog.chain5.title), findsOneWidget);
+    });
+
+    testWidgets('an ordinary shift shows no unlock banners',
+        (tester) async {
+      final game = endlessGame();
+      await showPanel(tester, game, bankedSummary);
+
+      expect(find.text('ACHIEVEMENT UNLOCKED'), findsNothing);
     });
   });
 

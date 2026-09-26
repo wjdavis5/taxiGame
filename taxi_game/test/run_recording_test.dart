@@ -164,6 +164,75 @@ void main() {
     });
   });
 
+  group('achievements ride the same pipe (issue #21)', () {
+    /// Delivers [fare] by driving to its kerbs in steps. A stop's zones
+    /// spawn only as the camera nears it, and a freshly added zone needs
+    /// the microtask queue drained before its async `onLoad` finishes and
+    /// its hitbox registers (the same headless-test reason [drain]
+    /// exists) — so settle below the kerb until the zone is live, then
+    /// step the last stretch in like a real approach.
+    Future<void> deliverFareAhead(TaxiGame game, EndlessFare fare) async {
+      for (var i = 0;
+          i < 120 && game.fareController!.activeFareCount == 0;
+          i++) {
+        game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 200);
+        game.update(1 / 60);
+        await drain();
+      }
+      for (var i = 0; i < 120 && !game.player.hasPassenger; i++) {
+        game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+      expect(game.player.hasPassenger, isTrue, reason: 'passenger boarded');
+      for (var i = 0; i < 120 && game.player.hasPassenger; i++) {
+        game.player.position = Vector2(fare.dropoff.x, fare.dropoff.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+      expect(game.player.hasPassenger, isFalse, reason: 'fare delivered');
+    }
+
+    test('the settled summary carries what the shift unlocked', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      // Two on-time deliveries peak the chain at ×3 (1x → 2x → 3x).
+      await deliverFareAhead(game, game.course!.fare(0));
+      await deliverFareAhead(game, game.course!.fare(1));
+
+      game.bankShift();
+
+      // The bank is clean (no lives lost), so the shift earned the
+      // first chain milestone and the first clean bank.
+      final unlocked = game.lastRunSummary!.achievementsUnlocked;
+      expect(unlocked.map((a) => a.id), containsAll(<String>[
+        'chain_3',
+        'bank_clean_1',
+      ]));
+
+      // Drained, not duplicated: the service queue is empty now, so a
+      // second panel can never re-announce the same award.
+      expect(gameState.takePendingAchievementUnlocks(), isEmpty);
+    });
+
+    test('a shift that earns nothing carries an empty list', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      // No fares, no distance, and a wreck — no bank, no chain: nothing
+      // in the catalog measures above its threshold.
+      game.onCrash();
+      playOutStall(game);
+      game.onCrash();
+      playOutStall(game);
+      game.onCrash();
+
+      expect(game.lastRunSummary!.achievementsUnlocked, isEmpty,
+          reason: 'a wreck with no chain and no history earns nothing');
+    });
+  });
+
   group('a fresh shift starts a clean stats sheet', () {
     test('DRIVE AGAIN resets the run-local trackers', () async {
       final game = await mountGame(endlessGame(42));

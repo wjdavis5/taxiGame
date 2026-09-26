@@ -7,6 +7,7 @@ import 'credits_screen.dart';
 import 'daily_screen.dart';
 import 'game_screen.dart';
 import 'garage_screen.dart';
+import 'records_screen.dart';
 import 'settings_screen.dart';
 
 /// Main menu screen - entry point of the app
@@ -245,6 +246,26 @@ class MainMenuScreen extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (context) => const GarageScreen(),
+                        ),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Records button (issue #21): personal bests and the
+                  // achievement set — with no leaderboards in a fully
+                  // offline game, this is where the player's history
+                  // lives.
+                  _MenuButton(
+                    buttonKey: const Key('records_button'),
+                    icon: Icons.emoji_events,
+                    label: 'RECORDS',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const RecordsScreen(),
                         ),
                       );
                     },

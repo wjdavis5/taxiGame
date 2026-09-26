@@ -1,3 +1,5 @@
+import '../../models/achievements.dart';
+
 /// The settled record of an endless shift that has ended (issue #15) —
 /// the numbers the run-summary panel shows. Snapshotted the instant the
 /// shift ends, so the panel reads final numbers even though the game
@@ -16,6 +18,7 @@ class RunSummary {
     required this.coinsEarned,
     required this.isPersonalBest,
     required this.previousBest,
+    this.achievementsUnlocked = const [],
   });
 
   /// How the shift ended: paid out at a bank, or wrecked on the third
@@ -47,6 +50,11 @@ class RunSummary {
   /// The personal best before this shift ran, so the summary can show the
   /// number that was (or wasn't) beaten.
   final int previousBest;
+
+  /// Achievements this shift earned (issue #21), snapshotted from the
+  /// service's unlock queue the instant the shift settled — the panel
+  /// names each one. Empty for a shift that earned nothing.
+  final List<AchievementDef> achievementsUnlocked;
 
   /// World px to metres — the same scale the HUD's distance badge uses.
   static const double pixelsPerMetre = 10.0;

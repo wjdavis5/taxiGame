@@ -675,20 +675,13 @@ class TaxiGame extends FlameGame
   /// Only ever reached from the endless endings — a banked or wrecked
   /// shift — which is also when the shift enters the on-device history
   /// (issue #17): the same snapshot feeds the stats screen, the sole
-  /// tuning instrument in a game with no analytics.
+  /// tuning instrument in a game with no analytics. Recording the shift
+  /// is also what folds it into the lifetime records and evaluates the
+  /// achievements (issue #21), so the summary is built *after* the
+  /// record and carries whatever unlocked.
   void _finalizeRunSummary(ShiftOutcome outcome) {
     final previousBest = gameState.endlessBestScore;
     final isPersonalBest = gameState.recordEndlessScore(fareChain.score);
-    lastRunSummary = RunSummary(
-      outcome: outcome,
-      score: fareChain.score,
-      bestChain: fareChain.bestMultiplier,
-      faresDelivered: faresDelivered,
-      distancePx: runDistance,
-      coinsEarned: _runCoinsEarned,
-      isPersonalBest: isPersonalBest,
-      previousBest: previousBest,
-    );
     gameState.recordEndlessRun(RunRecord(
       endedAtMs: DateTime.now().millisecondsSinceEpoch,
       distancePx: runDistance,
@@ -714,6 +707,24 @@ class TaxiGame extends FlameGame
         completedAtMs: DateTime.now().millisecondsSinceEpoch,
       ));
     }
+
+    // Achievements the shift just earned (issue #21): drained here, one
+    // call after the evaluations above, so the summary panel — the
+    // screen the shift's ending already owns — is where the player
+    // learns about them.
+    final unlockedAchievements = gameState.takePendingAchievementUnlocks();
+
+    lastRunSummary = RunSummary(
+      outcome: outcome,
+      score: fareChain.score,
+      bestChain: fareChain.bestMultiplier,
+      faresDelivered: faresDelivered,
+      distancePx: runDistance,
+      coinsEarned: _runCoinsEarned,
+      isPersonalBest: isPersonalBest,
+      previousBest: previousBest,
+      achievementsUnlocked: unlockedAchievements,
+    );
 
     // A finished daily-course run offers its path as the ghost (issue
     // #20) — the scoring daily itself or a ghost race, never free play

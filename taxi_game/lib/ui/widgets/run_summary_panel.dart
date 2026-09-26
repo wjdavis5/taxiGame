@@ -162,6 +162,62 @@ class RunSummaryPanel extends StatelessWidget {
                     color: Colors.white70,
                   ),
                 ),
+              // Achievements this shift earned (issue #21): one gold
+              // banner each, naming the award. This is the unlock
+              // notification — shift end is where every gameplay measure
+              // lands, so it is where the game tells you.
+              if (summary.achievementsUnlocked.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                for (final achievement in summary.achievementsUnlocked)
+                  Container(
+                    key: ValueKey('achievement_unlock_${achievement.id}'),
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade700,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.emoji_events,
+                          size: 32,
+                          color: Colors.black,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'ACHIEVEMENT UNLOCKED',
+                                key: ValueKey('achievement_unlock_label'),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.2,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              Text(
+                                achievement.title,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
               const SizedBox(height: 12),
               _statRow('Score', '${summary.score}'),
               _statRow('Best chain', '\u00d7${summary.bestChain}'),

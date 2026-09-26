@@ -125,6 +125,27 @@ void main() {
     expect(gameState.selectedVehicle, 'taxi_yellow');
   });
 
+  testWidgets('a purchase that grows the fleet announces the achievement',
+      (tester) async {
+    // The starter cab is owned from the first launch, so the first
+    // purchase is the second car — the TWO-CAB OPERATION tier (issue
+    // #21).
+    gameState.addCoins(1000);
+    await pumpGarage(tester);
+
+    expect(find.textContaining('Achievement unlocked'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('garage_buy_compact_red')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('garage_achievement_snackbar_cars_2')),
+        findsOneWidget);
+    expect(
+      find.textContaining('Achievement unlocked — TWO-CAB OPERATION'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('selecting an owned car swaps the equipment', (tester) async {
     gameState.addCoins(500);
     expect(gameState.unlockVehicle('sedan_blue', 250), isTrue);

@@ -273,13 +273,38 @@ class _VehicleCard extends StatelessWidget {
   }
 
   /// Buys the car. When the balance falls short the purchase is refused with
-  /// a message naming exactly how many more coins are needed.
+  /// a message naming exactly how many more coins are needed. A purchase
+  /// that grows the fleet is a gameplay event (issue #21): any achievement
+  /// the new car earned is announced here, where the purchase happened.
   void _purchase(BuildContext context) {
     final bought = gameState.unlockVehicle(vehicle.id, vehicle.price);
     if (bought) {
       // New wheels go straight into service so the purchase shows up in
       // play on the very next ride.
       gameState.selectVehicle(vehicle.id);
+      for (final achievement in gameState.takePendingAchievementUnlocks()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            key: Key('garage_achievement_snackbar_${achievement.id}'),
+            content: Row(
+              children: [
+                const Icon(Icons.emoji_events,
+                    size: 20, color: Colors.yellow),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Achievement unlocked — ${achievement.title}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
       return;
     }
     final shortfall = vehicle.price - gameState.totalCoins;

@@ -8,6 +8,7 @@ import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/main_menu_screen.dart';
+import 'package:taxi_game/ui/screens/records_screen.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -126,6 +127,27 @@ void main() {
     await tester.pump();
 
     expect(find.text('BEST 340'), findsOneWidget);
+  });
+
+  testWidgets('records button is present and opens the records screen',
+      (tester) async {
+    final storageService = StorageService();
+    await storageService.init();
+    final gameStateService = GameStateService(storageService);
+
+    await tester.pumpWidget(buildMenu(gameStateService, storageService));
+    await tester.pump();
+
+    final recordsButton = find.byKey(const Key('records_button'));
+    expect(recordsButton, findsOneWidget);
+    expect(tester.widget<ElevatedButton>(recordsButton).onPressed, isNotNull);
+    expect(find.text('RECORDS'), findsOneWidget);
+
+    await tester.ensureVisible(recordsButton);
+    await tester.tap(recordsButton);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(RecordsScreen), findsOneWidget);
   });
 
   group('daily shift (issue #19)', () {

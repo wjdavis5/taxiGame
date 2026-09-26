@@ -1,3 +1,5 @@
+import 'personal_bests.dart';
+
 /// Save data model that persists player progress
 class SaveData {
   int currentLevel;
@@ -5,7 +7,17 @@ class SaveData {
   int totalGems;
   List<String> unlockedVehicles;
   String selectedVehicle;
+
+  /// Achievements the player has earned (issue #21), keyed by the
+  /// achievement catalog's stable ids. Written by the achievement
+  /// evaluation in `GameStateService` — an id present with `true` is
+  /// earned, forever: achievements are never revoked, only reset with
+  /// the whole save.
   Map<String, bool> achievements;
+
+  /// The player's lifetime records (issue #21): best banked score,
+  /// longest chain, furthest distance, most fares in one shift.
+  PersonalBests personalBests;
 
   /// The best score any endless shift has ever ended with, banked or
   /// forfeited (issue #15). Compared against at every shift end.
@@ -20,8 +32,9 @@ class SaveData {
     required this.selectedVehicle,
     required this.achievements,
     this.endlessBestScore = 0,
+    PersonalBests? personalBests,
     required this.settings,
-  });
+  }) : personalBests = personalBests ?? PersonalBests();
 
   /// Create default save data for new players
   factory SaveData.createDefault() {
@@ -49,6 +62,12 @@ class SaveData {
       // Saves written before issue #15 have no best score yet; a missing
       // key means "no shift has ever ended", not a corrupt save.
       endlessBestScore: (json['endlessBestScore'] as int?) ?? 0,
+      // Saves written before issue #21 have no records block yet; a
+      // missing key means "nothing recorded", not a corrupt save.
+      personalBests: json['personalBests'] == null
+          ? PersonalBests()
+          : PersonalBests.fromJson(
+              json['personalBests'] as Map<String, dynamic>),
       settings: Settings.fromJson(json['settings'] as Map<String, dynamic>),
     );
   }
@@ -63,6 +82,7 @@ class SaveData {
       'selectedVehicle': selectedVehicle,
       'achievements': achievements,
       'endlessBestScore': endlessBestScore,
+      'personalBests': personalBests.toJson(),
       'settings': settings.toJson(),
     };
   }

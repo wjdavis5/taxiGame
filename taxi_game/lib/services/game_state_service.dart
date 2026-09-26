@@ -1,8 +1,10 @@
 import 'package:flutter/foundation.dart';
 import '../game/levels/level.dart';
 import '../game/systems/daily_shift.dart';
+import '../models/achievements.dart';
 import '../models/daily_result.dart';
 import '../models/ghost_trace.dart';
+import '../models/personal_bests.dart';
 import '../models/run_record.dart';
 import '../models/run_stats.dart';
 import '../models/save_data.dart';
@@ -32,6 +34,15 @@ class GameStateService extends ChangeNotifier {
   /// finished.
   GhostTrace? _dailyGhost;
 
+  /// Achievements earned by the most recent gameplay event and not yet
+  /// surfaced to the player (issue #21). The UI that caused the event —
+  /// the run-summary panel after a shift, a snackbar after a garage
+  /// purchase — drains it via [takePendingAchievementUnlocks]; the load
+  /// path evaluates without queueing, so a retro-award from an app
+  /// update never banners unasked.
+  final List<AchievementDef> _pendingAchievementUnlocks =
+      <AchievementDef>[];
+
   GameStateService(this._storageService) {
     _saveData = SaveData.createDefault();
   }
@@ -54,6 +65,74 @@ class GameStateService extends ChangeNotifier {
 
   /// The best score an endless shift has ever ended with (issue #15).
   int get endlessBestScore => _saveData.endlessBestScore;
+
+  /// The player's lifetime records (issue #21): best banked score,
+  /// longest chain, furthest distance, most fares in one shift.
+  PersonalBests get personalBests => _saveData.personalBests;
+
+  /// True when the achievement with [id] has been earned (issue #21).
+  /// The save's `achievements` map is the only source of truth — a
+  /// definition whose measure currently reads below its threshold can
+  /// still be earned, because earned means "was earned", forever.
+  bool isAchievementUnlocked(String id) => _saveData.achievements[id] == true;
+
+  /// How many achievements have been earned (issue #21).
+  int get unlockedAchievementCount =>
+      _saveData.achievements.values.where((earned) => earned).length;
+
+  /// The current achievement measures (issue #21): one snapshot of the
+  /// player's standing, rebuilt on demand from the records, the shift
+  /// history, the garage, and the daily history. The records screen
+  /// reads it for progress toward locked achievements; evaluation reads
+  /// it to decide awards.
+  AchievementState get achievementState => AchievementState(
+        bestBankedScore: _saveData.personalBests.bestBankedScore,
+        longestChain: _saveData.personalBests.longestChain,
+        furthestDistanceMetres:
+            _saveData.personalBests.furthestDistanceMetres.floor(),
+        mostFaresInOneShift: _saveData.personalBests.mostFaresInOneShift,
+        cleanBankedShifts: _runHistory
+            .where((record) => record.banked && record.livesLost == 0)
+            .length,
+        unlockedVehicleCount: _saveData.unlockedVehicles.length,
+        longestDailyStreak: AchievementCatalog.longestDailyStreak(
+          _dailyHistory,
+        ),
+      );
+
+  /// Drains the achievements unlocked by the most recent gameplay event
+  /// (issue #21): the caller that just caused an award — the shift-end
+  /// summary, the garage purchase — shows them and clears the queue.
+  List<AchievementDef> takePendingAchievementUnlocks() {
+    if (_pendingAchievementUnlocks.isEmpty) return const [];
+    final drained = List<AchievementDef>.of(_pendingAchievementUnlocks);
+    _pendingAchievementUnlocks.clear();
+    return drained;
+  }
+
+  /// Awards every achievement the current state has earned but the save
+  /// does not yet hold (issue #21), queueing each new award for the
+  /// unlock notification and persisting it into the save's
+  /// `achievements` map — the map that existed since the first save
+  /// schema and was, until now, never written by gameplay.
+  ///
+  /// [announce] false evaluates silently: no notification queue, no
+  /// listener broadcast — the load path's retro-award for achievements
+  /// introduced by an app update. The awards still persist.
+  void _evaluateAchievements({bool announce = true}) {
+    final state = achievementState;
+    var awardedAny = false;
+    for (final def in AchievementCatalog.all) {
+      if (isAchievementUnlocked(def.id)) continue;
+      if (!def.isEarned(state)) continue;
+      _saveData.achievements[def.id] = true;
+      awardedAny = true;
+      if (announce) _pendingAchievementUnlocks.add(def);
+    }
+    if (!awardedAny) return;
+    if (announce) notifyListeners();
+    save();
+  }
 
   /// Every recorded ended shift, oldest first (issue #17). The raw,
   /// per-shift history; see [runStats] for the aggregates.
@@ -157,6 +236,11 @@ class GameStateService extends ChangeNotifier {
     // The ghost trace loads with everything else (issue #20); a missing
     // or corrupt one just means no ghost to race, never a crash.
     _dailyGhost = _storageService.loadDailyGhost();
+    // A save can silently deserve achievements it has never been given
+    // (issue #21): this build ships awards an older build never knew
+    // about. Retro-award them once, quietly — no unlock banner fires
+    // from a load; the records screen simply shows them earned.
+    _evaluateAchievements(announce: false);
     notifyListeners();
   }
 
@@ -212,13 +296,33 @@ class GameStateService extends ChangeNotifier {
   /// the oldest records past [maxRecordedRuns], and persists it. Strictly
   /// local — this is the game's only tuning instrument, and it never
   /// leaves the device.
+  ///
+  /// The same shift is folded into the lifetime records (issue #21)
+  /// first — best banked score, longest chain, furthest distance, most
+  /// fares — and the achievements are then evaluated against the new
+  /// standing, because shift end is where every gameplay measure lands.
+  /// The evaluation runs **before the first await**: the shift-end flow
+  /// is fire-and-forget, and its very next synchronous step drains the
+  /// unlock queue to build the run summary — so the queue must be filled
+  /// before this method suspends on storage.
   Future<void> recordEndlessRun(RunRecord record) async {
+    final recordsImproved = _saveData.personalBests.applyRun(
+      score: record.score,
+      banked: record.banked,
+      longestChain: record.longestChain,
+      distancePx: record.distancePx,
+      faresDelivered: record.faresDelivered,
+    );
     _runHistory.add(record);
     if (_runHistory.length > maxRecordedRuns) {
       _runHistory.removeRange(0, _runHistory.length - maxRecordedRuns);
     }
     notifyListeners();
+    _evaluateAchievements();
     await _storageService.saveRunHistory(_runHistory);
+    // A record-setting shift must reach the disk even when it earns no
+    // achievement — the records live in the save, not the history.
+    if (recordsImproved) await save();
   }
 
   /// Records a completed Daily Shift (issue #19) and persists it. One
@@ -227,6 +331,13 @@ class GameStateService extends ChangeNotifier {
   /// no flow can overwrite a settled daily. Trims the oldest days past
   /// [maxRecordedDailyResults]. Strictly local — the shared course is
   /// derived from the date; nothing here is ever sent anywhere.
+  ///
+  /// The daily is also where a streak extends (issue #21), so the
+  /// achievements are re-evaluated with the day in — before a shift-end
+  /// evaluation could reach the same conclusion one call late. Like
+  /// [recordEndlessRun], the evaluation precedes the first await: the
+  /// caller drains the unlock queue synchronously right after this
+  /// fire-and-forget call.
   Future<void> recordDailyResult(DailyResult result) async {
     if (dailyResultFor(result.dateKey) != null) return;
     _dailyHistory.add(result);
@@ -235,6 +346,7 @@ class GameStateService extends ChangeNotifier {
           0, _dailyHistory.length - maxRecordedDailyResults);
     }
     notifyListeners();
+    _evaluateAchievements();
     await _storageService.saveDailyHistory(_dailyHistory);
   }
   
@@ -245,6 +357,10 @@ class GameStateService extends ChangeNotifier {
         _saveData.unlockedVehicles.add(vehicleId);
         notifyListeners();
         save();
+        // The garage is a gameplay event too (issue #21): cars-collected
+        // achievements are evaluated the moment the fleet grows, so the
+        // purchase that earned one can announce it.
+        _evaluateAchievements();
       }
       return true;
     }
@@ -295,6 +411,11 @@ class GameStateService extends ChangeNotifier {
     // best run with everything else.
     _dailyGhost = null;
     _storageService.clearDailyGhost();
+    // The records and achievements are progress like everything else
+    // (issue #21): the fresh save has empty records and an empty
+    // achievements map, and any unlock still queued to be announced dies
+    // with the save that earned it.
+    _pendingAchievementUnlocks.clear();
     notifyListeners();
     save();
   }
