@@ -1,56 +1,24 @@
 {
-    "levelNumber":  9,
-    "name":  "Marathon Run",
-    "difficulty":  "hard",
-    "pickupPoints":  [
-                         [
-                             85,
-                             650
-                         ],
-                         [
-                             315,
-                             350
-                         ]
-                     ],
-    "dropoffPoints":  [
-                          [
-                              315,
-                              -350
-                          ],
-                          [
-                              85,
-                              -850
-                          ]
-                      ],
-    "coinReward":  250,
-    "trafficPattern":  {
-                           "name":  "expert_chaos",
-                           "spawnInterval":  1.3,
-                           "lanes":  [
-                                         {
-                                             "laneX":  160,
-                                             "speedRange":  {
-                                                                "min":  170,
-                                                                "max":  230
-                                                            },
-                                             "spawnProbability":  0.9
-                                         },
-                                         {
-                                             "laneX":  240,
-                                             "speedRange":  {
-                                                                "min":  170,
-                                                                "max":  230
-                                                            },
-                                             "spawnProbability":  0.9
-                                         },
-                                         {
-                                             "laneX":  200,
-                                             "speedRange":  {
-                                                                "min":  170,
-                                                                "max":  230
-                                                            },
-                                             "spawnProbability":  0.35
-                                         }
-                                     ]
-                       }
+  "levelNumber": 9,
+  "name": "Bank It",
+  "difficulty": "hard",
+  "bankPrompt": true,
+  "pickupPoints": [
+    [85, 300],
+    [315, 0]
+  ],
+  "dropoffPoints": [
+    [315, -350],
+    [85, -650]
+  ],
+  "coinReward": 250,
+  "trafficPattern": {
+    "name": "lesson_hard",
+    "spawnInterval": 2.0,
+    "lanes": [
+      { "laneX": 160, "speedRange": { "min": 115, "max": 155 }, "spawnProbability": 0.65 },
+      { "laneX": 240, "speedRange": { "min": 115, "max": 155 }, "spawnProbability": 0.65 },
+      { "laneX": 200, "speedRange": { "min": 115, "max": 155 }, "spawnProbability": 0.26 }
+    ]
+  }
 }

@@ -1,64 +1,25 @@
 {
-    "levelNumber":  7,
-    "name":  "Triple Threat",
-    "difficulty":  "hard",
-    "pickupPoints":  [
-                         [
-                             85,
-                             500
-                         ],
-                         [
-                             315,
-                             300
-                         ],
-                         [
-                             315,
-                             100
-                         ]
-                     ],
-    "dropoffPoints":  [
-                          [
-                              315,
-                              -100
-                          ],
-                          [
-                              315,
-                              -400
-                          ],
-                          [
-                              85,
-                              -700
-                          ]
-                      ],
-    "coinReward":  200,
-    "trafficPattern":  {
-                           "name":  "heavy_fast",
-                           "spawnInterval":  1.8,
-                           "lanes":  [
-                                         {
-                                             "laneX":  160,
-                                             "speedRange":  {
-                                                                "min":  150,
-                                                                "max":  210
-                                                            },
-                                             "spawnProbability":  0.8
-                                         },
-                                         {
-                                             "laneX":  240,
-                                             "speedRange":  {
-                                                                "min":  150,
-                                                                "max":  210
-                                                            },
-                                             "spawnProbability":  0.8
-                                         },
-                                         {
-                                             "laneX":  200,
-                                             "speedRange":  {
-                                                                "min":  150,
-                                                                "max":  210
-                                                            },
-                                             "spawnProbability":  0.3
-                                         }
-                                     ]
-                       }
+  "levelNumber": 7,
+  "name": "Chain Reaction",
+  "difficulty": "hard",
+  "pickupPoints": [
+    [85, 250],
+    [315, 0],
+    [85, -200]
+  ],
+  "dropoffPoints": [
+    [315, -100],
+    [85, -350],
+    [315, -550]
+  ],
+  "coinReward": 200,
+  "trafficPattern": {
+    "name": "lesson_medium_fast",
+    "spawnInterval": 2.5,
+    "lanes": [
+      { "laneX": 160, "speedRange": { "min": 105, "max": 145 }, "spawnProbability": 0.55 },
+      { "laneX": 240, "speedRange": { "min": 105, "max": 145 }, "spawnProbability": 0.55 },
+      { "laneX": 200, "speedRange": { "min": 105, "max": 145 }, "spawnProbability": 0.22 }
+    ]
+  }
 }

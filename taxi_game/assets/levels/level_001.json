@@ -1,48 +1,21 @@
 {
-    "levelNumber":  1,
-    "name":  "First Ride",
-    "difficulty":  "easy",
-    "pickupPoints":  [
-                         [
-                             315,
-                             400
-                         ]
-                     ],
-    "dropoffPoints":  [
-                          [
-                              315,
-                              -300
-                          ]
-                      ],
-    "coinReward":  50,
-    "trafficPattern":  {
-                           "name":  "light",
-                           "spawnInterval":  4.0,
-                           "lanes":  [
-                                         {
-                                             "laneX":  160,
-                                             "speedRange":  {
-                                                                "min":  80,
-                                                                "max":  120
-                                                            },
-                                             "spawnProbability":  0.4
-                                         },
-                                         {
-                                             "laneX":  240,
-                                             "speedRange":  {
-                                                                "min":  80,
-                                                                "max":  120
-                                                            },
-                                             "spawnProbability":  0.4
-                                         },
-                                         {
-                                             "laneX":  200,
-                                             "speedRange":  {
-                                                                "min":  80,
-                                                                "max":  120
-                                                            },
-                                             "spawnProbability":  0.15
-                                         }
-                                     ]
-                       }
+  "levelNumber": 1,
+  "name": "First Ride",
+  "difficulty": "easy",
+  "pickupPoints": [
+    [315, 400]
+  ],
+  "dropoffPoints": [
+    [315, -300]
+  ],
+  "coinReward": 50,
+  "trafficPattern": {
+    "name": "lesson_light",
+    "spawnInterval": 4.5,
+    "lanes": [
+      { "laneX": 160, "speedRange": { "min": 70, "max": 100 }, "spawnProbability": 0.25 },
+      { "laneX": 240, "speedRange": { "min": 70, "max": 100 }, "spawnProbability": 0.25 },
+      { "laneX": 200, "speedRange": { "min": 70, "max": 100 }, "spawnProbability": 0.1 }
+    ]
+  }
 }

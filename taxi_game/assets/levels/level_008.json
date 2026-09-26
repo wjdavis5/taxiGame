@@ -1,48 +1,25 @@
 {
-    "levelNumber":  8,
-    "name":  "Narrow Escape",
-    "difficulty":  "hard",
-    "pickupPoints":  [
-                         [
-                             315,
-                             450
-                         ]
-                     ],
-    "dropoffPoints":  [
-                          [
-                              315,
-                              -550
-                          ]
-                      ],
-    "coinReward":  225,
-    "trafficPattern":  {
-                           "name":  "very_heavy",
-                           "spawnInterval":  1.5,
-                           "lanes":  [
-                                         {
-                                             "laneX":  160,
-                                             "speedRange":  {
-                                                                "min":  160,
-                                                                "max":  220
-                                                            },
-                                             "spawnProbability":  0.85
-                                         },
-                                         {
-                                             "laneX":  240,
-                                             "speedRange":  {
-                                                                "min":  160,
-                                                                "max":  220
-                                                            },
-                                             "spawnProbability":  0.85
-                                         },
-                                         {
-                                             "laneX":  200,
-                                             "speedRange":  {
-                                                                "min":  160,
-                                                                "max":  220
-                                                            },
-                                             "spawnProbability":  0.3
-                                         }
-                                     ]
-                       }
+  "levelNumber": 8,
+  "name": "Keep the Chain",
+  "difficulty": "hard",
+  "pickupPoints": [
+    [315, 300],
+    [85, -50],
+    [315, -300]
+  ],
+  "dropoffPoints": [
+    [85, -200],
+    [315, -450],
+    [85, -800]
+  ],
+  "coinReward": 225,
+  "trafficPattern": {
+    "name": "lesson_medium_heavy",
+    "spawnInterval": 2.2,
+    "lanes": [
+      { "laneX": 160, "speedRange": { "min": 110, "max": 150 }, "spawnProbability": 0.6 },
+      { "laneX": 240, "speedRange": { "min": 110, "max": 150 }, "spawnProbability": 0.6 },
+      { "laneX": 200, "speedRange": { "min": 110, "max": 150 }, "spawnProbability": 0.24 }
+    ]
+  }
 }

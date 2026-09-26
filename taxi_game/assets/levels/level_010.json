@@ -1,64 +1,26 @@
 {
-    "levelNumber":  10,
-    "name":  "Final Challenge",
-    "difficulty":  "expert",
-    "pickupPoints":  [
-                         [
-                             85,
-                             700
-                         ],
-                         [
-                             315,
-                             450
-                         ],
-                         [
-                             315,
-                             200
-                         ]
-                     ],
-    "dropoffPoints":  [
-                          [
-                              315,
-                              -200
-                          ],
-                          [
-                              315,
-                              -550
-                          ],
-                          [
-                              85,
-                              -900
-                          ]
-                      ],
-    "coinReward":  300,
-    "trafficPattern":  {
-                           "name":  "nightmare",
-                           "spawnInterval":  1.0,
-                           "lanes":  [
-                                         {
-                                             "laneX":  160,
-                                             "speedRange":  {
-                                                                "min":  180,
-                                                                "max":  250
-                                                            },
-                                             "spawnProbability":  0.95
-                                         },
-                                         {
-                                             "laneX":  240,
-                                             "speedRange":  {
-                                                                "min":  180,
-                                                                "max":  250
-                                                            },
-                                             "spawnProbability":  0.95
-                                         },
-                                         {
-                                             "laneX":  200,
-                                             "speedRange":  {
-                                                                "min":  180,
-                                                                "max":  250
-                                                            },
-                                             "spawnProbability":  0.4
-                                         }
-                                     ]
-                       }
+  "levelNumber": 10,
+  "name": "Graduation Shift",
+  "difficulty": "hard",
+  "bankPrompt": true,
+  "pickupPoints": [
+    [315, 350],
+    [85, 0],
+    [315, -250]
+  ],
+  "dropoffPoints": [
+    [85, -250],
+    [315, -400],
+    [85, -800]
+  ],
+  "coinReward": 300,
+  "trafficPattern": {
+    "name": "lesson_graduation",
+    "spawnInterval": 1.8,
+    "lanes": [
+      { "laneX": 160, "speedRange": { "min": 125, "max": 165 }, "spawnProbability": 0.7 },
+      { "laneX": 240, "speedRange": { "min": 125, "max": 165 }, "spawnProbability": 0.7 },
+      { "laneX": 200, "speedRange": { "min": 125, "max": 165 }, "spawnProbability": 0.3 }
+    ]
+  }
 }

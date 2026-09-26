@@ -45,16 +45,27 @@ class TaxiGame extends FlameGame
   final LevelLoaderService levelLoader;
   final GameStateService gameState;
 
-  /// When non-null the game runs an endless procedural run (issue #11)
-  /// instead of a hand-made level: recycled road chunks, continuously
-  /// generated fares, and distance-curve traffic. The same seed always
-  /// reproduces the identical course.
+  /// When non-null the game was constructed to run an endless procedural
+  /// run (issue #11) instead of a hand-made level: recycled road chunks,
+  /// continuously generated fares, and distance-curve traffic. The same
+  /// seed always reproduces the identical course.
   final int? endlessSeed;
 
-  bool get isEndless => endlessSeed != null;
+  /// The seed of the endless run in progress; null in level mode. Set by
+  /// [startEndlessRun] — which is also how the tutorial handoff (issue
+  /// #16) starts a shift on a game constructed for the ladder — so it,
+  /// not the constructor field alone, is what [runSeed] reads back.
+  int? _activeRunSeed;
+
+  /// True while an endless run is in progress: either the game was built
+  /// for one, or — after the tutorial ladder's last rung (issue #16) — a
+  /// level-mode game handed off to one via [startFirstShift]. Everything
+  /// that branches on the mode (crash flow, banking, the HUD) reads this,
+  /// so the handoff really does change modes.
+  bool get isEndless => endlessSeed != null || course != null;
 
   /// The seed of the endless run in progress; null in level mode.
-  int get runSeed => endlessSeed!;
+  int get runSeed => _activeRunSeed ?? endlessSeed!;
 
   late PlayerVehicle player;
   late GameLevel currentLevel;
@@ -117,6 +128,12 @@ class TaxiGame extends FlameGame
 
   bool isGameActive = false;
   int currentLevelNumber = 1;
+
+  /// Whether a level follows the one on screen (issue #16). Set at every
+  /// [loadLevel]; false past the last rung of the tutorial ladder, which
+  /// is how the completion panel knows to offer the Endless handoff
+  /// instead of a NEXT LEVEL button that dead-ends.
+  bool hasNextLevel = false;
 
   /// How far into an endless run the taxi has driven, in px. Zero in
   /// level mode. Stays readable while a crash stall holds the world (the
@@ -190,14 +207,15 @@ class TaxiGame extends FlameGame
       return;
     }
 
-    // If the save points past the last level (all levels beaten),
-    // replay the final level instead of silently falling back.
-    var levelNumber = gameState.currentLevel;
-    if (!await levelLoader.levelExists(levelNumber)) {
-      final total = await levelLoader.getTotalLevels();
-      levelNumber = total > 0 ? total : 1;
+    // A save pointing past the last level means the tutorial ladder is
+    // finished (issue #16): the ladder's whole job is to hand the player
+    // to Endless, so PLAY opens onto a fresh shift — never an endless
+    // replay of level 10.
+    if (!await levelLoader.levelExists(gameState.currentLevel)) {
+      await startEndlessRun(seed: freshSeed());
+      return;
     }
-    await loadLevel(levelNumber);
+    await loadLevel(gameState.currentLevel);
   }
 
   /// Starts an endless procedural run (issue #11): recycled road chunks,
@@ -206,6 +224,7 @@ class TaxiGame extends FlameGame
   Future<void> startEndlessRun({required int seed}) async {
     isGameActive = false;
     lastImpact = null;
+    _activeRunSeed = seed;
 
     // Clear any impact juice left over from the previous run (issue #7),
     // along with the lives budget and any crash stall it was mid-way
@@ -288,8 +307,27 @@ class TaxiGame extends FlameGame
     _applyShake(0); // restores the viewport position, dropping any shake
 
     currentLevel = await levelLoader.loadLevel(levelNumber);
+
+    // A level run has no endless systems. Clear any a previous run left
+    // behind: [isEndless] is what routes crashes, banking, and the HUD,
+    // and a stale course would keep the level wearing the shift's rules
+    // (issue #16 lets one game hand off between the two modes).
+    course = null;
+    fareController = null;
+    roadChunks = null;
+    _activeRunSeed = null;
+
+    // Whether another rung follows this one (issue #16): the completion
+    // panel reads it to offer NEXT LEVEL, or — past the last rung — the
+    // handoff to Endless.
+    hasNextLevel = await levelLoader.levelExists(levelNumber + 1);
+
     fareChain.reset();
     _dismissBankPrompt();
+    // A bank's payout line belongs to the run that earned it (issue #16
+    // teaches banking inside the ladder, and the completion panel shows
+    // the payout) — never to the level loaded after it.
+    lastBankedScore = null;
 
     // Tear down the previous level, if any.
     world.removeAll(world.children.toList());
@@ -408,6 +446,13 @@ class TaxiGame extends FlameGame
 
     if (passengersDelivered >= passengers.length) {
       _completeLevel();
+    } else if (currentLevel.bankPromptEnabled) {
+      // The banking lesson (issue #16): on the levels that teach it, every
+      // dropoff still leaving fares undelivered asks the same timed
+      // question an endless dropoff does — bank the score and settle for
+      // a sure payout, or push on at an increased multiplier with the
+      // score at risk. The prompt rides above the live level either way.
+      _offerBankOrPush();
     }
   }
 
@@ -459,13 +504,31 @@ class TaxiGame extends FlameGame
   }
 
   /// Bank: the accumulated score becomes permanent — paid into the wallet
-  /// 1:1 in coins — and the shift ends. Everything unbanked would have
-  /// been forfeited by ending the shift any other way (a crash, or
-  /// later, the third life — issue #14), which is exactly the pressure
-  /// the choice is designed to apply.
+  /// 1:1 in coins — and the run ends. Everything unbanked would have been
+  /// forfeited by ending the run any other way (a crash, or later, the
+  /// third life — issue #14), which is exactly the pressure the choice is
+  /// designed to apply.
+  ///
+  /// In a level that teaches banking (issue #16) the run is the level, so
+  /// banking settles it as a success — [_bankAndCompleteLevel].
   void bankShift() {
     if (bankPrompt.bank() == null) return;
-    _endShiftAsBanked();
+    if (isEndless) {
+      _endShiftAsBanked();
+    } else {
+      _bankAndCompleteLevel();
+    }
+  }
+
+  /// Banking inside the tutorial ladder (issue #16): the same payout a
+  /// bank makes in an endless shift — the chain score converted to coins
+  /// 1:1 — and the level settles as a success, unlocking the next rung.
+  /// The fares left undelivered are the trade the lesson is about: a sure
+  /// payout now against a bigger, riskier one had the player pushed on.
+  void _bankAndCompleteLevel() {
+    lastBankedScore = fareChain.score;
+    gameState.addCoins(lastBankedScore!);
+    _completeLevel();
   }
 
   /// Push on: keep driving at the increased multiplier. The window
@@ -532,6 +595,12 @@ class TaxiGame extends FlameGame
     _freezePlayer();
     trafficSpawner.pause();
 
+    // Completing the level supersedes any open bank-or-push choice
+    // (issue #16): the last fare's delivery can land while a prompt from
+    // the previous one is still up, and a settled level owes no payout on
+    // top of its completion.
+    _dismissBankPrompt();
+
     // A volley of coins streams from the taxi to the HUD counter as the
     // reward lands (issue #7).
     for (var i = 0; i < 6; i++) {
@@ -561,7 +630,9 @@ class TaxiGame extends FlameGame
     loadLevel(currentLevelNumber);
   }
 
-  /// Advances to the next level. Returns false if there is none.
+  /// Advances to the next level. Returns false past the last rung of the
+  /// tutorial ladder (issue #16) — there, the completion panel offers the
+  /// Endless handoff via [startFirstShift] instead.
   Future<bool> startNextLevel() async {
     final next = currentLevelNumber + 1;
     if (!await levelLoader.levelExists(next)) {
@@ -570,6 +641,16 @@ class TaxiGame extends FlameGame
     overlays.remove('levelComplete');
     await loadLevel(next);
     return true;
+  }
+
+  /// The tutorial handoff (issue #16): the ladder is finished, so the
+  /// completion panel's button starts the player's first endless shift —
+  /// in the same session, on the same road, with no trip back to the
+  /// menu. The lesson levels taught in safe isolation now run for real:
+  /// three lives, a live bank, and a score worth protecting.
+  void startFirstShift() {
+    overlays.remove('levelComplete');
+    startEndlessRun(seed: freshSeed());
   }
 
   /// A judged player–traffic crash (issues #6, #14). Endless runs route

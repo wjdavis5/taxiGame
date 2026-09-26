@@ -46,7 +46,7 @@ class _GameScreenState extends State<GameScreen> {
               'hud': (context, TaxiGame game) => HudOverlay(game: game),
               'pauseMenu': (context, TaxiGame game) => _buildPauseMenu(context),
               'levelComplete': (context, TaxiGame game) =>
-                  _buildLevelComplete(context),
+                  LevelCompleteOverlay(game: game),
               'levelFailed': (context, TaxiGame game) =>
                   LevelFailedOverlay(game: game),
               // The end-of-shift run summaries (issues #14, #15): the
@@ -113,28 +113,44 @@ class _GameScreenState extends State<GameScreen> {
       ),
     );
   }
+}
 
-  Widget _buildLevelComplete(BuildContext context) {
+/// The level-complete overlay, shared by the whole tutorial ladder.
+///
+/// Past the last rung it stops offering a NEXT LEVEL button that can only
+/// dead-end (issue #16) and becomes the handoff: the ladder is finished,
+/// the button starts the player's first endless shift in the same
+/// session. Public and self-contained so the ladder tests can pump it
+/// directly, like [LevelFailedOverlay].
+class LevelCompleteOverlay extends StatelessWidget {
+  const LevelCompleteOverlay({super.key, required this.game});
+
+  final TaxiGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    final handoff = !game.hasNextLevel;
+
     return Center(
       child: Container(
         padding: const EdgeInsets.all(20),
         margin: const EdgeInsets.symmetric(horizontal: 40),
         decoration: BoxDecoration(
-          color: Colors.green.shade700,
+          color: handoff ? Colors.amber.shade800 : Colors.green.shade700,
           borderRadius: BorderRadius.circular(20),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.check_circle,
+            Icon(
+              handoff ? Icons.local_taxi : Icons.check_circle,
               size: 80,
               color: Colors.white,
             ),
             const SizedBox(height: 20),
-            const Text(
-              'LEVEL COMPLETE!',
-              style: TextStyle(
+            Text(
+              handoff ? 'TUTORIAL COMPLETE!' : 'LEVEL COMPLETE!',
+              style: const TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
@@ -148,6 +164,17 @@ class _GameScreenState extends State<GameScreen> {
                 color: Colors.yellow,
               ),
             ),
+            // A bank's payout, for the levels that teach banking (issue
+            // #16): the chain score converted to coins at the dropoff.
+            // Null unless a bank happened this level.
+            if (game.lastBankedScore != null)
+              Text(
+                'Banked: +${game.lastBankedScore} score',
+                style: const TextStyle(
+                  fontSize: 18,
+                  color: Colors.white,
+                ),
+              ),
             // The run's fare-chain score (issue #12): the number a replay
             // tries to beat.
             Text(
@@ -157,25 +184,30 @@ class _GameScreenState extends State<GameScreen> {
                 color: Colors.white,
               ),
             ),
+            if (handoff) ...[
+              const SizedBox(height: 10),
+              const Text(
+                'You know the ropes — fares, chains, banking.\n'
+                'Your shift starts now.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.white,
+                ),
+              ),
+            ],
             const SizedBox(height: 30),
-            ElevatedButton(
-              onPressed: () async {
-                final navigator = Navigator.of(context);
-                final messenger = ScaffoldMessenger.of(context);
-                final hasNext = await game.startNextLevel();
-                if (!hasNext) {
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'You beat every level — the city is yours, cabbie!',
-                      ),
-                    ),
-                  );
-                  navigator.pop();
-                }
-              },
-              child: const Text('NEXT LEVEL'),
-            ),
+            handoff
+                ? ElevatedButton(
+                    onPressed: game.startFirstShift,
+                    child: const Text('START SHIFT'),
+                  )
+                : ElevatedButton(
+                    onPressed: () async {
+                      await game.startNextLevel();
+                    },
+                    child: const Text('NEXT LEVEL'),
+                  ),
             const SizedBox(height: 10),
             TextButton(
               onPressed: () {
@@ -191,7 +223,6 @@ class _GameScreenState extends State<GameScreen> {
       ),
     );
   }
-
 }
 
 /// The crash overlay. Names what hit the player and how fast, from the

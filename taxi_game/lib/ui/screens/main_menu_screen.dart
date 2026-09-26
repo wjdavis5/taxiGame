@@ -66,7 +66,12 @@ class MainMenuScreen extends StatelessWidget {
                         children: [
                           _buildStatRow(
                             Icons.star,
-                            'Level ${gameState.currentLevel}',
+                            // Past the last rung the ladder is finished
+                            // (issue #16): PLAY hands off to Endless, and
+                            // the stat stops promising an eleventh level.
+                            gameState.tutorialComplete
+                                ? 'TUTORIAL DONE'
+                                : 'Level ${gameState.currentLevel}',
                           ),
                           const SizedBox(height: 10),
                           _buildStatRow(

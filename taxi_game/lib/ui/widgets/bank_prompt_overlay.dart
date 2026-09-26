@@ -109,10 +109,16 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                     ),
                     const SizedBox(height: 4),
                     // The stake, in one line: banking is the only way to
-                    // keep it.
-                    const Text(
-                      'Bank ends the shift and keeps it — a crash loses it.',
-                      style: TextStyle(color: Colors.white70, fontSize: 11),
+                    // keep it. In the tutorial ladder (issue #16) the run
+                    // being settled is a level; in a shift, the shift.
+                    Text(
+                      widget.game.isEndless
+                          ? 'Bank ends the shift and keeps it — a crash '
+                              'loses it.'
+                          : 'Bank ends the level and keeps it — a crash '
+                              'loses it.',
+                      style: const TextStyle(
+                          color: Colors.white70, fontSize: 11),
                     ),
                     const SizedBox(height: 8),
                     // The window closing: pushes itself toward a default.

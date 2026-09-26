@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../game/levels/level.dart';
 import '../models/save_data.dart';
 import 'storage_service.dart';
 
@@ -13,6 +14,13 @@ class GameStateService extends ChangeNotifier {
   
   // Getters
   int get currentLevel => _saveData.currentLevel;
+
+  /// True once the save sits past the last rung of the tutorial ladder
+  /// (issue #16): the ladder is finished, and the game's answer to PLAY —
+  /// in the menu stat and the level loader alike — is the Endless
+  /// handoff, never a replay of the final level.
+  bool get tutorialComplete => _saveData.currentLevel > GameLevel.ladderLength;
+
   int get totalCoins => _saveData.totalCoins;
   int get totalGems => _saveData.totalGems;
   String get selectedVehicle => _saveData.selectedVehicle;

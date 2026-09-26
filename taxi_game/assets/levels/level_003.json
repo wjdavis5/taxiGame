@@ -1,56 +1,23 @@
 {
-    "levelNumber":  3,
-    "name":  "Two Fares",
-    "difficulty":  "easy",
-    "pickupPoints":  [
-                         [
-                             85,
-                             400
-                         ],
-                         [
-                             315,
-                             200
-                         ]
-                     ],
-    "dropoffPoints":  [
-                          [
-                              315,
-                              -200
-                          ],
-                          [
-                              85,
-                              -500
-                          ]
-                      ],
-    "coinReward":  100,
-    "trafficPattern":  {
-                           "name":  "medium",
-                           "spawnInterval":  3.0,
-                           "lanes":  [
-                                         {
-                                             "laneX":  160,
-                                             "speedRange":  {
-                                                                "min":  110,
-                                                                "max":  150
-                                                            },
-                                             "spawnProbability":  0.6
-                                         },
-                                         {
-                                             "laneX":  240,
-                                             "speedRange":  {
-                                                                "min":  110,
-                                                                "max":  150
-                                                            },
-                                             "spawnProbability":  0.6
-                                         },
-                                         {
-                                             "laneX":  200,
-                                             "speedRange":  {
-                                                                "min":  110,
-                                                                "max":  150
-                                                            },
-                                             "spawnProbability":  0.2
-                                         }
-                                     ]
-                       }
+  "levelNumber": 3,
+  "name": "Two Fares",
+  "difficulty": "easy",
+  "pickupPoints": [
+    [85, 300],
+    [315, 50]
+  ],
+  "dropoffPoints": [
+    [315, -250],
+    [85, -600]
+  ],
+  "coinReward": 100,
+  "trafficPattern": {
+    "name": "lesson_light_medium",
+    "spawnInterval": 3.8,
+    "lanes": [
+      { "laneX": 160, "speedRange": { "min": 85, "max": 120 }, "spawnProbability": 0.35 },
+      { "laneX": 240, "speedRange": { "min": 85, "max": 120 }, "spawnProbability": 0.35 },
+      { "laneX": 200, "speedRange": { "min": 85, "max": 120 }, "spawnProbability": 0.14 }
+    ]
+  }
 }

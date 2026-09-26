@@ -1,48 +1,23 @@
 {
-    "levelNumber":  6,
-    "name":  "Long Haul",
-    "difficulty":  "medium",
-    "pickupPoints":  [
-                         [
-                             85,
-                             600
-                         ]
-                     ],
-    "dropoffPoints":  [
-                          [
-                              315,
-                              -800
-                          ]
-                      ],
-    "coinReward":  175,
-    "trafficPattern":  {
-                           "name":  "medium_varied",
-                           "spawnInterval":  2.2,
-                           "lanes":  [
-                                         {
-                                             "laneX":  160,
-                                             "speedRange":  {
-                                                                "min":  120,
-                                                                "max":  200
-                                                            },
-                                             "spawnProbability":  0.65
-                                         },
-                                         {
-                                             "laneX":  240,
-                                             "speedRange":  {
-                                                                "min":  120,
-                                                                "max":  200
-                                                            },
-                                             "spawnProbability":  0.65
-                                         },
-                                         {
-                                             "laneX":  200,
-                                             "speedRange":  {
-                                                                "min":  120,
-                                                                "max":  200
-                                                            },
-                                             "spawnProbability":  0.25
-                                         }
-                                     ]
-                       }
+  "levelNumber": 6,
+  "name": "Rush Hour Meter",
+  "difficulty": "medium",
+  "pickupPoints": [
+    [85, 350],
+    [315, 150]
+  ],
+  "dropoffPoints": [
+    [315, -450],
+    [85, -700]
+  ],
+  "coinReward": 175,
+  "trafficPattern": {
+    "name": "lesson_medium_plus",
+    "spawnInterval": 2.8,
+    "lanes": [
+      { "laneX": 160, "speedRange": { "min": 100, "max": 140 }, "spawnProbability": 0.5 },
+      { "laneX": 240, "speedRange": { "min": 100, "max": 140 }, "spawnProbability": 0.5 },
+      { "laneX": 200, "speedRange": { "min": 100, "max": 140 }, "spawnProbability": 0.2 }
+    ]
+  }
 }

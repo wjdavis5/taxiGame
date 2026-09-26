@@ -1,56 +1,21 @@
 {
-    "levelNumber":  5,
-    "name":  "Heavy Traffic",
-    "difficulty":  "medium",
-    "pickupPoints":  [
-                         [
-                             85,
-                             450
-                         ],
-                         [
-                             315,
-                             250
-                         ]
-                     ],
-    "dropoffPoints":  [
-                          [
-                              315,
-                              -250
-                          ],
-                          [
-                              85,
-                              -550
-                          ]
-                      ],
-    "coinReward":  150,
-    "trafficPattern":  {
-                           "name":  "heavy",
-                           "spawnInterval":  2.0,
-                           "lanes":  [
-                                         {
-                                             "laneX":  160,
-                                             "speedRange":  {
-                                                                "min":  140,
-                                                                "max":  190
-                                                            },
-                                             "spawnProbability":  0.75
-                                         },
-                                         {
-                                             "laneX":  240,
-                                             "speedRange":  {
-                                                                "min":  140,
-                                                                "max":  190
-                                                            },
-                                             "spawnProbability":  0.75
-                                         },
-                                         {
-                                             "laneX":  200,
-                                             "speedRange":  {
-                                                                "min":  140,
-                                                                "max":  190
-                                                            },
-                                             "spawnProbability":  0.25
-                                         }
-                                     ]
-                       }
+  "levelNumber": 5,
+  "name": "Against the Clock",
+  "difficulty": "medium",
+  "pickupPoints": [
+    [315, 300]
+  ],
+  "dropoffPoints": [
+    [85, -550]
+  ],
+  "coinReward": 150,
+  "trafficPattern": {
+    "name": "lesson_medium",
+    "spawnInterval": 3.0,
+    "lanes": [
+      { "laneX": 160, "speedRange": { "min": 95, "max": 135 }, "spawnProbability": 0.45 },
+      { "laneX": 240, "speedRange": { "min": 95, "max": 135 }, "spawnProbability": 0.45 },
+      { "laneX": 200, "speedRange": { "min": 95, "max": 135 }, "spawnProbability": 0.18 }
+    ]
+  }
 }

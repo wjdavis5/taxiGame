@@ -1,48 +1,23 @@
 {
-    "levelNumber":  4,
-    "name":  "Speed Challenge",
-    "difficulty":  "medium",
-    "pickupPoints":  [
-                         [
-                             315,
-                             500
-                         ]
-                     ],
-    "dropoffPoints":  [
-                          [
-                              315,
-                              -600
-                          ]
-                      ],
-    "coinReward":  125,
-    "trafficPattern":  {
-                           "name":  "medium_fast",
-                           "spawnInterval":  2.5,
-                           "lanes":  [
-                                         {
-                                             "laneX":  160,
-                                             "speedRange":  {
-                                                                "min":  130,
-                                                                "max":  180
-                                                            },
-                                             "spawnProbability":  0.7
-                                         },
-                                         {
-                                             "laneX":  240,
-                                             "speedRange":  {
-                                                                "min":  130,
-                                                                "max":  180
-                                                            },
-                                             "spawnProbability":  0.7
-                                         },
-                                         {
-                                             "laneX":  200,
-                                             "speedRange":  {
-                                                                "min":  130,
-                                                                "max":  180
-                                                            },
-                                             "spawnProbability":  0.25
-                                         }
-                                     ]
-                       }
+  "levelNumber": 4,
+  "name": "Picking Up",
+  "difficulty": "easy",
+  "pickupPoints": [
+    [315, 350],
+    [85, 100]
+  ],
+  "dropoffPoints": [
+    [85, -350],
+    [315, -600]
+  ],
+  "coinReward": 125,
+  "trafficPattern": {
+    "name": "lesson_medium_light",
+    "spawnInterval": 3.4,
+    "lanes": [
+      { "laneX": 160, "speedRange": { "min": 90, "max": 130 }, "spawnProbability": 0.4 },
+      { "laneX": 240, "speedRange": { "min": 90, "max": 130 }, "spawnProbability": 0.4 },
+      { "laneX": 200, "speedRange": { "min": 90, "max": 130 }, "spawnProbability": 0.16 }
+    ]
+  }
 }

@@ -8,6 +8,16 @@ class LevelLoaderService {
   /// Cache for loaded levels
   final Map<int, GameLevel> _levelCache = {};
 
+  /// Names of every asset the bundle actually ships, loaded once. Level
+  /// existence is checked against this manifest rather than by probing
+  /// each file: a probe of a missing level throws inside the asset
+  /// bundle, and that error report can escape the catch as a late zone
+  /// failure (surfaced by the issue #16 widget tests).
+  Set<String>? _bundledAssets;
+
+  String _levelAssetPath(int levelNumber) =>
+      'assets/levels/level_${levelNumber.toString().padLeft(3, '0')}.json';
+
   /// Load a level by number
   Future<GameLevel> loadLevel(int levelNumber) async {
     // Check cache first
@@ -16,9 +26,8 @@ class LevelLoaderService {
     }
 
     try {
-      // Format level number with leading zeros (001, 002, etc.)
-      final levelFile = 'level_${levelNumber.toString().padLeft(3, '0')}.json';
-      final jsonString = await rootBundle.loadString('assets/levels/$levelFile');
+      final jsonString =
+          await rootBundle.loadString(_levelAssetPath(levelNumber));
       final jsonData = json.decode(jsonString) as Map<String, dynamic>;
 
       final level = GameLevel.fromJson(jsonData);
@@ -47,11 +56,30 @@ class LevelLoaderService {
     _levelCache.clear();
   }
 
-  /// Check if a level exists
+  /// Check if a level exists — that the bundle actually ships it, per the
+  /// asset manifest. Only if the manifest itself cannot be read (never
+  /// true for the shipped bundle) does this fall back to probing the file.
   Future<bool> levelExists(int levelNumber) async {
+    final path = _levelAssetPath(levelNumber);
+    final assets = await _bundledAssetNames();
+    if (assets.isNotEmpty) return assets.contains(path);
+    return _probeLevelAsset(path);
+  }
+
+  Future<Set<String>> _bundledAssetNames() async {
+    final cached = _bundledAssets;
+    if (cached != null) return cached;
     try {
-      final levelFile = 'level_${levelNumber.toString().padLeft(3, '0')}.json';
-      await rootBundle.loadString('assets/levels/$levelFile');
+      final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+      return _bundledAssets = manifest.listAssets().toSet();
+    } catch (e) {
+      return const <String>{};
+    }
+  }
+
+  Future<bool> _probeLevelAsset(String path) async {
+    try {
+      await rootBundle.loadString(path);
       return true;
     } catch (e) {
       return false;

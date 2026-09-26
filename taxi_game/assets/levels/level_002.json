@@ -1,48 +1,21 @@
 {
-    "levelNumber":  2,
-    "name":  "Rush Hour Begins",
-    "difficulty":  "easy",
-    "pickupPoints":  [
-                         [
-                             85,
-                             450
-                         ]
-                     ],
-    "dropoffPoints":  [
-                          [
-                              315,
-                              -400
-                          ]
-                      ],
-    "coinReward":  75,
-    "trafficPattern":  {
-                           "name":  "light_medium",
-                           "spawnInterval":  3.5,
-                           "lanes":  [
-                                         {
-                                             "laneX":  160,
-                                             "speedRange":  {
-                                                                "min":  100,
-                                                                "max":  140
-                                                            },
-                                             "spawnProbability":  0.5
-                                         },
-                                         {
-                                             "laneX":  240,
-                                             "speedRange":  {
-                                                                "min":  100,
-                                                                "max":  140
-                                                            },
-                                             "spawnProbability":  0.5
-                                         },
-                                         {
-                                             "laneX":  200,
-                                             "speedRange":  {
-                                                                "min":  100,
-                                                                "max":  140
-                                                            },
-                                             "spawnProbability":  0.2
-                                         }
-                                     ]
-                       }
+  "levelNumber": 2,
+  "name": "Cross Town",
+  "difficulty": "easy",
+  "pickupPoints": [
+    [85, 300]
+  ],
+  "dropoffPoints": [
+    [315, -400]
+  ],
+  "coinReward": 75,
+  "trafficPattern": {
+    "name": "lesson_light_plus",
+    "spawnInterval": 4.2,
+    "lanes": [
+      { "laneX": 160, "speedRange": { "min": 80, "max": 110 }, "spawnProbability": 0.3 },
+      { "laneX": 240, "speedRange": { "min": 80, "max": 110 }, "spawnProbability": 0.3 },
+      { "laneX": 200, "speedRange": { "min": 80, "max": 110 }, "spawnProbability": 0.12 }
+    ]
+  }
 }

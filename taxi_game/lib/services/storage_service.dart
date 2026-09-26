@@ -4,7 +4,7 @@ import '../models/save_data.dart';
 
 /// Handles persistent storage of game data
 class StorageService {
-  static const String _saveDataKey = 'taxi_game_save_data';
+  static const String saveDataKey = 'taxi_game_save_data';
   late SharedPreferences _prefs;
   
   /// Initialize storage
@@ -15,12 +15,12 @@ class StorageService {
   /// Save game data
   Future<void> saveSaveData(SaveData data) async {
     final jsonString = jsonEncode(data.toJson());
-    await _prefs.setString(_saveDataKey, jsonString);
+    await _prefs.setString(saveDataKey, jsonString);
   }
   
   /// Load game data
   Future<SaveData?> loadSaveData() async {
-    final jsonString = _prefs.getString(_saveDataKey);
+    final jsonString = _prefs.getString(saveDataKey);
     if (jsonString != null) {
       try {
         final json = jsonDecode(jsonString) as Map<String, dynamic>;
@@ -35,11 +35,11 @@ class StorageService {
   
   /// Clear all saved data
   Future<void> clearData() async {
-    await _prefs.remove(_saveDataKey);
+    await _prefs.remove(saveDataKey);
   }
   
   /// Check if save data exists
   bool hasSaveData() {
-    return _prefs.containsKey(_saveDataKey);
+    return _prefs.containsKey(saveDataKey);
   }
 }
