@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../game/systems/fare_chain.dart';
+import '../../game/systems/lives.dart';
 import '../../game/taxi_game.dart';
 import '../../services/game_state_service.dart';
 
@@ -237,17 +238,30 @@ class _ScoringBarState extends State<_ScoringBar> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        // Run score, left.
-        _HudPill(
-          child: Text(
-            'SCORE ${chain.score}',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.5,
+        // Run score and lives, left. The lives badge is endless-only:
+        // the tutorial ladder has no failure budget to show, and a
+        // badge that never moves is noise.
+        Row(
+          children: [
+            _HudPill(
+              child: Text(
+                'SCORE ${chain.score}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
+              ),
             ),
-          ),
+            if (widget.game.isEndless) ...[
+              const SizedBox(width: 8),
+              _LivesBadge(
+                key: const ValueKey('lives_badge'),
+                remaining: widget.game.lives.remaining,
+              ),
+            ],
+          ],
         ),
         // Chain state, right: the fare meter next to the multiplier it
         // feeds.
@@ -280,6 +294,35 @@ class _HudPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
       ),
       child: child,
+    );
+  }
+}
+
+/// The shift's remaining lives (issue #14): a heart per life, full red
+/// while held and hollowed out as crashes spend them. Always visible in
+/// an endless shift — the whole point of a failure budget is knowing how
+/// much of it is left.
+class _LivesBadge extends StatelessWidget {
+  const _LivesBadge({super.key, required this.remaining});
+
+  /// Lives left in the shift; everything past this renders spent.
+  final int remaining;
+
+  @override
+  Widget build(BuildContext context) {
+    return _HudPill(
+      child: Row(
+        children: [
+          for (var i = 0; i < LivesTracker.maxLives; i++) ...[
+            if (i > 0) const SizedBox(width: 3),
+            Icon(
+              i < remaining ? Icons.favorite : Icons.favorite_border,
+              color: i < remaining ? Colors.red : Colors.white24,
+              size: 16,
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

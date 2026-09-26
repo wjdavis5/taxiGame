@@ -191,7 +191,9 @@ class PlayerVehicle extends PositionComponent
 
     switch (severity) {
       case ContactSeverity.crash:
-        game.onLevelFailed(report);
+        // The game routes the crash: endless runs spend a life and
+        // resume (issue #14), the tutorial ladder fails the level.
+        game.onCrash(report);
       case ContactSeverity.scrape:
         _applyScrape(axis, report);
     }

@@ -24,6 +24,7 @@ import 'systems/endless_course.dart';
 import 'systems/endless_fare_controller.dart';
 import 'systems/bank_prompt.dart';
 import 'systems/fare_chain.dart';
+import 'systems/lives.dart';
 import 'systems/road_chunk_manager.dart';
 import 'systems/impact_fx.dart';
 import '../services/game_state_service.dart';
@@ -67,6 +68,17 @@ class TaxiGame extends FlameGame
   /// (issue #12). Run-local: reset with every level or endless run.
   final FareChain fareChain = FareChain();
 
+  /// The shift's failure budget — three lives, one spent per crash
+  /// (issue #14). Endless runs only: the tutorial ladder still fails a
+  /// level on the first crash. Run-local, like the fare chain.
+  final LivesTracker lives = LivesTracker();
+
+  /// How long the world stays frozen after a non-fatal endless crash
+  /// (issue #14): long enough for the lost life to register on the HUD,
+  /// short enough to keep the shift's flow. Runs after the crash
+  /// hit-stop has played the impact.
+  static const double crashStallSeconds = 1.2;
+
   /// Score accrued this run or level (issue #12).
   int get score => fareChain.score;
 
@@ -84,13 +96,22 @@ class TaxiGame extends FlameGame
   List<PassengerData> passengers = [];
   int passengersDelivered = 0;
 
+  /// True once the current level or run has built its [player]. Guards
+  /// [runDistance], which reads the player's position, so the HUD can
+  /// poll it before the world exists. The old [isGameActive] guard made
+  /// the distance read zero through a crash stall (issue #14) — the
+  /// badge would have flashed 0 m every time a life was spent.
+  bool _playerReady = false;
+
   bool isGameActive = false;
   int currentLevelNumber = 1;
 
   /// How far into an endless run the taxi has driven, in px. Zero in
-  /// level mode.
+  /// level mode. Stays readable while a crash stall holds the world (the
+  /// run is paused, not rewound), so the HUD's distance badge does not
+  /// flash zero.
   double get runDistance =>
-      (isEndless && isGameActive) ? math.max(0.0, -player.position.y) : 0.0;
+      (isEndless && _playerReady) ? math.max(0.0, -player.position.y) : 0.0;
 
   /// Fares delivered so far in this endless run.
   int get faresDelivered => fareController?.faresDelivered ?? 0;
@@ -118,9 +139,16 @@ class TaxiGame extends FlameGame
   /// next frame can add a fresh delta on top of the untouched position.
   final Vector2 _appliedShakeOffset = Vector2.zero();
 
-  /// Set when a crash defers its failure overlay until the hit-stop ends
-  /// (issue #7): the impact lands first, then the panel explains it.
-  bool _pendingFailureOverlay = false;
+  /// The overlay a crash deferred until the hit-stop ends (issue #7):
+  /// 'levelFailed' for the tutorial ladder, 'shiftWrecked' for the third
+  /// endless crash (issue #14). The impact lands first, then the panel
+  /// explains it. Null when nothing is waiting.
+  String? _pendingOverlayName;
+
+  /// Seconds of crash stall left (issue #14); zero when not stalling.
+  /// While it counts down the whole world holds still — no movement, no
+  /// collisions, no fare clocks — then the shift resumes.
+  double _crashStallRemaining = 0;
 
   // The road spans x 100..300 in world coordinates (center 200, width 200).
   static const double roadCenterX = 200;
@@ -167,10 +195,15 @@ class TaxiGame extends FlameGame
     isGameActive = false;
     lastImpact = null;
 
-    // Clear any impact juice left over from the previous run (issue #7).
+    // Clear any impact juice left over from the previous run (issue #7),
+    // along with the lives budget and any crash stall it was mid-way
+    // through (issue #14): a fresh shift starts with three lives and no
+    // debt from the last one.
     shake.reset();
     hitStop.reset();
-    _pendingFailureOverlay = false;
+    _pendingOverlayName = null;
+    _crashStallRemaining = 0;
+    lives.reset();
     _speedLines?.intensity = 0;
     _applyShake(0); // restores the viewport position, dropping any shake
 
@@ -198,6 +231,7 @@ class TaxiGame extends FlameGame
       vehicleId: gameState.selectedVehicle,
     );
     world.add(player);
+    _playerReady = true;
 
     // Camera: locked horizontally on the road, follows the taxi vertically.
     camera.viewfinder.position = Vector2(roadCenterX, 0);
@@ -228,10 +262,15 @@ class TaxiGame extends FlameGame
     currentLevelNumber = levelNumber;
     lastImpact = null;
 
-    // Clear any impact juice left over from the previous run (issue #7).
+    // Clear any impact juice left over from the previous level (issue
+    // #7). The lives budget resets with it: a level has no failure
+    // budget — its first crash still fails it — but the counter must
+    // never carry a spent budget across modes (issue #14).
     shake.reset();
     hitStop.reset();
-    _pendingFailureOverlay = false;
+    _pendingOverlayName = null;
+    _crashStallRemaining = 0;
+    lives.reset();
     _speedLines?.intensity = 0;
     _applyShake(0); // restores the viewport position, dropping any shake
 
@@ -268,6 +307,7 @@ class TaxiGame extends FlameGame
       vehicleId: gameState.selectedVehicle,
     );
     world.add(player);
+    _playerReady = true;
 
     // Camera: locked horizontally on the road, follows the taxi vertically.
     camera.viewfinder.position = Vector2(roadCenterX, playerStartY);
@@ -468,6 +508,7 @@ class TaxiGame extends FlameGame
     overlays.remove('levelFailed');
     overlays.remove('levelComplete');
     overlays.remove('shiftBanked');
+    overlays.remove('shiftWrecked');
     if (isEndless) {
       startEndlessRun(seed: runSeed);
       return;
@@ -486,8 +527,21 @@ class TaxiGame extends FlameGame
     return true;
   }
 
+  /// A judged player–traffic crash (issues #6, #14). Endless runs route
+  /// through the three-strike flow — a life down, the shift resumes,
+  /// until the third crash ends it. The tutorial ladder keeps the
+  /// level-fail behaviour: its first crash fails the level.
+  void onCrash([CrashReport? report]) {
+    if (isEndless) {
+      _onEndlessCrash(report);
+    } else {
+      onLevelFailed(report);
+    }
+  }
+
   /// Ends the level after a real collision. [report] carries the full
-  /// telemetry of the contact for the failure overlay and logs.
+  /// telemetry of the contact for the failure overlay and logs. Level
+  /// mode only — endless runs are crashed through [onCrash] (issue #14).
   void onLevelFailed([CrashReport? report]) {
     if (!isGameActive) return;
     lastImpact = report;
@@ -507,9 +561,72 @@ class TaxiGame extends FlameGame
     // The failure overlay waits out the hit-stop (issue #7): the sparks,
     // shake, and freeze land first, then the panel explains what happened.
     if (hitStop.isActive) {
-      _pendingFailureOverlay = true;
+      _pendingOverlayName = 'levelFailed';
     } else {
       overlays.add('levelFailed');
+    }
+  }
+
+  // --- Three strikes (issue #14) ------------------------------------------
+
+  /// A crash in an endless run: one life down and the chain multiplier
+  /// back to 1x, then a brief stall before the shift resumes. The third
+  /// crash ends the shift and forfeits everything unbanked.
+  void _onEndlessCrash([CrashReport? report]) {
+    if (!isGameActive) return;
+    lastImpact = report;
+
+    // The open bank-or-push choice dies with the touch (issue #13) —
+    // and unlike a bank, nothing is paid out: the score survives the
+    // crash but stays unbanked and at risk, which is exactly what the
+    // remaining lives are now protecting.
+    _dismissBankPrompt();
+
+    if (report != null) {
+      debugPrint('[crash] ${report.explanation}');
+      _spawnCrashFx(report);
+    }
+
+    lives.spend();
+    fareChain.breakChain();
+
+    if (lives.isExhausted) {
+      _endShiftAsWrecked();
+    } else {
+      _stallAfterCrash();
+    }
+  }
+
+  /// Holds the whole world still for [crashStallSeconds] — long enough
+  /// for the spent life to register — then hands the shift back.
+  void _stallAfterCrash() {
+    isGameActive = false;
+    _freezePlayer();
+    _crashStallRemaining = crashStallSeconds;
+  }
+
+  /// Hands the shift back after the stall: same road, same fares, same
+  /// unbanked score — now riding on a broken 1x chain.
+  void _resumeAfterCrashStall() {
+    _crashStallRemaining = 0;
+    isGameActive = true;
+  }
+
+  /// The third crash: the shift ends and everything unbanked is forfeit
+  /// (issue #14) — the outcome banking at a dropoff exists to escape.
+  /// Nothing is paid into the wallet here; the forfeited score is only
+  /// ever read, by the wreck panel, to say what was lost.
+  void _endShiftAsWrecked() {
+    isGameActive = false;
+    _freezePlayer();
+    trafficSpawner.pause();
+
+    // The wreck panel waits out the hit-stop (issue #7): the impact
+    // lands first, then the forfeit is explained.
+    if (hitStop.isActive) {
+      _pendingOverlayName = 'shiftWrecked';
+    } else {
+      overlays.add('shiftWrecked');
     }
   }
 
@@ -567,9 +684,22 @@ class TaxiGame extends FlameGame
       // the frozen frame.
       hitStop.update(dt);
       _applyShake(dt);
-      if (!hitStop.isActive && _pendingFailureOverlay) {
-        _pendingFailureOverlay = false;
-        overlays.add('levelFailed');
+      final overlay = _pendingOverlayName;
+      if (!hitStop.isActive && overlay != null) {
+        _pendingOverlayName = null;
+        overlays.add(overlay);
+      }
+      return;
+    }
+
+    // Crash stall (issue #14): after a non-fatal endless crash the whole
+    // world holds still while the spent life registers on the HUD, then
+    // the shift resumes where it left off.
+    if (_crashStallRemaining > 0) {
+      _crashStallRemaining = math.max(0.0, _crashStallRemaining - dt);
+      _applyShake(dt);
+      if (_crashStallRemaining <= 0) {
+        _resumeAfterCrashStall();
       }
       return;
     }

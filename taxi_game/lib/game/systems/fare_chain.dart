@@ -150,6 +150,14 @@ class FareChain {
     multiplier += pushBonusStep;
   }
 
+  /// Breaks the chain back to 1x without touching the score or any live
+  /// countdown — the price a crash charges (issue #14). The score itself
+  /// survives the crash, still unbanked and at risk; only the chain
+  /// progress is lost.
+  void breakChain() {
+    multiplier = 1;
+  }
+
   /// Ticks every live countdown. Any that runs out breaks the chain back to
   /// 1x immediately, so the HUD shows the break the moment it happens.
   void update(double dt) {

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/bank_prompt.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
+import 'package:taxi_game/game/systems/lives.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
@@ -39,14 +40,16 @@ void main() {
   }
 
   /// Headless games have no overlay builder map; the decision flow adds
-  /// and removes 'bankOrPush' and 'shiftBanked' (and a crash adds
-  /// 'levelFailed'), so register stand-ins as [GameScreen] does.
+  /// and removes 'bankOrPush' and 'shiftBanked', and the crash path adds
+  /// 'levelFailed' in level mode or 'shiftWrecked' at the third endless
+  /// crash (issue #14), so register stand-ins as [GameScreen] does.
   TaxiGame endlessGame(int seed) => TaxiGame(
         levelLoader: LevelLoaderService(),
         gameState: gameState,
         endlessSeed: seed,
       )
         ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink());
 
@@ -170,7 +173,7 @@ void main() {
       expect(game.lastBankedDistance, greaterThan(0));
     });
 
-    test('a crash forfeits the unbanked score and kills the open prompt',
+    test('a crash kills the open prompt and leaves the score unbanked',
         () async {
       final game = await mountGame(endlessGame(42));
       await tickAndSettle(game);
@@ -181,16 +184,29 @@ void main() {
       expect(game.bankPrompt.isActive, isTrue);
       expect(game.score, fare0.reward);
 
-      game.onLevelFailed();
+      game.onCrash();
 
       expect(game.bankPrompt.isActive, isFalse);
       expect(game.overlays.isActive('bankOrPush'), isFalse);
-      expect(game.fareChain.multiplier, 2,
-          reason: 'a dismissal owes no push bonus');
-      expect(game.isGameActive, isFalse);
+      expect(game.fareChain.multiplier, 1,
+          reason: 'the crash breaks the chain, dismissing the prompt '
+              'without its push bonus');
+      expect(game.lives.remaining, LivesTracker.maxLives - 1,
+          reason: 'the crash spends a life, not the shift');
+      expect(game.isGameActive, isFalse,
+          reason: 'the crash stalls the shift before it resumes');
       // The unbanked score never reached the wallet: only the fare's
-      // base coins did. This is the forfeit the bank exists to escape.
+      // base coins did. It is still on the table for the bank prompt at
+      // the next dropoff.
       expect(gameState.totalCoins, coinsBefore + fare0.reward);
+      expect(game.score, fare0.reward,
+          reason: 'the score survives the crash, still at risk');
+
+      // And once the stall plays out, the shift resumes with all of it.
+      game.update(TaxiGame.crashStallSeconds + 0.01);
+      expect(game.isGameActive, isTrue);
+      expect(game.overlays.activeOverlays, isEmpty,
+          reason: 'no end-of-shift panel for a survivable crash');
     });
 
     test('pushing twice pays the bonus once', () async {

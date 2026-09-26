@@ -220,6 +220,27 @@ void main() {
       expect(chain.multiplier, 1);
       expect(chain.isCarryingFare, isFalse);
     });
+
+    test('breakChain resets the multiplier and nothing else (issue #14)',
+        () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+      chain.completeFare(passenger, fareValue: 50);
+      chain.applyPushBonus();
+      expect(chain.multiplier, 3);
+
+      // A passenger boards, then the crash lands.
+      final aboard = fareOf('b', 300, -400);
+      chain.startFare(aboard);
+
+      chain.breakChain();
+
+      expect(chain.multiplier, 1);
+      expect(chain.score, 50, reason: 'the unbanked score survives');
+      expect(chain.timerFor(aboard), isNotNull,
+          reason: 'the passenger aboard keeps their countdown');
+    });
   });
 
   group('a level run scores its fares', () {

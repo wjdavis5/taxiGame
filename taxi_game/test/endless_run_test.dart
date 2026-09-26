@@ -56,8 +56,9 @@ void main() {
     return game;
   }
 
-  /// Headless games have no overlay builder map; the crash path adds
-  /// 'levelFailed' and the bank-or-push flow (issue #13) adds
+  /// Headless games have no overlay builder map; a crash adds
+  /// 'levelFailed' in level mode or 'shiftWrecked' at the third endless
+  /// crash (issue #14), and the bank-or-push flow (issue #13) adds
   /// 'bankOrPush' at a delivery and 'shiftBanked' at a bank, so register
   /// stand-ins as [GameScreen] does in production.
   TaxiGame endlessGame(int seed) => TaxiGame(
@@ -66,6 +67,7 @@ void main() {
         endlessSeed: seed,
       )
         ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink());
 

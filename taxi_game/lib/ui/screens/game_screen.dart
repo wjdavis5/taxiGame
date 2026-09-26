@@ -48,6 +48,10 @@ class _GameScreenState extends State<GameScreen> {
                   _buildLevelComplete(context),
               'levelFailed': (context, TaxiGame game) =>
                   LevelFailedOverlay(game: game),
+              // The end-of-shift panel after the third crash (issue #14)
+              // — the forfeit is stated, not swallowed.
+              'shiftWrecked': (context, TaxiGame game) =>
+                  _ShiftWreckedPanel(game: game),
               // The timed bank-or-push choice at every endless dropoff
               // (issue #13) — asked over live traffic, not a modal.
               'bankOrPush': (context, TaxiGame game) =>
@@ -252,6 +256,112 @@ class _ShiftBankedPanel extends StatelessWidget {
               onPressed: () {
                 // A fresh shift: a new seed draws a new city.
                 game.overlays.remove('shiftBanked');
+                final seed =
+                    DateTime.now().microsecondsSinceEpoch & 0x3FFFFFFF;
+                game.startEndlessRun(seed: seed);
+              },
+              child: const Text('DRIVE AGAIN'),
+            ),
+            const SizedBox(height: 10),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text(
+                'MAIN MENU',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The end-of-shift panel after the third crash (issue #14). Static
+/// content: the shift is over, the numbers on it are final — and the
+/// forfeit is stated outright, because a silent loss teaches nothing.
+class _ShiftWreckedPanel extends StatelessWidget {
+  const _ShiftWreckedPanel({required this.game});
+
+  final TaxiGame game;
+
+  /// World px to metres — the same scale the HUD's distance badge uses.
+  static const double pixelsPerMetre = 10.0;
+
+  String get _distanceLabel {
+    final metres = game.runDistance / pixelsPerMetre;
+    return metres >= 1000
+        ? '${(metres / 1000).toStringAsFixed(1)} km'
+        : '${metres.round()} m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        margin: const EdgeInsets.symmetric(horizontal: 40),
+        decoration: BoxDecoration(
+          color: Colors.red.shade900,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.car_crash,
+              size: 80,
+              color: Colors.white,
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'SHIFT OVER',
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 10),
+            // What ended it: the third crash, named like every other.
+            Text(
+              game.lastImpact?.explanation ??
+                  'Three crashes — the shift is over.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 10),
+            // The forfeit: everything the chain held was never banked,
+            // so it dies with the shift — worth exactly the coins it
+            // would have paid at the dropoff window.
+            Text(
+              'Forfeited: ${game.score} coins',
+              style: const TextStyle(
+                fontSize: 22,
+                color: Colors.yellow,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${game.faresDelivered} fares · $_distanceLabel',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                color: Colors.white70,
+              ),
+            ),
+            const SizedBox(height: 30),
+            ElevatedButton(
+              onPressed: () {
+                // A fresh shift, three new lives: a new seed draws a
+                // new city.
+                game.overlays.remove('shiftWrecked');
                 final seed =
                     DateTime.now().microsecondsSinceEpoch & 0x3FFFFFFF;
                 game.startEndlessRun(seed: seed);
