@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../services/game_state_service.dart';
 import 'credits_screen.dart';
+import 'stats_screen.dart';
 
 /// Settings and progress management.
 ///
@@ -110,6 +111,31 @@ class SettingsScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 24),
                     const _SectionLabel('About'),
+                    // The on-device shift history (issue #17): the game's
+                    // only tuning instrument, since nothing analytic ever
+                    // leaves the device. A reading screen, not a control.
+                    ListTile(
+                      key: const Key('settings_stats_tile'),
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.bar_chart,
+                          color: Colors.white, size: 28),
+                      title: const Text(
+                        'Shift stats',
+                        style: TextStyle(fontSize: 18, color: Colors.white),
+                      ),
+                      subtitle: const Text(
+                        'Your shift history, on this device only',
+                        style: TextStyle(fontSize: 13, color: Colors.white70),
+                      ),
+                      trailing: const Icon(Icons.chevron_right,
+                          color: Colors.white70),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const StatsScreen(),
+                        ),
+                      ),
+                    ),
                     ListTile(
                       key: const Key('settings_credits_tile'),
                       contentPadding: EdgeInsets.zero,
@@ -149,8 +175,8 @@ class SettingsScreen extends StatelessWidget {
         key: const Key('reset_confirm_dialog'),
         title: const Text('Reset progress?'),
         content: const Text(
-          'This clears your level and coins and starts over from level 1. '
-          'It cannot be undone.',
+          'This clears your level, coins, and shift stats, and starts '
+          'over from level 1. It cannot be undone.',
         ),
         actions: [
           TextButton(

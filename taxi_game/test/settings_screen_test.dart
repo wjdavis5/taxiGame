@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -9,6 +10,7 @@ import 'package:taxi_game/ui/screens/credits_screen.dart';
 import 'package:taxi_game/ui/screens/garage_screen.dart';
 import 'package:taxi_game/ui/screens/main_menu_screen.dart';
 import 'package:taxi_game/ui/screens/settings_screen.dart';
+import 'package:taxi_game/ui/screens/stats_screen.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -110,6 +112,19 @@ void main() {
         (tester) async {
       gameState.addCoins(200);
       gameState.completeLevel(1, 50);
+      // A recorded shift is progress too (issue #17): the reset must take
+      // the history with the coins.
+      await gameState.recordEndlessRun(const RunRecord(
+        endedAtMs: 0,
+        distancePx: 5000,
+        score: 120,
+        faresDelivered: 2,
+        longestChain: 3,
+        livesLost: 0,
+        lifeLossDistancesPx: [],
+        banked: true,
+        durationSeconds: 90,
+      ));
 
       await tester.pumpWidget(wrap(const SettingsScreen()));
       await tester.pump();
@@ -121,6 +136,8 @@ void main() {
 
       expect(gameState.totalCoins, 0);
       expect(gameState.currentLevel, 1);
+      expect(gameState.runHistory, isEmpty,
+          reason: 'the shift history resets with everything else');
     });
 
     testWidgets('the displayed totals refresh after a reset', (tester) async {
@@ -149,6 +166,19 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(CreditsScreen), findsOneWidget);
+    });
+
+    testWidgets('shift stats is reachable from settings', (tester) async {
+      // The on-device history (issue #17) is only worth having if it can
+      // actually be opened: the tile must lead to the real screen.
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('settings_stats_tile')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(StatsScreen), findsOneWidget);
+      expect(find.textContaining('coming soon'), findsNothing);
     });
 
     testWidgets('no non-functional audio toggles are shown', (tester) async {

@@ -18,6 +18,7 @@ import 'components/coin_pop.dart';
 import 'components/speed_lines.dart';
 import 'levels/level.dart';
 import '../models/passenger_data.dart';
+import '../models/run_record.dart';
 import 'systems/collision_rules.dart';
 import 'systems/difficulty_curve.dart';
 import 'systems/endless_course.dart';
@@ -115,6 +116,17 @@ class TaxiGame extends FlameGame
   /// each delivered fare's base reward, plus the banked payout if the
   /// shift ends in a bank. The summary's "earned" line.
   int _runCoinsEarned = 0;
+
+  /// How far into the current shift each life was lost, in world px, in
+  /// loss order (issue #17) — the "where" of the stats record. One entry
+  /// per spent life; cleared with every fresh shift.
+  final List<double> _lifeLossDistancesPx = <double>[];
+
+  /// Seconds the current shift has been actively driven (issue #17):
+  /// world-update time while the run is live. Crash hit-stops and stalls
+  /// freeze the world and this clock with it, so the recorded duration
+  /// measures driving, not dead time.
+  double _runDrivenSeconds = 0;
 
   List<PassengerData> passengers = [];
   int passengersDelivered = 0;
@@ -246,6 +258,8 @@ class TaxiGame extends FlameGame
     lastBankedScore = null;
     lastRunSummary = null;
     _runCoinsEarned = 0;
+    _lifeLossDistancesPx.clear();
+    _runDrivenSeconds = 0;
 
     // Tear down the previous run, if any.
     world.removeAll(world.children.toList());
@@ -564,6 +578,11 @@ class TaxiGame extends FlameGame
   /// snapshots the final numbers and records the score against the
   /// personal best. Called before the summary overlay goes up, so the
   /// panel always reads a complete snapshot.
+  ///
+  /// Only ever reached from the endless endings — a banked or wrecked
+  /// shift — which is also when the shift enters the on-device history
+  /// (issue #17): the same snapshot feeds the stats screen, the sole
+  /// tuning instrument in a game with no analytics.
   void _finalizeRunSummary(ShiftOutcome outcome) {
     final previousBest = gameState.endlessBestScore;
     final isPersonalBest = gameState.recordEndlessScore(fareChain.score);
@@ -577,6 +596,17 @@ class TaxiGame extends FlameGame
       isPersonalBest: isPersonalBest,
       previousBest: previousBest,
     );
+    gameState.recordEndlessRun(RunRecord(
+      endedAtMs: DateTime.now().millisecondsSinceEpoch,
+      distancePx: runDistance,
+      score: fareChain.score,
+      faresDelivered: faresDelivered,
+      longestChain: fareChain.bestMultiplier,
+      livesLost: _lifeLossDistancesPx.length,
+      lifeLossDistancesPx: List.of(_lifeLossDistancesPx),
+      banked: outcome == ShiftOutcome.banked,
+      durationSeconds: _runDrivenSeconds,
+    ));
   }
 
   /// The run summary's DRIVE AGAIN (issue #15): tears down whichever
@@ -715,6 +745,9 @@ class TaxiGame extends FlameGame
 
     lives.spend();
     fareChain.breakChain();
+    // Where the life went, for the stats history (issue #17): the distance
+    // the shift had covered when this crash cost a life.
+    _lifeLossDistancesPx.add(runDistance);
 
     if (lives.isExhausted) {
       _endShiftAsWrecked();
@@ -840,6 +873,12 @@ class TaxiGame extends FlameGame
     // isGameActive false first.)
     if (isGameActive) {
       fareChain.update(dt);
+
+      // The stats clock (issue #17) runs with the same one: only time the
+      // shift is actually live counts as driven.
+      if (isEndless) {
+        _runDrivenSeconds += dt;
+      }
 
       // The bank-or-push window ticks with the same clock (issue #13).
       // When it closes without a choice the player rides on — push is

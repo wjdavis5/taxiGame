@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../game/levels/level.dart';
+import '../models/run_record.dart';
+import '../models/run_stats.dart';
 import '../models/save_data.dart';
 import 'storage_service.dart';
 
@@ -7,11 +9,18 @@ import 'storage_service.dart';
 class GameStateService extends ChangeNotifier {
   final StorageService _storageService;
   late SaveData _saveData;
-  
+
+  /// How many ended shifts the on-device history keeps (issue #17). Old
+  /// records fall off the front as new ones arrive: a fixed window is all
+  /// the tuning instrument needs, and it bounds the prefs payload forever.
+  static const int maxRecordedRuns = 200;
+
+  final List<RunRecord> _runHistory = <RunRecord>[];
+
   GameStateService(this._storageService) {
     _saveData = SaveData.createDefault();
   }
-  
+
   // Getters
   int get currentLevel => _saveData.currentLevel;
 
@@ -30,16 +39,32 @@ class GameStateService extends ChangeNotifier {
 
   /// The best score an endless shift has ever ended with (issue #15).
   int get endlessBestScore => _saveData.endlessBestScore;
-  
-  /// Load save data from storage
+
+  /// Every recorded ended shift, oldest first (issue #17). The raw,
+  /// per-shift history; see [runStats] for the aggregates.
+  List<RunRecord> get runHistory => List.unmodifiable(_runHistory);
+
+  /// The shift history aggregated for tuning (issue #17): totals, medians,
+  /// run-length distribution, bank-vs-push ratio.
+  RunStats get runStats => RunStats.compute(_runHistory);
+
+  /// Load save data and the shift history from storage
   Future<void> loadSaveData() async {
     final data = await _storageService.loadSaveData();
     if (data != null) {
       _saveData = data;
-      notifyListeners();
     }
+    // A missing or corrupt history is a fresh one — the same recovery a
+    // corrupt save gets, never a crash.
+    final history = _storageService.loadRunHistory();
+    if (history != null) {
+      _runHistory
+        ..clear()
+        ..addAll(history);
+    }
+    notifyListeners();
   }
-  
+
   /// Save current data to storage
   Future<void> save() async {
     await _storageService.saveSaveData(_saveData);
@@ -87,6 +112,19 @@ class GameStateService extends ChangeNotifier {
     save();
     return true;
   }
+
+  /// Adds an ended shift to the on-device history (issue #17), trimming
+  /// the oldest records past [maxRecordedRuns], and persists it. Strictly
+  /// local — this is the game's only tuning instrument, and it never
+  /// leaves the device.
+  Future<void> recordEndlessRun(RunRecord record) async {
+    _runHistory.add(record);
+    if (_runHistory.length > maxRecordedRuns) {
+      _runHistory.removeRange(0, _runHistory.length - maxRecordedRuns);
+    }
+    notifyListeners();
+    await _storageService.saveRunHistory(_runHistory);
+  }
   
   /// Unlock a vehicle
   bool unlockVehicle(String vehicleId, int cost) {
@@ -132,6 +170,11 @@ class GameStateService extends ChangeNotifier {
   /// Reset all progress (for testing)
   void resetProgress() {
     _saveData = SaveData.createDefault();
+    // The shift history is progress too (issue #17): a reset wipes it with
+    // everything else, so the stats screen never shows numbers from a run
+    // of a save that no longer exists.
+    _runHistory.clear();
+    _storageService.clearRunHistory();
     notifyListeners();
     save();
   }
