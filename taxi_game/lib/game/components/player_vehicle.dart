@@ -1,8 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:flame/components.dart';
 import 'package:flame/collisions.dart';
-import 'package:flutter/material.dart';
 
 import '../taxi_game.dart';
+import '../vehicle_sprites.dart';
 import 'traffic_vehicle.dart';
 import '../systems/pathfinding_system.dart';
 
@@ -24,33 +26,59 @@ class PlayerVehicle extends PositionComponent
   final PathfindingSystem pathfinding = PathfindingSystem();
   bool useAutopilot = false; // Toggle between manual and auto navigation
 
-  // Visual properties
-  final Color vehicleColor = Colors.yellow;
+  /// Save-data id of the vehicle being driven; picks the rendered sprite.
+  final String vehicleId;
+
+  /// Logical footprint of the vehicle. The hitbox is derived from this, never
+  /// from the sprite, so swapping the art cannot change collision behaviour.
   final Vector2 vehicleSize = Vector2(40, 60);
+
+  /// Pre-loaded sprite to render instead of the bundled one (tests inject a
+  /// fake here). When null the sprite is loaded from the bundled PNG.
+  final Sprite? sprite;
 
   final Vector2 startPosition;
 
-  PlayerVehicle({required this.startPosition})
-      : super(position: startPosition.clone());
-  
+  PlayerVehicle({
+    required this.startPosition,
+    String? vehicleId,
+    this.sprite,
+  }) : vehicleId = vehicleId ?? VehicleSprites.defaultVehicleId,
+       super(position: startPosition.clone());
+
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    
+
     // Set size
     size = vehicleSize;
-    
-    // Add hitbox (slightly smaller than visual for fairness)
+
+    // Add hitbox (slightly smaller than visual for fairness). Sized from the
+    // logical vehicle box only — never from the sprite.
     final hitbox = RectangleHitbox(
       size: vehicleSize * 0.9,
       position: vehicleSize * 0.05,
     );
     add(hitbox);
-    
+
     // Center anchor
     anchor = Anchor.center;
+
+    // The bundled sprites are side-view art facing right while the game is
+    // top-down and the taxi travels up the screen, so the child is rotated a
+    // quarter turn. It is stretched over the logical vehicle box; because it
+    // is a separate child, its rotation and art never touch the hitbox.
+    final carSprite = sprite ??
+        await game.loadSprite(VehicleSprites.playerSpritePath(vehicleId));
+    add(SpriteComponent(
+      sprite: carSprite,
+      size: Vector2(vehicleSize.y, vehicleSize.x),
+      position: vehicleSize / 2,
+      angle: -math.pi / 2,
+      anchor: Anchor.center,
+    ));
   }
-  
+
   @override
   void update(double dt) {
     super.update(dt);
@@ -121,51 +149,7 @@ class PlayerVehicle extends PositionComponent
     useAutopilot = false;
     velocity = Vector2.zero();
   }
-  
-  @override
-  void render(Canvas canvas) {
-    super.render(canvas);
-    
-    // Draw vehicle body (simple rectangle)
-    final paint = Paint()
-      ..color = vehicleColor
-      ..style = PaintingStyle.fill;
-    
-    final rect = Rect.fromLTWH(0, 0, vehicleSize.x, vehicleSize.y);
-    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(8));
-    canvas.drawRRect(rrect, paint);
-    
-    // Draw windows (darker rectangles)
-    final windowPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.3)
-      ..style = PaintingStyle.fill;
-    
-    // Front window
-    canvas.drawRect(
-      Rect.fromLTWH(5, 5, vehicleSize.x - 10, 15),
-      windowPaint,
-    );
-    
-    // Rear window
-    canvas.drawRect(
-      Rect.fromLTWH(5, vehicleSize.y - 20, vehicleSize.x - 10, 15),
-      windowPaint,
-    );
-    
-    // Draw wheels (simple circles)
-    final wheelPaint = Paint()
-      ..color = Colors.black
-      ..style = PaintingStyle.fill;
-    
-    // Left wheels
-    canvas.drawCircle(const Offset(8, 10), 4, wheelPaint);
-    canvas.drawCircle(Offset(8, vehicleSize.y - 10), 4, wheelPaint);
-    
-    // Right wheels
-    canvas.drawCircle(Offset(vehicleSize.x - 8, 10), 4, wheelPaint);
-    canvas.drawCircle(Offset(vehicleSize.x - 8, vehicleSize.y - 10), 4, wheelPaint);
-  }
-  
+
   void startAccelerating() {
     isAccelerating = true;
   }
@@ -186,7 +170,7 @@ class PlayerVehicle extends PositionComponent
     steeringInput = 0;
     stopNavigation();
   }
-  
+
   @override
   void onCollision(Set<Vector2> intersectionPoints, PositionComponent other) {
     super.onCollision(intersectionPoints, other);

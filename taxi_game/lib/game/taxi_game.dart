@@ -96,8 +96,10 @@ class TaxiGame extends FlameGame
       length: roadBottom - roadTop,
     ));
 
+    // Render the vehicle selected in the garage/save data.
     player = PlayerVehicle(
       startPosition: Vector2(roadCenterX, playerStartY),
+      vehicleId: gameState.selectedVehicle,
     );
     world.add(player);
 

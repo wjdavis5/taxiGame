@@ -1,9 +1,9 @@
 import 'package:flame/components.dart';
 import 'package:flame/collisions.dart';
-import 'package:flutter/material.dart';
 import 'dart:math';
 
 import '../taxi_game.dart';
+import '../vehicle_sprites.dart';
 import '../../models/traffic_pattern.dart';
 
 /// AI-controlled traffic vehicle that follows a path
@@ -18,20 +18,24 @@ class TrafficVehicle extends PositionComponent
   Vector2 velocity = Vector2.zero();
   bool shouldRemove = false;
 
-  // Visual properties based on vehicle type
+  /// Logical footprint of the vehicle. The hitbox is derived from this, never
+  /// from the sprite, so swapping the art cannot change collision behaviour.
   late final Vector2 vehicleSize;
-  late final Color vehicleColor;
   late final double speed;
+
+  /// Pre-loaded sprite to render instead of the bundled one (tests inject a
+  /// fake here). When null the sprite is loaded from the bundled PNG.
+  final Sprite? sprite;
 
   TrafficVehicle({
     required Vector2 position,
     required this.vehicleType,
     required this.baseSpeed,
     required this.path,
+    this.sprite,
   }) : super(position: position) {
     vehicleSize = vehicleType.size;
     speed = baseSpeed * vehicleType.speedMultiplier;
-    vehicleColor = _getColorForType(vehicleType);
   }
 
   /// Factory method to create a random traffic vehicle
@@ -60,7 +64,8 @@ class TrafficVehicle extends PositionComponent
     // Set size
     size = vehicleSize;
 
-    // Add hitbox (slightly smaller than visual for fairness)
+    // Add hitbox (slightly smaller than visual for fairness). Sized from the
+    // logical vehicle box only — never from the sprite.
     final hitbox = RectangleHitbox(
       size: vehicleSize * 0.85,
       position: vehicleSize * 0.075,
@@ -80,6 +85,20 @@ class TrafficVehicle extends PositionComponent
     if (velocity.y > 0) {
       angle = pi;
     }
+
+    // The bundled sprites are side-view art facing right while the game is
+    // top-down and traffic travels along the road, so the child is rotated a
+    // quarter turn and stretched over the logical vehicle box. Because it is
+    // a separate child, its art and rotation never touch the hitbox.
+    final carSprite = sprite ??
+        await game.loadSprite(VehicleSprites.trafficSpritePath(vehicleType));
+    add(SpriteComponent(
+      sprite: carSprite,
+      size: Vector2(vehicleSize.y, vehicleSize.x),
+      position: vehicleSize / 2,
+      angle: -pi / 2,
+      anchor: Anchor.center,
+    ));
   }
 
   @override
@@ -121,86 +140,5 @@ class TrafficVehicle extends PositionComponent
     final targetWaypoint = path[currentWaypointIndex];
     final direction = (targetWaypoint - position).normalized();
     velocity = direction * speed;
-  }
-
-  @override
-  void render(Canvas canvas) {
-    super.render(canvas);
-
-    // Draw vehicle body
-    final paint = Paint()
-      ..color = vehicleColor
-      ..style = PaintingStyle.fill;
-
-    final rect = Rect.fromLTWH(0, 0, vehicleSize.x, vehicleSize.y);
-    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(6));
-    canvas.drawRRect(rrect, paint);
-
-    // Draw windows (darker)
-    final windowPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.3)
-      ..style = PaintingStyle.fill;
-
-    // Front window
-    canvas.drawRect(
-      Rect.fromLTWH(4, 4, vehicleSize.x - 8, vehicleSize.y * 0.2),
-      windowPaint,
-    );
-
-    // Rear window (only if not a bus)
-    if (vehicleType != TrafficVehicleType.bus) {
-      canvas.drawRect(
-        Rect.fromLTWH(4, vehicleSize.y - (vehicleSize.y * 0.2) - 4,
-                     vehicleSize.x - 8, vehicleSize.y * 0.2),
-        windowPaint,
-      );
-    }
-
-    // Draw wheels
-    final wheelPaint = Paint()
-      ..color = Colors.black
-      ..style = PaintingStyle.fill;
-
-    const wheelRadius = 3.0;
-
-    // Left wheels
-    canvas.drawCircle(const Offset(6, 8), wheelRadius, wheelPaint);
-    canvas.drawCircle(Offset(6, vehicleSize.y - 8), wheelRadius, wheelPaint);
-
-    // Right wheels
-    canvas.drawCircle(Offset(vehicleSize.x - 6, 8), wheelRadius, wheelPaint);
-    canvas.drawCircle(Offset(vehicleSize.x - 6, vehicleSize.y - 8), wheelRadius, wheelPaint);
-
-    // Special markings for different vehicle types
-    if (vehicleType == TrafficVehicleType.bus) {
-      // Draw multiple windows for bus
-      final windowHeight = vehicleSize.y * 0.15;
-      for (var i = 0; i < 3; i++) {
-        canvas.drawRect(
-          Rect.fromLTWH(
-            4,
-            vehicleSize.y * 0.25 + (i * windowHeight * 1.5),
-            vehicleSize.x - 8,
-            windowHeight,
-          ),
-          windowPaint,
-        );
-      }
-    }
-  }
-
-  static Color _getColorForType(TrafficVehicleType type) {
-    switch (type) {
-      case TrafficVehicleType.sedan:
-        return Colors.blue;
-      case TrafficVehicleType.truck:
-        return Colors.brown;
-      case TrafficVehicleType.sportsCar:
-        return Colors.red;
-      case TrafficVehicleType.suv:
-        return Colors.green.shade700;
-      case TrafficVehicleType.bus:
-        return Colors.orange;
-    }
   }
 }
