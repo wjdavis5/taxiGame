@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/systems/daily_shift.dart';
+import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -124,5 +126,113 @@ void main() {
     await tester.pump();
 
     expect(find.text('BEST 340'), findsOneWidget);
+  });
+
+  group('daily shift (issue #19)', () {
+    testWidgets('button is present and enabled with today\'s date status',
+        (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      final dailyButton = find.byKey(const ValueKey('daily_button'));
+      expect(dailyButton, findsOneWidget);
+      expect(tester.widget<ElevatedButton>(dailyButton).onPressed, isNotNull);
+      expect(find.text('DAILY SHIFT'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('daily_status')),
+        findsOneWidget,
+      );
+      expect(find.textContaining(DailyShift.todayKey), findsOneWidget,
+          reason: 'the shared course is the date, shown on the menu');
+      expect(find.textContaining('ONE SHIFT'), findsOneWidget);
+    });
+
+    testWidgets('the daily is the first button on the menu — the day\'s '
+        'ritual comes before the open-ended mode', (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      final dailyButton = find.byKey(const ValueKey('daily_button'));
+      final endlessButton = find.byKey(const ValueKey('endless_button'));
+      expect(
+        tester.getRect(dailyButton).top,
+        lessThan(tester.getRect(endlessButton).top),
+        reason: 'today\'s shared course leads the menu',
+      );
+    });
+
+    testWidgets('once today\'s daily has ended, the button shows the day '
+        'is done instead of offering a replay', (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+      expect(find.text('DAILY COMPLETE'), findsNothing);
+
+      await gameStateService.recordDailyResult(DailyResult(
+        dateKey: DailyShift.todayKey,
+        score: 340,
+        banked: true,
+        completedAtMs: DateTime.now().millisecondsSinceEpoch,
+      ));
+      await tester.pump();
+
+      expect(find.text('DAILY COMPLETE'), findsOneWidget);
+      expect(find.text('DAILY SHIFT'), findsNothing);
+      expect(find.textContaining('340 PTS'), findsOneWidget,
+          reason: 'the day\'s score stays on the menu until midnight');
+
+      final dailyButton = find.byKey(const ValueKey('daily_button'));
+      expect(tester.widget<ElevatedButton>(dailyButton).onPressed, isNotNull,
+          reason: 'done is not dead — the button opens the day\'s result');
+    });
+
+    testWidgets('a completed daily button opens the daily result screen',
+        (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+      await gameStateService.recordDailyResult(DailyResult(
+        dateKey: DailyShift.todayKey,
+        score: 340,
+        banked: true,
+        completedAtMs: DateTime.now().millisecondsSinceEpoch,
+      ));
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('daily_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('daily_screen')), findsOneWidget);
+    });
+
+    testWidgets('the daily history link opens the daily result screen',
+        (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      await tester
+          .tap(find.byKey(const ValueKey('daily_history_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('daily_screen')), findsOneWidget,
+          reason: 'history is reachable even before today\'s shift ends');
+    });
   });
 }

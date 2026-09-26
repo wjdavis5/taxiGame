@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../game/systems/daily_shift.dart';
 import '../../game/taxi_game.dart';
 import '../../services/game_state_service.dart';
 import 'credits_screen.dart';
+import 'daily_screen.dart';
 import 'game_screen.dart';
 import 'garage_screen.dart';
 import 'settings_screen.dart';
@@ -85,9 +87,95 @@ class MainMenuScreen extends StatelessWidget {
 
                   const SizedBox(height: 60),
 
+                  // The Date-seeded Daily Shift (issue #19): one shared
+                  // course a day, derived from the date — computed, never
+                  // fetched, so the game stays fully offline. One attempt:
+                  // once today's shift has ended, the button becomes the
+                  // way back to the day's result instead of a replay.
+                  Consumer<GameStateService>(
+                    builder: (context, gameState, child) {
+                      final result = gameState.todayDailyResult;
+                      return Column(
+                        children: [
+                          _MenuButton(
+                            buttonKey: const ValueKey('daily_button'),
+                            icon: result == null
+                                ? Icons.event
+                                : Icons.emoji_events,
+                            label: result == null
+                                ? 'DAILY SHIFT'
+                                : 'DAILY COMPLETE',
+                            primary: true,
+                            onPressed: () {
+                              if (result == null) {
+                                // The day's course: the seed derived from
+                                // today's date (issue #19's shared course,
+                                // riding issue #11's endless shift).
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => GameScreen(
+                                      endlessSeed: DailyShift.seedForDateKey(
+                                          DailyShift.todayKey),
+                                      isDailyShift: true,
+                                    ),
+                                  ),
+                                );
+                              } else {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const DailyScreen(),
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            result == null
+                                ? '${DailyShift.todayKey} \u00b7 ONE SHIFT, '
+                                    'SAME FOR EVERYONE'
+                                : '${result.score} PTS \u00b7 DONE FOR TODAY',
+                            key: const ValueKey('daily_status'),
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                          TextButton(
+                            key: const ValueKey('daily_history_button'),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const DailyScreen(),
+                                ),
+                              );
+                            },
+                            child: const Text(
+                              'DAILY HISTORY',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
                   // Endless shift is the headline mode (issue #15): the
-                  // first button on the menu, in the primary style, with
-                  // the score to beat right beneath it. A procedurally
+                  // top shift button, in the primary style, with the score
+                  // to beat right beneath it. (Issue #19 later added the
+                  // day's Daily above it — the one course that is shared,
+                  // where this one is the player's own.) A procedurally
                   // generated run (issue #11) — each shift gets a fresh
                   // seed, and the seed fully determines the course.
                   Consumer<GameStateService>(

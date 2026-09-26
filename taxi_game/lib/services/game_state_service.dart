@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../game/levels/level.dart';
+import '../game/systems/daily_shift.dart';
+import '../models/daily_result.dart';
 import '../models/run_record.dart';
 import '../models/run_stats.dart';
 import '../models/save_data.dart';
@@ -15,7 +17,14 @@ class GameStateService extends ChangeNotifier {
   /// the tuning instrument needs, and it bounds the prefs payload forever.
   static const int maxRecordedRuns = 200;
 
+  /// How many completed daily results the on-device history keeps
+  /// (issue #19) — a bit over a year of daily play, bounding the prefs
+  /// payload forever the same way [maxRecordedRuns] does. Old days fall
+  /// off the front as new ones arrive.
+  static const int maxRecordedDailyResults = 400;
+
   final List<RunRecord> _runHistory = <RunRecord>[];
+  final List<DailyResult> _dailyHistory = <DailyResult>[];
 
   GameStateService(this._storageService) {
     _saveData = SaveData.createDefault();
@@ -48,6 +57,32 @@ class GameStateService extends ChangeNotifier {
   /// run-length distribution, bank-vs-push ratio.
   RunStats get runStats => RunStats.compute(_runHistory);
 
+  /// Every completed Daily Shift, oldest first (issue #19) — the player's
+  /// daily history. At most one result per day ever exists.
+  List<DailyResult> get dailyHistory => List.unmodifiable(_dailyHistory);
+
+  /// Today's completed Daily Shift, or null while today's is unplayed
+  /// (issue #19). The menu's daily button branches on exactly this.
+  DailyResult? get todayDailyResult {
+    final today = DailyShift.todayKey;
+    for (final result in _dailyHistory) {
+      if (result.dateKey == today) return result;
+    }
+    return null;
+  }
+
+  /// True once today's Daily Shift has ended — the day's one attempt is
+  /// spent, and the result stands until tomorrow's course arrives.
+  bool get todayDailyComplete => todayDailyResult != null;
+
+  /// The completed Daily Shift recorded for [dateKey], or null.
+  DailyResult? dailyResultFor(String dateKey) {
+    for (final result in _dailyHistory) {
+      if (result.dateKey == dateKey) return result;
+    }
+    return null;
+  }
+
   /// Load save data and the shift history from storage
   Future<void> loadSaveData() async {
     final data = await _storageService.loadSaveData();
@@ -61,6 +96,12 @@ class GameStateService extends ChangeNotifier {
       _runHistory
         ..clear()
         ..addAll(history);
+    }
+    final dailies = _storageService.loadDailyHistory();
+    if (dailies != null) {
+      _dailyHistory
+        ..clear()
+        ..addAll(dailies);
     }
     notifyListeners();
   }
@@ -125,6 +166,23 @@ class GameStateService extends ChangeNotifier {
     notifyListeners();
     await _storageService.saveRunHistory(_runHistory);
   }
+
+  /// Records a completed Daily Shift (issue #19) and persists it. One
+  /// attempt per day is the rule, so the **first** result for a date is
+  /// the one that counts: a later record for the same day is dropped, and
+  /// no flow can overwrite a settled daily. Trims the oldest days past
+  /// [maxRecordedDailyResults]. Strictly local — the shared course is
+  /// derived from the date; nothing here is ever sent anywhere.
+  Future<void> recordDailyResult(DailyResult result) async {
+    if (dailyResultFor(result.dateKey) != null) return;
+    _dailyHistory.add(result);
+    if (_dailyHistory.length > maxRecordedDailyResults) {
+      _dailyHistory.removeRange(
+          0, _dailyHistory.length - maxRecordedDailyResults);
+    }
+    notifyListeners();
+    await _storageService.saveDailyHistory(_dailyHistory);
+  }
   
   /// Unlock a vehicle
   bool unlockVehicle(String vehicleId, int cost) {
@@ -175,6 +233,10 @@ class GameStateService extends ChangeNotifier {
     // of a save that no longer exists.
     _runHistory.clear();
     _storageService.clearRunHistory();
+    // The daily history is the same kind of progress (issue #19): a reset
+    // wipes it, and today's course becomes playable again.
+    _dailyHistory.clear();
+    _storageService.clearDailyHistory();
     notifyListeners();
     save();
   }

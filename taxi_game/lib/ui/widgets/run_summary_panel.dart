@@ -49,6 +49,45 @@ class RunSummaryPanel extends StatelessWidget {
                 color: Colors.white,
               ),
             ),
+            // The daily's settled attempt (issue #19): the result is in —
+            // banked or wrecked alike — and the shared course is done for
+            // today. Says so here, where the score being celebrated (or
+            // mourned) is the one being screenshotted.
+            if (game.isDailyShift) ...[
+              const SizedBox(height: 10),
+              Container(
+                key: const ValueKey('daily_result_banner'),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.amber,
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.event, size: 20, color: Colors.black),
+                    SizedBox(width: 6),
+                    Text(
+                      "TODAY'S DAILY IS IN",
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'A new course arrives tomorrow.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.white70,
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             if (_banked)
               // The payout: the whole run score, now permanent in the
@@ -128,7 +167,10 @@ class RunSummaryPanel extends StatelessWidget {
               key: const ValueKey('retry_button'),
               onPressed: () {
                 // Straight back behind the wheel: a fresh shift on a new
-                // seed, without touching the menu stack (issue #15).
+                // seed, without touching the menu stack (issue #15). After
+                // a daily (issue #19) retryShift demotes to free play —
+                // the day's course is done — so the button names what it
+                // actually starts.
                 game.retryShift();
               },
               style: ElevatedButton.styleFrom(
@@ -137,9 +179,9 @@ class RunSummaryPanel extends StatelessWidget {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
               ),
-              child: const Text(
-                'DRIVE AGAIN',
-                style: TextStyle(
+              child: Text(
+                game.isDailyShift ? 'ENDLESS SHIFT' : 'DRIVE AGAIN',
+                style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
                 ),

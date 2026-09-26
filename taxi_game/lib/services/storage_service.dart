@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/daily_result.dart';
 import '../models/run_record.dart';
 import '../models/save_data.dart';
 
@@ -10,6 +11,11 @@ class StorageService {
   /// The on-device shift history (issue #17), kept under its own key so
   /// the growing list never rides along on every coin save.
   static const String runHistoryKey = 'taxi_game_run_history';
+
+  /// The completed Daily Shift history (issue #19), under its own key for
+  /// the same reason — and strictly local, like everything else: the
+  /// daily's shared course is derived from the date, never fetched.
+  static const String dailyHistoryKey = 'taxi_game_daily_history';
   late SharedPreferences _prefs;
 
   /// Initialize storage
@@ -65,6 +71,35 @@ class StorageService {
   /// Wipe the ended-shift history.
   Future<void> clearRunHistory() async {
     await _prefs.remove(runHistoryKey);
+  }
+
+  /// Persist the completed Daily Shift history (issue #19), oldest first.
+  Future<void> saveDailyHistory(List<DailyResult> results) async {
+    final jsonString =
+        jsonEncode(results.map((result) => result.toJson()).toList());
+    await _prefs.setString(dailyHistoryKey, jsonString);
+  }
+
+  /// Load the completed Daily Shift history, oldest first. Null when none
+  /// was ever written; corrupt data returns null — the daily history
+  /// starts over rather than crashing the app, exactly like a corrupt
+  /// save or a corrupt shift history.
+  List<DailyResult>? loadDailyHistory() {
+    final jsonString = _prefs.getString(dailyHistoryKey);
+    if (jsonString == null) return null;
+    try {
+      final list = jsonDecode(jsonString) as List;
+      return list
+          .map((entry) => DailyResult.fromJson(entry as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Wipe the completed Daily Shift history.
+  Future<void> clearDailyHistory() async {
+    await _prefs.remove(dailyHistoryKey);
   }
 
   /// Clear all saved data

@@ -19,7 +19,9 @@ import 'components/speed_lines.dart';
 import 'levels/level.dart';
 import '../models/passenger_data.dart';
 import '../models/run_record.dart';
+import '../models/daily_result.dart';
 import 'systems/collision_rules.dart';
+import 'systems/daily_shift.dart';
 import 'systems/difficulty_curve.dart';
 import 'systems/endless_course.dart';
 import 'systems/endless_fare_controller.dart';
@@ -39,6 +41,7 @@ class TaxiGame extends FlameGame
     required this.levelLoader,
     required this.gameState,
     this.endlessSeed,
+    this.isDailyShift = false,
   }) : super(
           camera: CameraComponent.withFixedResolution(width: 400, height: 800),
         );
@@ -52,11 +55,25 @@ class TaxiGame extends FlameGame
   /// seed always reproduces the identical course.
   final int? endlessSeed;
 
+  /// True when this game is running today's Daily Shift (issue #19): an
+  /// endless run whose seed comes from the calendar date, so every player
+  /// in the world drives the identical course. Its one attempt is spent
+  /// when the shift ends — [retryShift] clears this flag, because the
+  /// drive that follows a finished daily is free play on a fresh seed,
+  /// never a replay of the day's course.
+  bool isDailyShift;
+
   /// The seed of the endless run in progress; null in level mode. Set by
   /// [startEndlessRun] — which is also how the tutorial handoff (issue
   /// #16) starts a shift on a game constructed for the ladder — so it,
   /// not the constructor field alone, is what [runSeed] reads back.
   int? _activeRunSeed;
+
+  /// The calendar day this Daily Shift is playing (issue #19), as a
+  /// 'yyyy-MM-dd' date key. Pinned when the run starts, so a shift still
+  /// on the road at midnight records to the day it was played. Null for
+  /// any non-daily run.
+  String? _dailyDateKey;
 
   /// True while an endless run is in progress: either the game was built
   /// for one, or — after the tutorial ladder's last rung (issue #16) — a
@@ -237,6 +254,10 @@ class TaxiGame extends FlameGame
     isGameActive = false;
     lastImpact = null;
     _activeRunSeed = seed;
+    // A daily shift pins the day it started on (issue #19): a run still
+    // being driven at midnight belongs to the course — and the result —
+    // of the day it set out on.
+    _dailyDateKey = isDailyShift ? DailyShift.todayKey : null;
 
     // Clear any impact juice left over from the previous run (issue #7),
     // along with the lives budget and any crash stall it was mid-way
@@ -330,6 +351,7 @@ class TaxiGame extends FlameGame
     fareController = null;
     roadChunks = null;
     _activeRunSeed = null;
+    _dailyDateKey = null;
 
     // Whether another rung follows this one (issue #16): the completion
     // panel reads it to offer NEXT LEVEL, or — past the last rung — the
@@ -614,6 +636,20 @@ class TaxiGame extends FlameGame
       banked: outcome == ShiftOutcome.banked,
       durationSeconds: _runDrivenSeconds,
     ));
+
+    // A finished daily shift settles the day's one attempt (issue #19):
+    // the score stands — banked payout or forfeited wreck alike — and
+    // the day is done. Only this ending records it; a shift abandoned to
+    // the menu never ends, and so never spends the attempt.
+    final dailyDateKey = _dailyDateKey;
+    if (isDailyShift && dailyDateKey != null) {
+      gameState.recordDailyResult(DailyResult(
+        dateKey: dailyDateKey,
+        score: fareChain.score,
+        banked: outcome == ShiftOutcome.banked,
+        completedAtMs: DateTime.now().millisecondsSinceEpoch,
+      ));
+    }
   }
 
   /// The run summary's DRIVE AGAIN (issue #15): tears down whichever
@@ -621,9 +657,14 @@ class TaxiGame extends FlameGame
   /// new seed, a new city — on the same road immediately. The retry never
   /// routes through the menu; the friction between "I died" and "I'm
   /// driving again" is where retention is won or lost.
+  ///
+  /// After a Daily Shift (issue #19) the day's attempt is already spent,
+  /// so the retry demotes the game to free play: a fresh-seed endless
+  /// shift, never a replay of the day's shared course.
   void retryShift() {
     overlays.remove('shiftBanked');
     overlays.remove('shiftWrecked');
+    isDailyShift = false;
     startEndlessRun(seed: freshSeed());
   }
 

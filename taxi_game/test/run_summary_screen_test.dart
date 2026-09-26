@@ -147,4 +147,49 @@ void main() {
     expect(game.lastRunSummary, isNull,
         reason: 'the settled shift is cleared');
   });
+
+  group('a daily shift summary (issue #19)', () {
+    TaxiGame dailyGame() => TaxiGame(
+          levelLoader: LevelLoaderService(),
+          gameState: gameState,
+          endlessSeed: 9,
+          isDailyShift: true,
+        );
+
+    testWidgets('says the day is settled and names what the retry starts',
+        (tester) async {
+      final game = dailyGame();
+      await showPanel(tester, game, bankedSummary);
+
+      expect(find.byKey(const ValueKey('daily_result_banner')), findsOneWidget);
+      expect(find.text("TODAY'S DAILY IS IN"), findsOneWidget);
+      expect(find.text('A new course arrives tomorrow.'), findsOneWidget);
+      expect(find.text('ENDLESS SHIFT'), findsOneWidget,
+          reason: 'the button names free play, not a daily replay');
+      expect(find.text('DRIVE AGAIN'), findsNothing);
+    });
+
+    testWidgets('an ordinary shift shows neither the banner nor the '
+        'free-play label', (tester) async {
+      final game = endlessGame();
+      await showPanel(tester, game, bankedSummary);
+
+      expect(find.byKey(const ValueKey('daily_result_banner')), findsNothing);
+      expect(find.text("TODAY'S DAILY IS IN"), findsNothing);
+      expect(find.text('DRIVE AGAIN'), findsOneWidget);
+    });
+
+    testWidgets('the retry after a daily demotes the game to free play',
+        (tester) async {
+      final game = dailyGame();
+      await showPanel(tester, game, wreckedSummary);
+
+      await tester.tap(find.byKey(const ValueKey('retry_button')));
+      await tester.pump();
+
+      expect(game.isDailyShift, isFalse,
+          reason: "the day's attempt is spent; the drive on is free play");
+      expect(game.isGameActive, isTrue);
+    });
+  });
 }

@@ -11,11 +11,16 @@ import '../widgets/run_summary_panel.dart';
 
 /// Game screen that contains the actual game widget
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key, this.endlessSeed});
+  const GameScreen({super.key, this.endlessSeed, this.isDailyShift = false});
 
   /// When non-null, the screen runs an endless procedural shift seeded
   /// with this value instead of the next hand-made level (issue #11).
   final int? endlessSeed;
+
+  /// True when [endlessSeed] is today's date-derived course and this
+  /// screen is the player's one Daily Shift (issue #19) — the flag rides
+  /// to the game, which records the day's result when the shift ends.
+  final bool isDailyShift;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -31,6 +36,7 @@ class _GameScreenState extends State<GameScreen> {
       levelLoader: context.read<LevelLoaderService>(),
       gameState: context.read<GameStateService>(),
       endlessSeed: widget.endlessSeed,
+      isDailyShift: widget.isDailyShift,
     );
   }
 
