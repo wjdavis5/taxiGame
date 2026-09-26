@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/daily_result.dart';
+import '../models/ghost_trace.dart';
 import '../models/run_record.dart';
 import '../models/save_data.dart';
 
@@ -16,6 +17,12 @@ class StorageService {
   /// the same reason — and strictly local, like everything else: the
   /// daily's shared course is derived from the date, never fetched.
   static const String dailyHistoryKey = 'taxi_game_daily_history';
+
+  /// The Daily Shift ghost (issue #20) — the best run's sampled position
+  /// trace for one day's course, under its own key. Exactly one trace is
+  /// ever stored: a trace from an earlier day is dead (that course never
+  /// returns), so the payload stays bounded at one trace forever.
+  static const String dailyGhostKey = 'taxi_game_daily_ghost';
   late SharedPreferences _prefs;
 
   /// Initialize storage
@@ -100,6 +107,31 @@ class StorageService {
   /// Wipe the completed Daily Shift history.
   Future<void> clearDailyHistory() async {
     await _prefs.remove(dailyHistoryKey);
+  }
+
+  /// Persist the Daily Shift ghost trace (issue #20) — the single stored
+  /// trace, whichever day it belongs to.
+  Future<void> saveDailyGhost(GhostTrace trace) async {
+    await _prefs.setString(dailyGhostKey, jsonEncode(trace.toJson()));
+  }
+
+  /// Load the Daily Shift ghost trace, or null when none was ever
+  /// written. Corrupt data returns null — the ghost is lost, not the
+  /// app — exactly like a corrupt save or a corrupt history.
+  GhostTrace? loadDailyGhost() {
+    final jsonString = _prefs.getString(dailyGhostKey);
+    if (jsonString == null) return null;
+    try {
+      final json = jsonDecode(jsonString) as Map<String, dynamic>;
+      return GhostTrace.fromJson(json);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Wipe the Daily Shift ghost trace.
+  Future<void> clearDailyGhost() async {
+    await _prefs.remove(dailyGhostKey);
   }
 
   /// Clear all saved data

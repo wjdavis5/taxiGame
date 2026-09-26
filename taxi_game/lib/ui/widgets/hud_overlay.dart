@@ -260,6 +260,13 @@ class _ScoringBarState extends State<_ScoringBar> {
                 key: const ValueKey('lives_badge'),
                 remaining: widget.game.lives.remaining,
               ),
+              // The ghost gap (issue #20): live +/- metres against the
+              // translucent car on the road, so the race reads even when
+              // the ghost has scrolled off screen.
+              if (widget.game.ghostGapMetres != null) ...[
+                const SizedBox(width: 8),
+                _GhostBadge(gapMetres: widget.game.ghostGapMetres!),
+              ],
             ],
           ],
         ),
@@ -281,7 +288,7 @@ class _ScoringBarState extends State<_ScoringBar> {
 
 /// A rounded black pill matching the HUD's other badges.
 class _HudPill extends StatelessWidget {
-  const _HudPill({required this.child});
+  const _HudPill({super.key, required this.child});
 
   final Widget child;
 
@@ -321,6 +328,50 @@ class _LivesBadge extends StatelessWidget {
               size: 16,
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// The live ghost gap (issue #20): metres ahead (green, up arrow) or
+/// behind (red, down) of the translucent best-run car, dead level when
+/// the gap rounds to nothing. The race is only a race while it reads.
+class _GhostBadge extends StatelessWidget {
+  const _GhostBadge({required this.gapMetres});
+
+  /// Positive when the player is ahead of the ghost, negative behind.
+  final double gapMetres;
+
+  static Color _colorFor(double gap) =>
+      gap > 0 ? Colors.greenAccent : gap < 0 ? Colors.red.shade200 : Colors.white;
+
+  @override
+  Widget build(BuildContext context) {
+    final gap = gapMetres.round();
+    return _HudPill(
+      key: const ValueKey('ghost_badge'),
+      child: Row(
+        children: [
+          Icon(
+            gap > 0
+                ? Icons.arrow_upward
+                : gap < 0
+                    ? Icons.arrow_downward
+                    : Icons.remove,
+            color: _colorFor(gapMetres),
+            size: 16,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'GHOST ${gap == 0 ? '' : gap > 0 ? '+' : '-'}${gap.abs()} m',
+            style: TextStyle(
+              color: _colorFor(gapMetres),
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
         ],
       ),
     );

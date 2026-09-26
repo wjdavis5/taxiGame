@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'components/player_vehicle.dart';
 import 'components/road_segment.dart';
 import 'components/background.dart';
+import 'components/ghost_car.dart';
 import 'components/traffic_spawner.dart';
 import 'components/pickup_zone.dart';
 import 'components/dropoff_zone.dart';
@@ -27,6 +28,7 @@ import 'systems/endless_course.dart';
 import 'systems/endless_fare_controller.dart';
 import 'systems/bank_prompt.dart';
 import 'systems/fare_chain.dart';
+import 'systems/ghost_replay.dart';
 import 'systems/lives.dart';
 import 'systems/run_summary.dart';
 import 'systems/road_chunk_manager.dart';
@@ -42,6 +44,7 @@ class TaxiGame extends FlameGame
     required this.gameState,
     this.endlessSeed,
     this.isDailyShift = false,
+    this.isGhostRace = false,
   }) : super(
           camera: CameraComponent.withFixedResolution(width: 400, height: 800),
         );
@@ -63,6 +66,15 @@ class TaxiGame extends FlameGame
   /// never a replay of the day's course.
   bool isDailyShift;
 
+  /// True when this game is a ghost race (issue #20): a replay of the
+  /// day's shared course — the daily's seed — run *after* the day's one
+  /// scoring attempt is spent, against the stored best run rendered as
+  /// [ghostCar]. The race never touches the settled daily result (the
+  /// data layer's first-wins rule holds); it only offers its trace to
+  /// the ghost, which keeps the better score. Like [isDailyShift],
+  /// cleared by [retryShift] — a drive on from here is free play.
+  bool isGhostRace;
+
   /// The seed of the endless run in progress; null in level mode. Set by
   /// [startEndlessRun] — which is also how the tutorial handoff (issue
   /// #16) starts a shift on a game constructed for the ladder — so it,
@@ -74,6 +86,23 @@ class TaxiGame extends FlameGame
   /// on the road at midnight records to the day it was played. Null for
   /// any non-daily run.
   String? _dailyDateKey;
+
+  /// The calendar day the ghost rules apply to on this run (issue #20):
+  /// pinned — with the same day-at-start rule as [_dailyDateKey] — for
+  /// any run on the daily course, whether the scoring daily itself or a
+  /// [isGhostRace] replay. Both the recording and the replay key on it.
+  /// Null for any run that is not on the daily course, which is how the
+  /// ghost stays attached to the Daily Shift only.
+  String? _ghostDateKey;
+
+  /// Samples the player's path while [_ghostDateKey] is set (issue #20),
+  /// on the driven-time clock. Cleared with every run start.
+  GhostRecorder? _ghostRecorder;
+
+  /// The translucent replay of the stored best run for [_ghostDateKey]
+  /// (issue #20); null when this run has no ghost to race — free play,
+  /// or the day's first run before any trace exists for it.
+  GhostCar? ghostCar;
 
   /// True while an endless run is in progress: either the game was built
   /// for one, or — after the tutorial ladder's last rung (issue #16) — a
@@ -174,6 +203,17 @@ class TaxiGame extends FlameGame
   /// Fares delivered so far in this endless run.
   int get faresDelivered => fareController?.faresDelivered ?? 0;
 
+  /// How far ahead (+) or behind (−) the ghost is, in metres on the
+  /// same scale the HUD's distance badge uses (issue #20). Null when
+  /// there is no ghost on the road — the HUD hides its badge rather
+  /// than showing a gap to nothing.
+  double? get ghostGapMetres {
+    final ghost = ghostCar;
+    if (ghost == null || !isEndless) return null;
+    return (ghost.position.y - player.position.y) /
+        RunSummary.pixelsPerMetre;
+  }
+
   /// Telemetry for the most recent player–traffic contact — a scrape or a
   /// crash — so overlays and logs can explain exactly what happened
   /// (issue #6 contact legibility). Cleared whenever a level loads.
@@ -258,6 +298,11 @@ class TaxiGame extends FlameGame
     // being driven at midnight belongs to the course — and the result —
     // of the day it set out on.
     _dailyDateKey = isDailyShift ? DailyShift.todayKey : null;
+    // A ghost race replays the day's course too (issue #20), so it pins
+    // the recording-and-replay day by the same rule.
+    _ghostDateKey = (isDailyShift || isGhostRace) ? DailyShift.todayKey : null;
+    _ghostRecorder =
+        _ghostDateKey != null ? GhostRecorder() : null;
 
     // Clear any impact juice left over from the previous run (issue #7),
     // along with the lives budget and any crash stall it was mid-way
@@ -290,6 +335,20 @@ class TaxiGame extends FlameGame
     final chunks = RoadChunkManager();
     roadChunks = chunks;
     world.add(chunks);
+
+    // The ghost (issue #20): the stored best run for this day rides
+    // along as a translucent car on every run of the same day's course.
+    // Added underneath the player so an overlap always reads as the
+    // player's car. Free play has no day to match, and the day's first
+    // run has no trace yet — no ghost on the road in either case.
+    ghostCar = null;
+    final ghostTrace =
+        _ghostDateKey != null ? gameState.ghostFor(_ghostDateKey!) : null;
+    if (ghostTrace != null && ghostTrace.sampleCount > 0) {
+      final ghost = GhostCar(trace: ghostTrace);
+      ghostCar = ghost;
+      world.add(ghost);
+    }
 
     // The player starts at y 0 and only drives upward (negative y); chunk
     // indices below 0 already cover the road behind the start line.
@@ -352,6 +411,11 @@ class TaxiGame extends FlameGame
     roadChunks = null;
     _activeRunSeed = null;
     _dailyDateKey = null;
+    // A level run is no daily course: no ghost recording, no ghost on
+    // the road (issue #20).
+    _ghostDateKey = null;
+    _ghostRecorder = null;
+    ghostCar = null;
 
     // Whether another rung follows this one (issue #16): the completion
     // panel reads it to offer NEXT LEVEL, or — past the last rung — the
@@ -650,6 +714,24 @@ class TaxiGame extends FlameGame
         completedAtMs: DateTime.now().millisecondsSinceEpoch,
       ));
     }
+
+    // A finished daily-course run offers its path as the ghost (issue
+    // #20) — the scoring daily itself or a ghost race, never free play
+    // (_ghostDateKey is null there). recordDailyGhostRun keeps the
+    // best-scoring trace for the day, so the ghost is always the run a
+    // replay tries to beat. Fire and forget, like the history writes
+    // above.
+    final ghostDateKey = _ghostDateKey;
+    final recorder = _ghostRecorder;
+    if (ghostDateKey != null && recorder != null) {
+      gameState.recordDailyGhostRun(
+        dateKey: ghostDateKey,
+        score: fareChain.score,
+        banked: outcome == ShiftOutcome.banked,
+        vehicleId: player.vehicleId,
+        samples: recorder.takeSamples(),
+      );
+    }
   }
 
   /// The run summary's DRIVE AGAIN (issue #15): tears down whichever
@@ -660,11 +742,14 @@ class TaxiGame extends FlameGame
   ///
   /// After a Daily Shift (issue #19) the day's attempt is already spent,
   /// so the retry demotes the game to free play: a fresh-seed endless
-  /// shift, never a replay of the day's shared course.
+  /// shift, never a replay of the day's shared course. A ghost race
+  /// demotes the same way (issue #20) — racing your ghost is a choice,
+  /// not the default that waits behind a tap.
   void retryShift() {
     overlays.remove('shiftBanked');
     overlays.remove('shiftWrecked');
     isDailyShift = false;
+    isGhostRace = false;
     startEndlessRun(seed: freshSeed());
   }
 
@@ -926,6 +1011,11 @@ class TaxiGame extends FlameGame
       // shift is actually live counts as driven.
       if (isEndless) {
         _runDrivenSeconds += dt;
+
+        // The ghost trace samples the same clock (issue #20), so the
+        // replay measures driving — never hit-stops, stalls, or dead
+        // time — exactly the beats it races against.
+        _ghostRecorder?.tick(dt, player.position.x, player.position.y);
       }
 
       // The bank-or-push window ticks with the same clock (issue #13).

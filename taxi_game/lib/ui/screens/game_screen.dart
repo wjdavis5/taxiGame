@@ -11,7 +11,12 @@ import '../widgets/run_summary_panel.dart';
 
 /// Game screen that contains the actual game widget
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key, this.endlessSeed, this.isDailyShift = false});
+  const GameScreen({
+    super.key,
+    this.endlessSeed,
+    this.isDailyShift = false,
+    this.isGhostRace = false,
+  });
 
   /// When non-null, the screen runs an endless procedural shift seeded
   /// with this value instead of the next hand-made level (issue #11).
@@ -21,6 +26,12 @@ class GameScreen extends StatefulWidget {
   /// screen is the player's one Daily Shift (issue #19) — the flag rides
   /// to the game, which records the day's result when the shift ends.
   final bool isDailyShift;
+
+  /// True when this screen is a ghost race (issue #20): the day's course
+  /// again — [endlessSeed] set to the daily seed — after the one scoring
+  /// attempt is spent, with the stored best run riding along as a
+  /// translucent ghost. Records no daily result; keeps no retry.
+  final bool isGhostRace;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -37,6 +48,7 @@ class _GameScreenState extends State<GameScreen> {
       gameState: context.read<GameStateService>(),
       endlessSeed: widget.endlessSeed,
       isDailyShift: widget.isDailyShift,
+      isGhostRace: widget.isGhostRace,
     );
   }
 

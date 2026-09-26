@@ -7,7 +7,6 @@ import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/daily_screen.dart';
-
 /// The Daily Shift screen (issue #19): today's result and the history
 /// behind it — the two things a player checks before screenshotting their
 /// score for the group chat.
@@ -115,5 +114,65 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('daily_screen')), findsNothing);
+  });
+
+  group('the ghost race entry (issue #20)', () {
+    /// Plants a stored ghost for [dateKey] (today unless given).
+    Future<void> plantGhost({String? dateKey, int score = 500}) async {
+      await gameState.recordDailyGhostRun(
+        dateKey: dateKey ?? DailyShift.todayKey,
+        score: score,
+        banked: true,
+        vehicleId: 'taxi_yellow',
+        samples: const [200, 0, 200, -100, 200, -200],
+      );
+    }
+
+    testWidgets('a played day with a ghost offers the race', (tester) async {
+      await gameState
+          .recordDailyResult(resultFor(DailyShift.todayKey, score: 340));
+      await plantGhost();
+
+      await pumpScreen(tester);
+
+      expect(find.byKey(const Key('daily_race_ghost_button')),
+          findsOneWidget);
+      expect(find.text('RACE YOUR GHOST'), findsOneWidget);
+    });
+
+    testWidgets('no ghost stored, no race offered', (tester) async {
+      // Today is played, but no trace exists for the course (a save from
+      // before issue #20, say).
+      await gameState
+          .recordDailyResult(resultFor(DailyShift.todayKey, score: 340));
+
+      await pumpScreen(tester);
+
+      expect(find.byKey(const Key('daily_race_ghost_button')), findsNothing);
+    });
+
+    testWidgets('a ghost from another day is no ghost at all',
+        (tester) async {
+      await gameState
+          .recordDailyResult(resultFor(DailyShift.todayKey, score: 340));
+      await plantGhost(
+        dateKey: DailyShift.dateKeyFor(
+            DateTime.now().subtract(const Duration(days: 1))),
+      );
+
+      await pumpScreen(tester);
+
+      expect(find.byKey(const Key('daily_race_ghost_button')), findsNothing);
+    });
+
+    testWidgets('an unplayed day shows the invitation, not the race',
+        (tester) async {
+      await plantGhost();
+
+      await pumpScreen(tester);
+
+      expect(find.byKey(const Key('daily_today_unplayed')), findsOneWidget);
+      expect(find.byKey(const Key('daily_race_ghost_button')), findsNothing);
+    });
   });
 }

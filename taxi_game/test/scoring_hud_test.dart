@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/passenger_data.dart';
@@ -117,5 +118,76 @@ void main() {
     expect(find.byIcon(Icons.timer), findsNothing);
     expect(find.byIcon(Icons.timer_off), findsNothing,
         reason: 'delivered, so no meter at all');
+  });
+
+  group('the ghost gap badge (issue #20)', () {
+    Future<void> plantGhost() async {
+      await gameState.recordDailyGhostRun(
+        dateKey: DailyShift.todayKey,
+        score: 500,
+        banked: true,
+        vehicleId: 'taxi_yellow',
+        samples: const [200, 0, 200, -100, 200, -200],
+      );
+    }
+
+    /// A ghost race mounted headlessly — the badge reads live positions
+    /// off the game, so an unmounted one cannot exercise it.
+    Future<TaxiGame> mountedGhostRace(WidgetTester tester) async {
+      await plantGhost();
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: DailyShift.seedForDateKey(DailyShift.todayKey),
+        isGhostRace: true,
+      );
+      await tester.runAsync(() async {
+        game.onGameResize(Vector2(400, 800));
+        await game.onLoad();
+        // ignore: invalid_use_of_internal_member
+        game.mount();
+        await game.ready();
+      });
+      return game;
+    }
+
+    testWidgets('a live ghost shows the gap; none hides it',
+        (tester) async {
+      final game = await mountedGhostRace(tester);
+
+      // No GameWidget drives a headless game: tick the run by hand so
+      // the ghost advances down the road while the player holds the
+      // start line.
+      for (var i = 0; i < 30; i++) {
+        game.update(1 / 60);
+      }
+
+      await tester.pumpWidget(hudFor(game));
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(find.byKey(const ValueKey('ghost_badge')), findsOneWidget);
+      expect(find.textContaining(RegExp(r'^GHOST [+-]?\d+ m$')),
+          findsOneWidget);
+      expect(game.ghostGapMetres!, lessThan(0),
+          reason: 'the ghost is down the road; the player is behind');
+
+      // Take the ghost off the road (as free play would never have one):
+      // the badge goes with it rather than showing a gap to nothing.
+      game.ghostCar = null;
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(find.byKey(const ValueKey('ghost_badge')), findsNothing);
+    });
+
+    testWidgets('an unmounted endless shift has no ghost and no badge',
+        (tester) async {
+      await tester.pumpWidget(hudFor(TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: 7,
+      )));
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(find.byKey(const ValueKey('ghost_badge')), findsNothing);
+    });
   });
 }

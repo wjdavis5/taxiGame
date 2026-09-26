@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/systems/lives.dart';
 import 'package:taxi_game/game/systems/run_summary.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
+import 'package:taxi_game/ui/screens/game_screen.dart';
 import 'package:taxi_game/ui/widgets/run_summary_panel.dart';
 
 /// The end-of-shift run summary panel (issue #15): the six numbers every
@@ -63,9 +66,18 @@ void main() {
     RunSummary summary,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: RunSummaryPanel(game: game, summary: summary),
+      // The production panel lives inside the app's provider scope; the
+      // ghost-race button it gained (issue #20) pushes a [GameScreen],
+      // which reads the same services.
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<GameStateService>.value(value: gameState),
+          Provider<LevelLoaderService>.value(value: LevelLoaderService()),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: RunSummaryPanel(game: game, summary: summary),
+          ),
         ),
       ),
     );
@@ -190,6 +202,79 @@ void main() {
       expect(game.isDailyShift, isFalse,
           reason: "the day's attempt is spent; the drive on is free play");
       expect(game.isGameActive, isTrue);
+    });
+  });
+
+  group('the ghost race entry (issue #20)', () {
+    Future<void> plantGhostForToday() async {
+      await gameState.recordDailyGhostRun(
+        dateKey: DailyShift.todayKey,
+        score: 500,
+        banked: true,
+        vehicleId: 'taxi_yellow',
+        samples: const [200, 0, 200, -100, 200, -200],
+      );
+    }
+
+    TaxiGame dailyGame() => TaxiGame(
+          levelLoader: LevelLoaderService(),
+          gameState: gameState,
+          endlessSeed: 9,
+          isDailyShift: true,
+        );
+
+    TaxiGame ghostRaceGame() => TaxiGame(
+          levelLoader: LevelLoaderService(),
+          gameState: gameState,
+          endlessSeed: 9,
+          isGhostRace: true,
+        );
+
+    testWidgets('a settled daily with a stored ghost offers the race',
+        (tester) async {
+      await plantGhostForToday();
+      await showPanel(tester, dailyGame(), bankedSummary);
+
+      expect(find.byKey(const ValueKey('race_ghost_button')), findsOneWidget);
+      expect(find.text('RACE YOUR GHOST'), findsOneWidget);
+    });
+
+    testWidgets('a ghost race summary offers the race again',
+        (tester) async {
+      await plantGhostForToday();
+      await showPanel(tester, ghostRaceGame(), bankedSummary);
+
+      expect(find.byKey(const ValueKey('race_ghost_button')), findsOneWidget);
+    });
+
+    testWidgets('free play never offers it, ghost or no ghost',
+        (tester) async {
+      await plantGhostForToday();
+      await showPanel(tester, endlessGame(), bankedSummary);
+
+      expect(find.byKey(const ValueKey('race_ghost_button')), findsNothing,
+          reason: 'a ghost only ever attaches to the daily course');
+    });
+
+    testWidgets('a daily with no stored ghost has nothing to race',
+        (tester) async {
+      await showPanel(tester, dailyGame(), bankedSummary);
+
+      expect(find.byKey(const ValueKey('race_ghost_button')), findsNothing);
+    });
+
+    testWidgets('tapping the button opens a ghost race of today\'s course',
+        (tester) async {
+      await plantGhostForToday();
+      await showPanel(tester, dailyGame(), bankedSummary);
+
+      await tester.tap(find.byKey(const ValueKey('race_ghost_button')));
+      // Two pumps: start the push transition, then run it out — the
+      // panel must never pumpAndSettle over a live game.
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(find.byType(GameScreen), findsOneWidget);
     });
   });
 }

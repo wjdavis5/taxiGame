@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../../game/systems/daily_shift.dart';
 import '../../models/daily_result.dart';
+import '../../models/ghost_trace.dart';
 import '../../services/game_state_service.dart';
+import 'game_screen.dart';
 
 /// The Daily Shift screen (issue #19): today's result up top, the player's
 /// daily history below.
@@ -70,8 +72,10 @@ class DailyScreen extends StatelessWidget {
                 ),
               ),
               Consumer<GameStateService>(
-                builder: (context, gameState, _) =>
-                    _TodayCard(result: gameState.todayDailyResult),
+                builder: (context, gameState, _) => _TodayCard(
+                  result: gameState.todayDailyResult,
+                  ghost: gameState.todayGhost,
+                ),
               ),
               const Padding(
                 padding: EdgeInsets.fromLTRB(24, 20, 24, 8),
@@ -116,10 +120,17 @@ class DailyScreen extends StatelessWidget {
 }
 
 /// Today's result, or the invitation to go play it while the day lasts.
+/// With a ghost stored for today (issue #20) it is also where the day's
+/// replay lives: a later-in-the-day visit can race the best run without
+/// replaying the daily from the summary panel.
 class _TodayCard extends StatelessWidget {
-  const _TodayCard({required this.result});
+  const _TodayCard({required this.result, this.ghost});
 
   final DailyResult? result;
+
+  /// The stored best run for today's course; null until a run on it has
+  /// ever finished.
+  final GhostTrace? ghost;
 
   @override
   Widget build(BuildContext context) {
@@ -199,6 +210,40 @@ class _TodayCard extends StatelessWidget {
                 color: Colors.white.withValues(alpha: 0.85),
               ),
             ),
+            // Race the ghost (issue #20): the day's one scoring attempt
+            // is spent, but racing the stored best run — replayed as a
+            // translucent car on the same course — never is. Only on a
+            // played day, and only when a trace exists to race.
+            if (played && ghost != null) ...[
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                key: const Key('daily_race_ghost_button'),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => GameScreen(
+                        endlessSeed:
+                            DailyShift.seedForDateKey(DailyShift.todayKey),
+                        isGhostRace: true,
+                      ),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.flash_on, size: 20),
+                label: const Text(
+                  'RACE YOUR GHOST',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.yellow,
+                  foregroundColor: Colors.black,
+                ),
+              ),
+            ],
           ],
         ),
       ),

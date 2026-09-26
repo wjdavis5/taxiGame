@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import '../game/levels/level.dart';
 import '../game/systems/daily_shift.dart';
 import '../models/daily_result.dart';
+import '../models/ghost_trace.dart';
 import '../models/run_record.dart';
 import '../models/run_stats.dart';
 import '../models/save_data.dart';
@@ -25,6 +26,11 @@ class GameStateService extends ChangeNotifier {
 
   final List<RunRecord> _runHistory = <RunRecord>[];
   final List<DailyResult> _dailyHistory = <DailyResult>[];
+
+  /// The stored Daily Shift ghost trace (issue #20) — the best run's
+  /// path for one day's course. Null until a daily-course run has ever
+  /// finished.
+  GhostTrace? _dailyGhost;
 
   GameStateService(this._storageService) {
     _saveData = SaveData.createDefault();
@@ -83,6 +89,51 @@ class GameStateService extends ChangeNotifier {
     return null;
   }
 
+  /// The stored ghost trace for the course of [dateKey], or null (issue
+  /// #20). A trace only ever replays on the day's course it was
+  /// recorded on — a ghost of a different road is meaningless.
+  GhostTrace? ghostFor(String dateKey) {
+    final ghost = _dailyGhost;
+    if (ghost == null || ghost.dateKey != dateKey) return null;
+    return ghost;
+  }
+
+  /// The stored ghost for today's course, or null (issue #20).
+  GhostTrace? get todayGhost => ghostFor(DailyShift.todayKey);
+
+  /// Offers a finished daily-course run's trace as the new ghost (issue
+  /// #20). The rule is the personal-best rule scoped to the course: a
+  /// trace is kept only if it scores strictly more than the stored one
+  /// for the same day — a tie keeps the older ghost. The first trace
+  /// offered for a *new* day replaces the previous day's outright,
+  /// because that course (and its ghost) is gone for good.
+  ///
+  /// Returns true when the offer became the stored ghost. A run with no
+  /// recorded path offers nothing. Strictly local, like every other
+  /// record here.
+  Future<bool> recordDailyGhostRun({
+    required String dateKey,
+    required int score,
+    required bool banked,
+    required String vehicleId,
+    required List<int> samples,
+  }) async {
+    if (samples.isEmpty) return false;
+    if (ghostFor(dateKey) != null && score <= ghostFor(dateKey)!.score) {
+      return false;
+    }
+    _dailyGhost = GhostTrace(
+      dateKey: dateKey,
+      score: score,
+      banked: banked,
+      vehicleId: vehicleId,
+      samples: samples,
+    );
+    notifyListeners();
+    await _storageService.saveDailyGhost(_dailyGhost!);
+    return true;
+  }
+
   /// Load save data and the shift history from storage
   Future<void> loadSaveData() async {
     final data = await _storageService.loadSaveData();
@@ -103,6 +154,9 @@ class GameStateService extends ChangeNotifier {
         ..clear()
         ..addAll(dailies);
     }
+    // The ghost trace loads with everything else (issue #20); a missing
+    // or corrupt one just means no ghost to race, never a crash.
+    _dailyGhost = _storageService.loadDailyGhost();
     notifyListeners();
   }
 
@@ -237,6 +291,10 @@ class GameStateService extends ChangeNotifier {
     // wipes it, and today's course becomes playable again.
     _dailyHistory.clear();
     _storageService.clearDailyHistory();
+    // The ghost is progress too (issue #20): a reset takes the stored
+    // best run with everything else.
+    _dailyGhost = null;
+    _storageService.clearDailyGhost();
     notifyListeners();
     save();
   }
