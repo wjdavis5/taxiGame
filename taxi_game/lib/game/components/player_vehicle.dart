@@ -6,7 +6,6 @@ import 'package:flame/collisions.dart';
 import '../taxi_game.dart';
 import '../vehicle_sprites.dart';
 import '../systems/collision_rules.dart';
-import '../systems/pathfinding_system.dart';
 import 'traffic_vehicle.dart';
 
 /// Player-controlled taxi vehicle
@@ -22,10 +21,6 @@ class PlayerVehicle extends PositionComponent
   bool isAccelerating = false;
   bool hasPassenger = false;
   double steeringInput = 0; // -1 (left) to 1 (right)
-
-  // Pathfinding
-  final PathfindingSystem pathfinding = PathfindingSystem();
-  bool useAutopilot = false; // Toggle between manual and auto navigation
 
   /// Save-data id of the vehicle being driven; picks the rendered sprite.
   final String vehicleId;
@@ -86,12 +81,7 @@ class PlayerVehicle extends PositionComponent
   void update(double dt) {
     super.update(dt);
 
-    // Check if using autopilot
-    if (useAutopilot && pathfinding.isNavigating) {
-      _updateAutopilotMovement(dt);
-    } else {
-      _updateManualMovement(dt);
-    }
+    _updateMovement(dt);
 
     // Update position
     position += velocity * dt;
@@ -102,7 +92,10 @@ class PlayerVehicle extends PositionComponent
     position.x = position.x.clamp(minX, maxX);
   }
 
-  void _updateManualMovement(double dt) {
+  /// Throttle ramps speed up, releasing it brakes; steering sets the
+  /// lateral velocity directly. This is the only movement path — the taxi
+  /// is always under player control.
+  void _updateMovement(double dt) {
     // Forward/backward movement
     if (isAccelerating) {
       // Ramp up gradually (spec: ~0.5s from stop to full speed)
@@ -119,38 +112,6 @@ class PlayerVehicle extends PositionComponent
 
     // Left/right steering
     velocity.x = steeringInput * steeringSpeed;
-  }
-
-  void _updateAutopilotMovement(double dt) {
-    // Get direction from pathfinding
-    final direction = pathfinding.getNavigationDirection(position);
-
-    if (direction != null) {
-      // Get speed multiplier (for slowing down near waypoints)
-      final speedMult = pathfinding.getSpeedMultiplier(position);
-
-      // Base speed - faster when holding, slower when not
-      final baseSpeed = isAccelerating ? maxSpeed : maxSpeed * 0.5;
-
-      // Apply speed multiplier and direction
-      velocity = direction * baseSpeed * speedMult;
-    } else {
-      // No navigation - stop
-      velocity = Vector2.zero();
-    }
-  }
-
-  /// Navigate to a destination using pathfinding
-  void navigateTo(Vector2 destination) {
-    pathfinding.setDestination(position, destination);
-    useAutopilot = true;
-  }
-
-  /// Stop autopilot and return to manual control
-  void stopNavigation() {
-    pathfinding.clear();
-    useAutopilot = false;
-    velocity = Vector2.zero();
   }
 
   void startAccelerating() {
@@ -171,7 +132,6 @@ class PlayerVehicle extends PositionComponent
     isAccelerating = false;
     hasPassenger = false;
     steeringInput = 0;
-    stopNavigation();
   }
 
   /// Judged on contact start (one ruling per touch episode) instead of
