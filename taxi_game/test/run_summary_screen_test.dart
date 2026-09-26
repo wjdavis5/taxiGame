@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -241,6 +243,82 @@ void main() {
       await showPanel(tester, game, bankedSummary);
 
       expect(find.text('ACHIEVEMENT UNLOCKED'), findsNothing);
+    });
+  });
+
+  group('the share score card (issue #22)', () {
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+              const MethodChannel('cab_hustle/share'), null);
+    });
+
+    void mockShareChannel(List<MethodCall> calls) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(const MethodChannel('cab_hustle/share'),
+              (call) async {
+        calls.add(call);
+        return null;
+      });
+    }
+
+    TaxiGame dailyGame() => TaxiGame(
+          levelLoader: LevelLoaderService(),
+          gameState: gameState,
+          endlessSeed: 9,
+          isDailyShift: true,
+        );
+
+    testWidgets('an ended shift offers to share the score', (tester) async {
+      // The native half of the channel is iOS-only, so the offer is.
+      // The override is cleared inside the body: the binding checks its
+      // invariants before dart-test teardowns run.
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        await showPanel(tester, endlessGame(), bankedSummary);
+
+        expect(
+            find.byKey(const ValueKey('share_score_button')), findsOneWidget);
+        expect(find.text('SHARE SCORE'), findsOneWidget);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('platforms without the native half offer nothing',
+        (tester) async {
+      // Tests default to android: no handler was ever written for it,
+      // and a button that can only error is no button at all.
+      await showPanel(tester, endlessGame(), bankedSummary);
+
+      expect(find.byKey(const ValueKey('share_score_button')), findsNothing);
+    });
+
+    testWidgets('tapping it shares the day’s facts for a daily',
+        (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        final calls = <MethodCall>[];
+        mockShareChannel(calls);
+        await showPanel(tester, dailyGame(), bankedSummary);
+
+        await tester.tap(find.byKey(const ValueKey('share_score_button')));
+        await tester.pump();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+        await tester.pump();
+
+        expect(calls, hasLength(1));
+        final args = calls.single.arguments as Map<Object?, Object?>;
+        final text = args['text'] as String;
+        expect(text, contains('240 pts'),
+            reason: 'the card shares the panel’s numbers');
+        expect(text, contains(DailyShift.todayKey));
+        expect(text, contains('seed 9'));
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
   });
 

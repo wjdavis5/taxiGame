@@ -87,6 +87,14 @@ class TaxiGame extends FlameGame
   /// any non-daily run.
   String? _dailyDateKey;
 
+  /// The calendar day the run on the road belongs to ('yyyy-MM-dd'),
+  /// pinned at run start: the Daily Shift's day (issue #19), and by the
+  /// same rule the day of any run on that course — a ghost race included
+  /// (issue #20). Null in free play. The score card (issue #22) dates
+  /// itself from this, so a shift finished after midnight still shares
+  /// the day its course was seeded from.
+  String? get runDateKey => _dailyDateKey ?? _ghostDateKey;
+
   /// The calendar day the ghost rules apply to on this run (issue #20):
   /// pinned — with the same day-at-start rule as [_dailyDateKey] — for
   /// any run on the daily course, whether the scoring daily itself or a

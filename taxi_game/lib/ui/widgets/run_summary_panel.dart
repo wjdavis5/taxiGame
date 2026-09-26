@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../game/systems/daily_shift.dart';
 import '../../game/systems/run_summary.dart';
 import '../../game/taxi_game.dart';
 import '../screens/game_screen.dart';
+import 'share_score_button.dart';
 
 /// The end-of-shift run summary (issue #15): what the shift earned, what
 /// it cost, and — the number a replay tries to beat — whether the score
@@ -249,6 +251,16 @@ class RunSummaryPanel extends StatelessWidget {
                   ),
                 ),
               ),
+              // The shareable score card (issue #22): the settled shift as
+              // an image — score, chain, distance, date, the day's seed —
+              // handed to the OS share sheet, the one outbound channel a
+              // permanently offline game has. iOS only: the native half of
+              // the channel lives in the AppDelegate, and the project
+              // ships iOS only.
+              if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) ...[
+                const SizedBox(height: 8),
+                ShareScoreButton(game: game, summary: summary),
+              ],
               // Race the ghost (issue #20): the stored best run for the
               // day's course — often the very shift just settled —
               // replayed as a translucent car. Offered wherever a
