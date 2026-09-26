@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flame/components.dart';
 import 'package:flame/collisions.dart';
 
+import '../../data/vehicle_catalog.dart';
 import '../taxi_game.dart';
 import '../vehicle_sprites.dart';
 import '../systems/collision_rules.dart';
@@ -12,10 +13,10 @@ import 'traffic_vehicle.dart';
 class PlayerVehicle extends PositionComponent
     with HasGameReference<TaxiGame>, CollisionCallbacks {
 
-  static const double maxSpeed = 150.0; // Reduced from 300 - much slower
-  static const double acceleration = 400.0;
+  /// Universal braking. Deliberately not part of the per-car stats (issue
+  /// #9): every car must be able to get out of a bad overtake the same way,
+  /// so the four catalog axes stay the whole story.
   static const double deceleration = 600.0;
-  static const double steeringSpeed = 300.0; // Increased from 200 - faster steering
 
   Vector2 velocity = Vector2.zero();
   bool isAccelerating = false;
@@ -25,9 +26,21 @@ class PlayerVehicle extends PositionComponent
   /// Save-data id of the vehicle being driven; picks the rendered sprite.
   final String vehicleId;
 
-  /// Logical footprint of the vehicle. The hitbox is derived from this, never
-  /// from the sprite, so swapping the art cannot change collision behaviour.
-  final Vector2 vehicleSize = Vector2(40, 60);
+  /// Handling profile in play: resolved from the vehicle catalog by
+  /// [vehicleId], so the car equipped in the garage is the car that is
+  /// actually driven (issue #9). Tests may inject a profile directly.
+  final VehicleStats stats;
+
+  /// Forward top speed, throttle ramp, and full-lock lateral speed, from
+  /// [stats]. Per-car since issue #9; before that every car handled alike.
+  double get maxSpeed => stats.topSpeed;
+  double get acceleration => stats.acceleration;
+  double get steeringSpeed => stats.steeringSpeed;
+
+  /// Logical footprint of the vehicle, from [stats] — each car has its own
+  /// body since issue #9. The hitbox is derived from this, never from the
+  /// sprite, so swapping the art cannot change collision behaviour.
+  Vector2 get vehicleSize => Vector2(stats.width, stats.height);
 
   /// Pre-loaded sprite to render instead of the bundled one (tests inject a
   /// fake here). When null the sprite is loaded from the bundled PNG.
@@ -39,8 +52,10 @@ class PlayerVehicle extends PositionComponent
     required this.startPosition,
     String? vehicleId,
     this.sprite,
-  }) : vehicleId = vehicleId ?? VehicleSprites.defaultVehicleId,
-       super(position: startPosition.clone());
+    VehicleStats? stats,
+  })  : vehicleId = vehicleId ?? VehicleSprites.defaultVehicleId,
+        stats = stats ?? VehicleCatalog.statsFor(vehicleId),
+        super(position: startPosition.clone());
 
   @override
   Future<void> onLoad() async {
@@ -51,7 +66,8 @@ class PlayerVehicle extends PositionComponent
 
     // Add hitbox. Tightened to 75% of the logical box (issue #6): grazing
     // contact the art only overlaps must not register. Sized from the
-    // logical vehicle box only — never from the sprite.
+    // logical vehicle box only — never from the sprite — and since issue #9
+    // the logical box is per-car, so a bigger body is a bigger target.
     final hitbox = RectangleHitbox(
       size: vehicleSize * CollisionRules.playerHitboxScale,
       position: vehicleSize *

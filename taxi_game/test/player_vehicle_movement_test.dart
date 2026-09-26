@@ -1,7 +1,6 @@
 import 'package:flame/game.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:taxi_game/game/components/player_vehicle.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
@@ -50,7 +49,7 @@ void main() {
 
       // A second of throttle ramps to full speed and moves the taxi up.
       expect(player.isAccelerating, isTrue);
-      expect(player.velocity.y, closeTo(-PlayerVehicle.maxSpeed, 0.5));
+      expect(player.velocity.y, closeTo(-player.maxSpeed, 0.5));
       expect(player.position.y, lessThan(startY));
     });
 
@@ -75,7 +74,7 @@ void main() {
 
       player.setSteering(1);
       game.update(1 / 60);
-      expect(player.velocity.x, PlayerVehicle.steeringSpeed);
+      expect(player.velocity.x, player.steeringSpeed);
 
       for (var i = 0; i < 60; i++) {
         game.update(1 / 60);

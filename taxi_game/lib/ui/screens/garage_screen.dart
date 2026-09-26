@@ -127,6 +127,10 @@ class GarageScreen extends StatelessWidget {
 /// - owned: offers SELECT,
 /// - equipped: highlighted with a check badge and no action — it is already
 ///   the car in play.
+///
+/// Every card also surfaces the car's handling profile (issue #9): four
+/// fleet-normalized bars for top speed, acceleration, steering, and body
+/// size, all drawn on one shared scale so bar lengths compare across cards.
 class _VehicleCard extends StatelessWidget {
   final GarageVehicle vehicle;
   final GameStateService gameState;
@@ -183,6 +187,8 @@ class _VehicleCard extends StatelessWidget {
                     color: Colors.white.withValues(alpha: 0.85),
                   ),
                 ),
+                const SizedBox(height: 8),
+                _StatBars(vehicle: vehicle),
               ],
             ),
           ),
@@ -285,6 +291,88 @@ class _VehicleCard extends StatelessWidget {
         ),
         duration: const Duration(seconds: 2),
       ),
+    );
+  }
+}
+
+/// The four handling axes a garage card surfaces (issue #9), each with its
+/// label and the fleet-relative value the bar length shows. Size is listed
+/// as-is — a longer bar is a bigger body, and a bigger body is a bigger
+/// target; judging that is the player's half of the trade.
+class _StatBars extends StatelessWidget {
+  final GarageVehicle vehicle;
+
+  const _StatBars({required this.vehicle});
+
+  @override
+  Widget build(BuildContext context) {
+    final stats = vehicle.stats;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _bar('speed', 'SPEED', stats.topSpeed, (s) => s.topSpeed),
+        _bar('accel', 'ACCEL', stats.acceleration, (s) => s.acceleration),
+        _bar(
+          'steering',
+          'STEER',
+          stats.steeringSpeed,
+          (s) => s.steeringSpeed,
+        ),
+        _bar('size', 'SIZE', stats.bodyArea, (s) => s.bodyArea),
+      ],
+    );
+  }
+
+  /// One labelled bar. The fill is fleet-normalized (worst car in the fleet
+  /// shows a sliver, best fills the track) so lengths compare across cards.
+  Widget _bar(
+    String axis,
+    String label,
+    double value,
+    double Function(VehicleStats) pick,
+  ) {
+    final fleet = VehicleCatalog.vehicles.map((v) => pick(v.stats));
+    final min = fleet.reduce((a, b) => a < b ? a : b);
+    final max = fleet.reduce((a, b) => a > b ? a : b);
+    final t = max > min ? (value - min) / (max - min) : 1.0;
+    final fill = 0.06 + 0.94 * t.clamp(0.0, 1.0);
+
+    return Row(
+      children: [
+        SizedBox(
+          width: 52,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.8,
+              color: Colors.white.withValues(alpha: 0.70),
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: Container(
+                height: 6,
+                color: Colors.black26,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    key: Key('garage_stat_${axis}_${vehicle.id}'),
+                    widthFactor: fill,
+                    child: Container(color: Colors.white),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

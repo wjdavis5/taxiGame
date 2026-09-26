@@ -31,11 +31,14 @@ class ImpactFx {
   /// impact so the hit lands before the failure overlay explains it.
   static const double crashHitStopDuration = 0.10;
 
-  /// Forward speed (px/s) at which speed lines start to appear. The taxi
-  /// tops out at 150 px/s ([PlayerVehicle.maxSpeed]).
+  /// Forward speed (px/s) at which speed lines start to appear. The fleet
+  /// tops out between 132 and 188 px/s (`VehicleStats.topSpeed`, issue #9),
+  /// so a slow car at full throttle only reaches partial intensity while a
+  /// fast one pins the effect — the windshield itself reads the handling.
   static const double speedLinesStartSpeed = 95.0;
 
-  /// Forward speed (px/s) at which speed lines reach full intensity.
+  /// Forward speed (px/s) at which speed lines reach full intensity. Faster
+  /// cars (and only faster cars) get there at full throttle.
   static const double speedLinesFullSpeed = 150.0;
 
   /// Shake magnitude (px) for a crash closing at [closingSpeed] px/s:

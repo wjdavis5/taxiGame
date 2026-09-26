@@ -38,6 +38,14 @@ void main() {
     await tester.pump();
   }
 
+  /// The fleet-relative fill of one stat bar on one card (issue #9): bars
+  /// are FractionallySizedBoxes keyed by axis and vehicle.
+  double statFill(WidgetTester tester, String axis, String id) => tester
+          .widget<FractionallySizedBox>(
+            find.byKey(Key('garage_stat_${axis}_$id')),
+          )
+          .widthFactor!;
+
   testWidgets('lists every vehicle in the catalog by name', (tester) async {
     await tester.pumpWidget(wrap(const GarageScreen()));
     await tester.pump();
@@ -150,5 +158,46 @@ void main() {
 
     expect(balanceText('${400 - compact.price}'), findsOneWidget);
     expect(balanceText('400'), findsNothing);
+  });
+
+  testWidgets('every card surfaces the four handling stats', (tester) async {
+    await pumpGarage(tester);
+
+    for (final vehicle in VehicleCatalog.vehicles) {
+      for (final axis in const ['speed', 'accel', 'steering', 'size']) {
+        expect(
+          find.byKey(Key('garage_stat_${axis}_${vehicle.id}')),
+          findsOneWidget,
+          reason: 'the ${vehicle.name} card must show its $axis stat so the '
+              'purchase is an informed choice',
+        );
+      }
+    }
+  });
+
+  testWidgets('stat bars read on one shared fleet scale', (tester) async {
+    await pumpGarage(tester);
+
+    // Faster: the racer is the fastest thing in the garage.
+    expect(
+      statFill(tester, 'speed', 'sports_black'),
+      greaterThan(statFill(tester, 'speed', 'taxi_yellow')),
+    );
+    // Sharper: the compact steers in harder than the starter...
+    expect(
+      statFill(tester, 'steering', 'compact_red'),
+      greaterThan(statFill(tester, 'steering', 'taxi_yellow')),
+    );
+    // ...and pays for it in speed on the very same scale, so a card shows
+    // the trade without a second trip to the road.
+    expect(
+      statFill(tester, 'speed', 'compact_red'),
+      lessThan(statFill(tester, 'speed', 'taxi_yellow')),
+    );
+    // Size bars show body, not virtue: the minivan dwarfs the compact.
+    expect(
+      statFill(tester, 'size', 'minivan_gray'),
+      greaterThan(statFill(tester, 'size', 'compact_red')),
+    );
   });
 }
