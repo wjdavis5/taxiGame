@@ -17,6 +17,30 @@ class TrafficProfile {
   });
 }
 
+/// The curve's raw pressure read at one distance, before it is laid out
+/// onto any particular road geometry: one spawn interval, one traffic
+/// speed (mean plus half-spread), and one probability per traffic side.
+///
+/// [DifficultyCurve.trafficForDistance] lays a core onto the classic
+/// two-lane street; [RunEnvironment.trafficAt] lays the same core onto
+/// whatever width and lane count the road has there (issue #24) — same
+/// pressure, different street.
+class TrafficCore {
+  const TrafficCore({
+    required this.spawnInterval,
+    required this.meanSpeed,
+    required this.halfSpread,
+    required this.oncomingProbability,
+    required this.sameDirectionProbability,
+  });
+
+  final double spawnInterval;
+  final double meanSpeed;
+  final double halfSpread;
+  final double oncomingProbability;
+  final double sameDirectionProbability;
+}
+
 /// Continuous difficulty for endless runs (issue #18).
 ///
 /// Four knobs — traffic density, traffic speed, speed variance, and fare
@@ -165,54 +189,94 @@ class DifficultyCurve {
   /// down by the relief wave. Ranges 0 (the start line) to just under 2
   /// (the end of the creep at a wave crest); brief dips to ~65% of the
   /// local crest are the rhythm.
-  static double pressureFor(double distance) =>
-      phaseFor(distance) * (1.0 - reliefFor(distance));
+  ///
+  /// [environmentModifier] (issue #24) is a fraction — typically
+  /// [RunEnvironment.difficultyModifierAt] — by which the world at this
+  /// distance (rain, fog, night) pushes the lived pressure up the *same*
+  /// curve, so weather and darkness ride the one ramp instead of forming a
+  /// parallel difficulty system. Zero (the default) is the bare curve.
+  static double pressureFor(double distance,
+          {double environmentModifier = 0.0}) =>
+      phaseFor(distance) *
+      (1.0 - reliefFor(distance)) *
+      (1.0 + environmentModifier);
 
   /// Fare timer pressure at [distance], 0..1 — the input
   /// [FareChain.startFare] tightens its countdown budgets by. 0 is the
   /// forgiving level-1 budget; 1 is the fully tightened deep-run budget.
   /// It reaches 1 at the end of the main ramp (crest) and breathes back to
   /// ~0.65 in each relief trough, so the meter eases off in the lulls too.
-  static double farePressureFor(double distance) =>
-      pressureFor(distance).clamp(0.0, 1.0);
+  /// [environmentModifier] folds the world's mood (issue #24) into the
+  /// meter: rain, fog, and night all shorten the countdown the same way
+  /// they thicken the traffic.
+  static double farePressureFor(double distance,
+          {double environmentModifier = 0.0}) =>
+      pressureFor(distance, environmentModifier: environmentModifier)
+          .clamp(0.0, 1.0);
 
-  /// The traffic profile in effect at [distance] px into the run.
-  static TrafficProfile trafficForDistance(double distance) {
+  /// The curve's raw pressure read at [distance]: interval, speeds, and
+  /// per-side probabilities, before any road geometry is applied.
+  static TrafficCore trafficCoreFor(double distance,
+      {double environmentModifier = 0.0}) {
     // The lived pressure breathes density and mean speed together...
-    final pressure = pressureFor(distance);
+    final pressure =
+        pressureFor(distance, environmentModifier: environmentModifier);
     // ...while speed variance climbs only with distance, so deep traffic
-    // stays unpredictable through the lulls as well as the crests.
-    final variance = phaseFor(distance);
+    // stays unpredictable through the lulls as well as the crests. The
+    // environment modifier pushes variance too — foul weather and night
+    // make traffic less predictable, not just denser.
+    final variance =
+        phaseFor(distance) * (1.0 + environmentModifier);
 
     final meanSpeed = _lerpAnchors(
         _startSpeedMean, _rampedSpeedMean, _creepSpeedMean, pressure);
     final halfSpread = _lerpAnchors(
         _startSpeedSpread, _rampedSpeedSpread, _creepSpeedSpread, variance);
 
-    return TrafficProfile(
+    return TrafficCore(
       spawnInterval: _lerpAnchors(
           _startInterval, _rampedInterval, _creepInterval, pressure),
+      meanSpeed: meanSpeed,
+      halfSpread: halfSpread,
+      oncomingProbability: _lerpAnchors(
+          _startOncomingProbability,
+          _rampedOncomingProbability,
+          _creepOncomingProbability,
+          pressure),
+      sameDirectionProbability: _lerpAnchors(
+          _startSameDirProbability,
+          _rampedSameDirProbability,
+          _creepSameDirProbability,
+          pressure),
+    );
+  }
+
+  /// The traffic profile in effect at [distance] px into the run, laid out
+  /// on the classic two-lane street. The environment-aware layer
+  /// ([RunEnvironment.trafficAt]) lays the same read onto whatever road is
+  /// actually there.
+  static TrafficProfile trafficForDistance(double distance,
+      {double environmentModifier = 0.0}) {
+    final core = trafficCoreFor(distance,
+        environmentModifier: environmentModifier);
+    final speedRange = SpeedRange(
+      min: core.meanSpeed - core.halfSpread,
+      max: core.meanSpeed + core.halfSpread,
+    );
+
+    return TrafficProfile(
+      spawnInterval: core.spawnInterval,
       lanes: [
         TrafficLaneConfig(
           laneX: oncomingLaneX,
-          speedRange: SpeedRange(min: meanSpeed - halfSpread,
-              max: meanSpeed + halfSpread),
-          spawnProbability: _lerpAnchors(
-              _startOncomingProbability,
-              _rampedOncomingProbability,
-              _creepOncomingProbability,
-              pressure),
+          speedRange: speedRange,
+          spawnProbability: core.oncomingProbability,
           oncoming: true,
         ),
         TrafficLaneConfig(
           laneX: sameDirectionLaneX,
-          speedRange: SpeedRange(min: meanSpeed - halfSpread,
-              max: meanSpeed + halfSpread),
-          spawnProbability: _lerpAnchors(
-              _startSameDirProbability,
-              _rampedSameDirProbability,
-              _creepSameDirProbability,
-              pressure),
+          speedRange: speedRange,
+          spawnProbability: core.sameDirectionProbability,
           oncoming: false,
         ),
       ],

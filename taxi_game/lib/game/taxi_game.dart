@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'components/player_vehicle.dart';
 import 'components/road_segment.dart';
 import 'components/background.dart';
+import 'components/environment_overlay.dart';
 import 'components/ghost_car.dart';
 import 'components/traffic_spawner.dart';
 import 'components/traffic_vehicle.dart';
@@ -33,6 +34,7 @@ import 'systems/fare_chain.dart';
 import 'systems/ghost_replay.dart';
 import 'systems/lives.dart';
 import 'systems/near_miss.dart';
+import 'systems/run_environment.dart';
 import 'systems/run_summary.dart';
 import 'systems/road_chunk_manager.dart';
 import 'systems/impact_fx.dart';
@@ -134,6 +136,22 @@ class TaxiGame extends FlameGame
   EndlessFareController? fareController;
   RoadChunkManager? roadChunks;
 
+  /// The living world of the endless run in progress (issue #24): road
+  /// geometry, weather, time of day, works, and cross streets, all seeded
+  /// from the run's seed so the Daily Shift reproduces its sky exactly
+  /// like its fares. Null in level mode, which keeps the classic fixed
+  /// daylight street.
+  RunEnvironment? environment;
+
+  /// Lateral grip in effect right now, 1.0 on a dry street — the player
+  /// car scales its full-lock steering by this (issue #24). Sampled from
+  /// the environment every frame; 1.0 in level mode.
+  double gripMultiplier = 1.0;
+
+  /// How dark it is right now, 0..1 (issue #24). Traffic reads it to
+  /// light its headlights; level mode keeps it at 0.
+  double darkness = 0;
+
   /// The fare chain — score, multiplier, and the live fare countdowns
   /// (issue #12). Run-local: reset with every level or endless run.
   final FareChain fareChain = FareChain();
@@ -195,6 +213,12 @@ class TaxiGame extends FlameGame
   /// badge would have flashed 0 m every time a life was spent.
   bool _playerReady = false;
 
+  /// Whether the player vehicle exists yet. Public because the viewport
+  /// overlays (issue #24) read the taxi's position to place their light
+  /// and fog cutouts, and must fall back to the viewfinder before the
+  /// world exists.
+  bool get isPlayerReady => _playerReady;
+
   bool isGameActive = false;
   int currentLevelNumber = 1;
 
@@ -244,6 +268,14 @@ class TaxiGame extends FlameGame
   /// Screen-space speed lines over the windshield; null until [onLoad].
   SpeedLines? _speedLines;
 
+  /// The weather-and-darkness windshield layer (issue #24); null until
+  /// [onLoad]. Draws nothing until the run environment says otherwise.
+  EnvironmentOverlay? _environmentOverlay;
+
+  /// The sky/scenery behind the world; kept so the day-night arc (issue
+  /// #24) can re-tint it as the run drives on.
+  final Background _background = Background();
+
   /// Shake offset currently baked into [camera.viewport.position], so the
   /// next frame can add a fresh delta on top of the untouched position.
   final Vector2 _appliedShakeOffset = Vector2.zero();
@@ -274,12 +306,18 @@ class TaxiGame extends FlameGame
     await super.onLoad();
 
     // Static sky/scenery behind the scrolling world
-    camera.backdrop.add(Background());
+    camera.backdrop.add(_background);
 
     // Speed lines live on the viewport: screen-space, drawn over the
     // world but under the Flutter HUD (issue #7).
     _speedLines = SpeedLines();
     camera.viewport.add(_speedLines!);
+
+    // The windshield layer (issue #24): darkness with the taxi's
+    // headlights cut out, fog, and rain streaks. Added after the speed
+    // lines so weather reads over them; the HUD still rides above both.
+    _environmentOverlay = EnvironmentOverlay();
+    camera.viewport.add(_environmentOverlay!);
 
     // Endless runs skip the level system entirely (issue #11).
     if (endlessSeed != null) {
@@ -327,7 +365,12 @@ class TaxiGame extends FlameGame
     _speedLines?.intensity = 0;
     _applyShake(0); // restores the viewport position, dropping any shake
 
-    course = EndlessCourse(seed: seed);
+    // The living world (issue #24): the same seed draws the same streets,
+    // weather, and sky as it draws fares — the Daily Shift's course and
+    // its mood are one reproducible thing. The course reads the
+    // environment to put passengers on the kerbs the road really has.
+    environment = RunEnvironment(seed: seed);
+    course = EndlessCourse(seed: seed, environment: environment);
     passengers.clear();
     passengersDelivered = 0;
     fareChain.reset();
@@ -342,8 +385,9 @@ class TaxiGame extends FlameGame
     world.removeAll(world.children.toList());
 
     // The endless road: chunks are added ahead of the camera and culled
-    // behind it forever (issue #11).
-    final chunks = RoadChunkManager();
+    // behind it forever (issue #11). Chunks render the run's own geometry
+    // and carry its work zones (issue #24).
+    final chunks = RoadChunkManager(environment: environment);
     roadChunks = chunks;
     world.add(chunks);
 
@@ -375,7 +419,10 @@ class TaxiGame extends FlameGame
     camera.follow(player, verticalOnly: true);
 
     trafficSpawner = TrafficSpawner.distanceBased(
-      profileOf: DifficultyCurve.trafficForDistance,
+      // Traffic rides the difficulty curve laid out over the road that
+      // actually exists at each distance, with weather and night folded
+      // into the pressure (issue #24).
+      profileOf: (d) => environment!.trafficAt(d),
       distanceOf: () => runDistance,
       // A spawner RNG derived from the run seed — never Dart's default
       // clock-seeded Random, or replays of one seed would diverge.
@@ -421,6 +468,12 @@ class TaxiGame extends FlameGame
     fareController = null;
     roadChunks = null;
     _activeRunSeed = null;
+    // The living world goes with it (issue #24): a level is the classic
+    // fixed daylight street, with dry grip and a bright sky.
+    environment = null;
+    gripMultiplier = 1.0;
+    darkness = 0;
+    _background.darkness = 0;
     _dailyDateKey = null;
     // A level run is no daily course: no ghost recording, no ghost on
     // the road (issue #20).
@@ -524,11 +577,19 @@ class TaxiGame extends FlameGame
     // (issue #12). In an endless run the budget tightens with the
     // difficulty curve's fare pressure at this distance (issue #18) —
     // deep-run fares ride shorter clocks, easing off in the relief lulls
-    // like everything else. Level mode keeps the original budgets.
+    // like everything else — and the world's mood rides the same meter:
+    // rain, fog, and night shorten the countdown by the same modifier
+    // they thicken the traffic (issue #24). Level mode keeps the original
+    // budgets.
     fareChain.startFare(
       passenger,
-      pressure:
-          isEndless ? DifficultyCurve.farePressureFor(runDistance) : 0.0,
+      pressure: isEndless
+          ? DifficultyCurve.farePressureFor(
+              runDistance,
+              environmentModifier:
+                  environment?.difficultyModifierAt(runDistance) ?? 0.0,
+            )
+          : 0.0,
     );
 
     // Green burst: a passenger boarded (issue #7).
@@ -1041,6 +1102,13 @@ class TaxiGame extends FlameGame
 
   @override
   void update(double dt) {
+    // Sample the living world (issue #24) before anything moves: the
+    // overlay tints from it, traffic lights its headlights by it, and the
+    // player car steers by its grip. Runs even while frozen — [runDistance]
+    // stays readable through a crash stall, so the sky holds still with
+    // the world instead of flickering.
+    _sampleEnvironment();
+
     if (hitStop.isActive) {
       // Hit-stop (issue #7): the world holds still for a beat — no
       // component updates, no collisions — while the shake keeps jittering
@@ -1106,6 +1174,35 @@ class TaxiGame extends FlameGame
 
     if (_scrapeMarkerCooldown > 0) {
       _scrapeMarkerCooldown = math.max(0.0, _scrapeMarkerCooldown - dt);
+    }
+  }
+
+  /// Reads the run environment at the taxi's distance (issue #24) and
+  /// pushes what the frame needs where it is consumed: grip to the car,
+  /// darkness to traffic, and the overlay's three intensities to the
+  /// windshield layer. Level mode has no environment; every value rests
+  /// at its neutral.
+  void _sampleEnvironment() {
+    final env = environment;
+    if (env == null || !isEndless) {
+      gripMultiplier = 1.0;
+      darkness = 0;
+      _background.darkness = 0;
+      _environmentOverlay?.darkness = 0;
+      _environmentOverlay?.rainIntensity = 0;
+      _environmentOverlay?.fogIntensity = 0;
+      return;
+    }
+
+    final distance = runDistance;
+    gripMultiplier = env.gripAt(distance);
+    darkness = env.darknessAt(distance);
+    _background.darkness = darkness;
+    final overlay = _environmentOverlay;
+    if (overlay != null) {
+      overlay.darkness = darkness;
+      overlay.rainIntensity = env.rainIntensityAt(distance);
+      overlay.fogIntensity = env.fogIntensityAt(distance);
     }
   }
 

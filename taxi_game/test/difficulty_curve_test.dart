@@ -243,6 +243,78 @@ void main() {
     });
   });
 
+  group('DifficultyCurve — the environment fold (issue #24)', () {
+    test('modifier zero leaves every anchor exactly as tuned', () {
+      for (final d in [0.0, 7000.0, DifficultyCurve.fullRampDistance]) {
+        final bare = DifficultyCurve.trafficForDistance(d);
+        final explicit = DifficultyCurve.trafficForDistance(d,
+            environmentModifier: 0.0);
+        expect(explicit.spawnInterval, bare.spawnInterval, reason: 'at $d');
+        expect(explicit.lanes.first.spawnProbability,
+            bare.lanes.first.spawnProbability, reason: 'at $d');
+        expect(explicit.lanes.first.speedRange.max,
+            bare.lanes.first.speedRange.max, reason: 'at $d');
+      }
+    });
+
+    test('foul weather rides the SAME curve: every knob moves together',
+        () {
+      for (final d in [12000.0, DifficultyCurve.fullRampDistance]) {
+        for (final modifier in [0.05, 0.15, 0.25]) {
+          final bare = DifficultyCurve.trafficForDistance(d);
+          final weathered = DifficultyCurve.trafficForDistance(d,
+              environmentModifier: modifier);
+
+          // Denser...
+          expect(weathered.spawnInterval, lessThan(bare.spawnInterval),
+              reason: 'interval at $d m+$modifier');
+          expect(weathered.lanes.first.spawnProbability,
+              greaterThan(bare.lanes.first.spawnProbability),
+              reason: 'probability at $d m+$modifier');
+          // ...faster (mean speed breathes with pressure)...
+          expect(
+              weathered.lanes.first.speedRange.max,
+              greaterThanOrEqualTo(bare.lanes.first.speedRange.max),
+              reason: 'top speed at $d m+$modifier');
+          // ...and the meter rides along, clamped as ever.
+          expect(
+              DifficultyCurve.farePressureFor(d,
+                  environmentModifier: modifier),
+              greaterThanOrEqualTo(DifficultyCurve.farePressureFor(d)),
+              reason: 'fare pressure at $d m+$modifier');
+        }
+      }
+    });
+
+    test('pressure scales linearly in the modifier and never dips', () {
+      final base = DifficultyCurve.pressureFor(25000.0);
+      final boosted = DifficultyCurve.pressureFor(25000.0,
+          environmentModifier: 0.20);
+      expect(boosted, closeTo(base * 1.20, 1e-9));
+    });
+
+    test('fare pressure still clamps at 1 with the fold applied', () {
+      const deep = DifficultyCurve.fullRampDistance + 5000;
+      expect(
+        DifficultyCurve.farePressureFor(deep, environmentModifier: 0.25),
+        1.0,
+      );
+    });
+
+    test('continuity holds under a constant modifier too', () {
+      var previous =
+          DifficultyCurve.trafficForDistance(0, environmentModifier: 0.25);
+      for (var d = 100.0; d <= 300000; d += 100) {
+        final profile = DifficultyCurve.trafficForDistance(d,
+            environmentModifier: 0.25);
+        expect(profile.spawnInterval - previous.spawnInterval,
+            lessThanOrEqualTo(0.30),
+            reason: 'interval step at $d');
+        previous = profile;
+      }
+    });
+  });
+
   group('DifficultyCurve — continuity and purity', () {
     test('is continuous: no perceptible jumps between nearby distances', () {
       var previous = DifficultyCurve.trafficForDistance(0);

@@ -91,6 +91,17 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     final spawnY = game.camera.viewfinder.position.y - spawnDistanceAhead;
     final spawnX = laneConfig.laneX;
 
+    // The living road (issue #24) keeps some ground clear: traffic never
+    // materialises inside a work zone's closed lanes or on a cross
+    // street. The roll above already happened, so skipping keeps the RNG
+    // stream — and with it the seed's reproducibility — untouched.
+    final env = game.environment;
+    if (env != null) {
+      final spawnDistance = max(0.0, -spawnY);
+      if (env.isIntersectionAt(spawnDistance)) return;
+      if (env.isLaneBlockedAt(spawnDistance, spawnX)) return;
+    }
+
     // Generate random speed within range. Same-direction traffic drives
     // slower than the player so it can be overtaken.
     var speed = laneConfig.speedRange.min +

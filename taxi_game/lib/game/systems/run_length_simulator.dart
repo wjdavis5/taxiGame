@@ -4,7 +4,7 @@ import '../../data/vehicle_catalog.dart';
 import '../../models/traffic_pattern.dart';
 import '../components/player_vehicle.dart' show PlayerVehicle;
 import 'collision_rules.dart';
-import 'difficulty_curve.dart';
+import 'run_environment.dart';
 
 /// The outcome of one simulated shift.
 class SimulatedRun {
@@ -124,6 +124,12 @@ class HazardWindow {
 ///    at the current distance, per-lane probability roll, speed drawn from
 ///    the lane range, same-direction traffic halved, vehicle-type
 ///    multiplier applied, spawns 500 px ahead of the camera);
+///  - the living road (issue #24): [RunEnvironment] for the street itself
+///    — lane targets and kerb stops follow the local width, traffic rides
+///    the environment-aware profile with the weather/night modifier folded
+///    into the pressure, rain scales the steering speed full lock gets,
+///    fog shortens the driver's planning horizon, and no traffic spawns on
+///    cross streets or in closed works lanes;
 ///  - physics: the player's throttle ramp and braking from [vehicle]'s
 ///    stats, lateral movement at full steering lock, both hitboxes scaled
 ///    exactly as the live game scales them;
@@ -148,6 +154,7 @@ class RunLengthSimulator {
   RunLengthSimulator({
     required this.seed,
     this.vehicle,
+    this.environment,
     this.reactionInterval = 0.25,
     this.lookaheadSeconds = 1.25,
     this.misjudgeRate = 0.03,
@@ -160,6 +167,12 @@ class RunLengthSimulator {
   /// The car being driven. Defaults to the starter cab — the car the
   /// median player is in.
   final VehicleStats? vehicle;
+
+  /// The living world to drive through (issue #24). Defaults to the one
+  /// this run's own seed draws, so the harness measures exactly what a
+  /// player of [seed] meets: the same widths, rain, fog, night, works,
+  /// and junctions, with their difficulty fold applied.
+  final RunEnvironment? environment;
 
   /// How often the driver re-reads the road, in seconds. The human lag the
   /// whole estimate rides on.
@@ -180,10 +193,10 @@ class RunLengthSimulator {
   /// Simulation tick.
   final double dt;
 
-  // Road geometry, matching TaxiGame and DifficultyCurve.
+  // Road geometry, matching TaxiGame and DifficultyCurve. Lane positions
+  // are not constants any more (issue #24): the driver reads them from the
+  // environment's road geometry every tick.
   static const double roadCenterX = 200;
-  static const double laneOncomingX = DifficultyCurve.oncomingLaneX;
-  static const double laneSameDirX = DifficultyCurve.sameDirectionLaneX;
   static const double spawnDistanceAhead = 500.0;
 
   // Harness safety caps so a too-easy curve can never hang the batch: a
@@ -201,6 +214,7 @@ class RunLengthSimulator {
     final stats = vehicle ??
         VehicleCatalog.statsFor(VehicleSpritesFallback.defaultVehicleId);
     final random = math.Random(seed ^ 0x1D5EED5);
+    final env = environment ?? RunEnvironment(seed: seed);
 
     // Player state. Forward speed is a magnitude (the taxi drives toward
     // -y); position is the vehicle centre, as in the live game.
@@ -208,14 +222,27 @@ class RunLengthSimulator {
     var y = 0.0;
     var speed = 0.0;
     var vx = 0.0;
-    var targetLaneX = laneSameDirX; // the policy's current intent
     var braking = false;
+
+    // The road under the taxi, refreshed every tick (issue #24): lane
+    // targets and kerbs follow whatever width the street has here, and
+    // rain scales the lateral speed the driver can actually steer at.
+    var laneOncomingX = env.roadAt(0).oncomingLaneX;
+    var laneSameDirX = env.roadAt(0).sameDirectionLaneX;
+    var steerSpeed = stats.steeringSpeed;
+    // How long a lane change takes, including the driver's lag — the
+    // window other-lane threats are checked against.
+    var switchSeconds =
+        (laneSameDirX - laneOncomingX).abs() / steerSpeed +
+            reactionInterval;
+
+    var targetLaneX = laneSameDirX; // the policy's current intent
 
     // Kerb positions: the road edge each car can actually reach (the live
     // game clamps the taxi to the road, so the kerb stop is at the clamp,
     // where the pickup zone reaches it).
-    final curbLeftX = roadCenterX - 100 + stats.width / 2;
-    final curbRightX = roadCenterX + 100 - stats.width / 2;
+    var curbLeftX = env.roadAt(0).leftX + stats.width / 2;
+    var curbRightX = env.roadAt(0).rightX - stats.width / 2;
 
     // --- Fare stops: the reason a real driver cannot simply crawl. ---
     // Every fare slot the taxi leaves the traffic lanes for the kerb,
@@ -253,9 +280,6 @@ class RunLengthSimulator {
     // impact-axis rule. Covers cars alongside now and cars that will
     // arrive mid-change from either direction. Drivers look before they
     // move; only the misjudge skips this check.
-    final switchSeconds =
-        (laneSameDirX - laneOncomingX).abs() / stats.steeringSpeed +
-            reactionInterval;
     bool blindSpotBlocked(double bandX) {
       // Signed moving-gap test: with g the signed gap to the car (behind
       // is positive) and r the rate the gap changes (v.vy + speed), does
@@ -292,14 +316,20 @@ class RunLengthSimulator {
 
     // --- The reflex driver (runs every [reactionInterval]) ----------------
     void decide() {
+      // How far ahead this driver can see right now (issue #24): fog
+      // shortens the planning horizon the same way it shortens a real
+      // driver's sight line.
+      final lookahead =
+          lookaheadSeconds * env.visibilityAt(math.max(0.0, -y));
+
       // Threat against where I actually am, and against where I'm heading.
       var threat = _nearestThreatTime(vehicles, x, x, y, speed,
           playerHalfW: playerHalfW, playerHalfH: playerHalfH,
-          horizon: lookaheadSeconds);
+          horizon: lookahead);
       final threatTarget = _nearestThreatTime(vehicles, targetLaneX, x, y,
           speed,
           playerHalfW: playerHalfW, playerHalfH: playerHalfH,
-          horizon: lookaheadSeconds);
+          horizon: lookahead);
       if (threatTarget != null &&
           (threat == null || threatTarget < threat)) {
         threat = threatTarget;
@@ -309,7 +339,7 @@ class RunLengthSimulator {
       // through light pressure, but bails to the nearest lane when the
       // kerb stop itself becomes a threat.
       if (mode == _DriveMode.boarding) {
-        if (threat != null && threat < lookaheadSeconds * 0.8) {
+        if (threat != null && threat < lookahead * 0.8) {
           mode = _DriveMode.reentering;
           targetLaneX = x < roadCenterX ? laneOncomingX : laneSameDirX;
         }
@@ -319,7 +349,7 @@ class RunLengthSimulator {
       if (mode == _DriveMode.toCurb) {
         // Approaching a pickup: hold the kerb line unless the street is
         // hot right now, in which case brake and wait in traffic.
-        braking = threat != null && threat < lookaheadSeconds * 0.8;
+        braking = threat != null && threat < lookahead * 0.8;
         return;
       }
 
@@ -332,7 +362,7 @@ class RunLengthSimulator {
             targetLaneX == laneSameDirX ? laneOncomingX : laneSameDirX;
         final otherThreat = _nearestThreatTime(vehicles, other, x, y, speed,
             playerHalfW: playerHalfW, playerHalfH: playerHalfH,
-            horizon: lookaheadSeconds * 1.25);
+            horizon: lookahead * 1.25);
         if (random.nextDouble() < misjudgeRate) {
           // The wrong read under pressure: commit to the other lane
           // without checking it. Sometimes it happens to be the right
@@ -365,7 +395,7 @@ class RunLengthSimulator {
       if (blocker != null) {
         final other =
             targetLaneX == laneSameDirX ? laneOncomingX : laneSameDirX;
-        if (laneClear(other, lookaheadSeconds * 2.0) &&
+        if (laneClear(other, lookahead * 2.0) &&
             !blindSpotBlocked(other)) {
           targetLaneX = other;
         }
@@ -381,6 +411,20 @@ class RunLengthSimulator {
         stallRemaining -= dt;
         continue;
       }
+
+      // The street under the wheels this tick (issue #24): lane targets
+      // and kerbs follow the local width; rain scales the lateral speed
+      // full lock can actually steer at.
+      final distance = math.max(0.0, -y);
+      final road = env.roadAt(distance);
+      laneOncomingX = road.oncomingLaneX;
+      laneSameDirX = road.sameDirectionLaneX;
+      curbLeftX = road.leftX + stats.width / 2;
+      curbRightX = road.rightX - stats.width / 2;
+      steerSpeed = stats.steeringSpeed * env.gripAt(distance);
+      switchSeconds =
+          (laneSameDirX - laneOncomingX).abs() / steerSpeed +
+              reactionInterval;
 
       // --- Drive ---
       policyTimer += dt;
@@ -484,21 +528,28 @@ class RunLengthSimulator {
               ? curbX
               : targetLaneX;
       final dx = navTarget - x;
-      final maxStep = stats.steeringSpeed * dt;
-      vx = dx.abs() <= maxStep
-          ? 0.0
-          : (dx > 0 ? stats.steeringSpeed : -stats.steeringSpeed);
+      final maxStep = steerSpeed * dt;
+      vx = dx.abs() <= maxStep ? 0.0 : (dx > 0 ? steerSpeed : -steerSpeed);
       x += dx.abs() <= maxStep ? dx : maxStep * (dx > 0 ? 1 : -1);
 
       y -= speed * dt;
 
       // --- Spawn, exactly as TrafficSpawner.distanceBased does ---
-      final distance = math.max(0.0, -y);
-      final profile = DifficultyCurve.trafficForDistance(distance);
+      // The environment-aware profile (issue #24): the curve's anchors
+      // over the local lane layout, with the weather/night modifier
+      // already folded into the pressure.
+      final profile = env.trafficAt(distance);
       spawnTimer += dt;
       if (spawnTimer >= profile.spawnInterval) {
         spawnTimer = 0.0;
+        final spawnDistance = distance + spawnDistanceAhead;
+        // Same clearances the live spawner keeps (issue #24): no traffic
+        // materialises on a cross street or inside a work zone's closed
+        // lanes. Skipping after the roll leaves the RNG stream untouched.
+        final junction = env.isIntersectionAt(spawnDistance);
         for (final lane in profile.lanes) {
+          if (junction) continue;
+          if (env.isLaneBlockedAt(spawnDistance, lane.laneX)) continue;
           if (random.nextDouble() <= lane.spawnProbability) {
             var laneSpeed = lane.speedRange.min +
                 random.nextDouble() *

@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flame/components.dart';
 
 import 'difficulty_curve.dart';
+import 'run_environment.dart';
 
 /// One procedurally generated fare: a pickup followed by a dropoff further
 /// up the road.
@@ -41,10 +42,17 @@ class EndlessFare {
 ///
 /// Pure logic — no Flame state — so determinism is unit testable.
 class EndlessCourse {
-  EndlessCourse({required this.seed});
+  EndlessCourse({required this.seed, this.environment});
 
   /// The run seed. The same seed always yields the same course.
   final int seed;
+
+  /// The run's living world (issue #24). When set, passengers wait on the
+  /// kerbs the road *actually* has at their stop — wide avenues push the
+  /// kerb out, narrow streets pull it in — instead of the standard road's
+  /// fixed curbs below. Null keeps the classic fixed curbs, which is what
+  /// the hand-made levels and every pre-#24 course mean.
+  final RunEnvironment? environment;
 
   /// Height (px) of the road band each fare occupies. Fares never overlap
   /// because every position drawn for fare *i* stays inside its slot.
@@ -88,14 +96,25 @@ class EndlessCourse {
     final pickupY = -(index * slotLength) - pickupInset;
     final dropoffY = pickupY - rideLength;
 
+    // Kerbs follow the road (issue #24): the passenger waits just past
+    // the road edge that exists at *their* stop, so a fare is always
+    // reachable from the clamp the taxi is actually held by. Each stop
+    // samples its own y — pickup and dropoff can sit on different
+    // streets. Without an environment this is the standard road's fixed
+    // curbs, as always.
+    final pickupLeft = environment?.leftCurbXAt(-pickupY) ?? leftCurbX;
+    final pickupRight = environment?.rightCurbXAt(-pickupY) ?? rightCurbX;
+    final dropoffLeft = environment?.leftCurbXAt(-dropoffY) ?? leftCurbX;
+    final dropoffRight = environment?.rightCurbXAt(-dropoffY) ?? rightCurbX;
+
     // ~40–70 coins a fare: in band with the 50-coin level rewards the
     // economy was tuned around.
     final reward = 20 + (rideLength / 30).round() + rewardBonus;
 
     return EndlessFare(
       index: index,
-      pickup: Vector2(pickupOnLeft ? leftCurbX : rightCurbX, pickupY),
-      dropoff: Vector2(dropoffOnLeft ? leftCurbX : rightCurbX, dropoffY),
+      pickup: Vector2(pickupOnLeft ? pickupLeft : pickupRight, pickupY),
+      dropoff: Vector2(dropoffOnLeft ? dropoffLeft : dropoffRight, dropoffY),
       reward: reward,
     );
   }

@@ -7,6 +7,7 @@ import '../../data/vehicle_catalog.dart';
 import '../taxi_game.dart';
 import '../vehicle_sprites.dart';
 import '../systems/collision_rules.dart';
+import 'road_obstacle.dart';
 import 'traffic_vehicle.dart';
 
 /// Player-controlled taxi vehicle
@@ -68,11 +69,17 @@ class PlayerVehicle extends PositionComponent
     // contact the art only overlaps must not register. Sized from the
     // logical vehicle box only — never from the sprite — and since issue #9
     // the logical box is per-car, so a bigger body is a bigger target.
+    //
+    // Solid (issue #24): the taxi must feel small static obstacles —
+    // construction cones — even when they sit entirely inside its box,
+    // where no polygon edges cross. Flame's containment fallback trusts
+    // the outer shape's isSolid, and the taxi is the outer shape in every
+    // cone touch.
     final hitbox = RectangleHitbox(
       size: vehicleSize * CollisionRules.playerHitboxScale,
       position: vehicleSize *
           ((1 - CollisionRules.playerHitboxScale) / 2),
-    );
+    )..isSolid = true;
     add(hitbox);
 
     // Center anchor
@@ -102,15 +109,29 @@ class PlayerVehicle extends PositionComponent
     // Update position
     position += velocity * dt;
 
-    // Keep the taxi on the road (world x 100..300)
-    final minX = TaxiGame.roadCenterX - TaxiGame.roadWidth / 2 + vehicleSize.x / 2;
-    final maxX = TaxiGame.roadCenterX + TaxiGame.roadWidth / 2 - vehicleSize.x / 2;
+    // Keep the taxi on the road. In an endless run (issue #24) the road
+    // has whatever width exists at the taxi's distance, so a taper
+    // carries the clamp in with the kerb; the classic level road is fixed.
+    final halfWidth = vehicleSize.x / 2;
+    final env = isMounted ? game.environment : null;
+    final double minX;
+    final double maxX;
+    if (env != null) {
+      final road = env.roadAt(math.max(0.0, -position.y));
+      minX = road.leftX + halfWidth;
+      maxX = road.rightX - halfWidth;
+    } else {
+      minX = TaxiGame.roadCenterX - TaxiGame.roadWidth / 2 + halfWidth;
+      maxX = TaxiGame.roadCenterX + TaxiGame.roadWidth / 2 - halfWidth;
+    }
     position.x = position.x.clamp(minX, maxX);
   }
 
   /// Throttle ramps speed up, releasing it brakes; steering sets the
   /// lateral velocity directly. This is the only movement path — the taxi
-  /// is always under player control.
+  /// is always under player control. The lateral half of the equation is
+  /// scaled by the road's grip (issue #24): rain cuts full lock's bite,
+  /// dry street leaves the stats untouched.
   void _updateMovement(double dt) {
     // Forward/backward movement
     if (isAccelerating) {
@@ -126,8 +147,9 @@ class PlayerVehicle extends PositionComponent
       }
     }
 
-    // Left/right steering
-    velocity.x = steeringInput * steeringSpeed;
+    // Left/right steering, on whatever grip the street offers.
+    final grip = isMounted ? game.gripMultiplier : 1.0;
+    velocity.x = steeringInput * steeringSpeed * grip;
   }
 
   void startAccelerating() {
@@ -159,6 +181,32 @@ class PlayerVehicle extends PositionComponent
     PositionComponent other,
   ) {
     super.onCollisionStart(intersectionPoints, other);
+
+    // Construction cones (issue #24) are soft obstacles: they cost speed,
+    // never a life. One ruling per cone — a held grind against the line
+    // does not keep re-punishing.
+    if (other is RoadObstacle) {
+      if (other.contactedPlayer || !game.isGameActive) return;
+      other.contactedPlayer = true;
+
+      final contactPoint = intersectionPoints.isEmpty
+          ? (position + other.position) / 2
+          : intersectionPoints.first;
+      final axis = CollisionRules.impactAxis(position, other.position);
+      final report = CollisionRules.buildReport(
+        severity: ContactSeverity.scrape,
+        vehicleKind: 'traffic cone',
+        playerVelocity: velocity,
+        playerPosition: position,
+        trafficVelocity: Vector2.zero(),
+        trafficPosition: other.position,
+        contactPoint: contactPoint,
+      );
+      velocity = velocity * CollisionRules.scrapeSpeedKeep;
+      position.add(axis * CollisionRules.scrapePushback);
+      game.onScrape(report);
+      return;
+    }
 
     // Only traffic is lethal/relevant; zones handle themselves.
     if (other is! TrafficVehicle) return;

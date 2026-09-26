@@ -1,5 +1,6 @@
 import 'package:flame/components.dart';
 import 'package:flame/collisions.dart';
+import 'package:flutter/material.dart';
 import 'dart:math';
 
 import '../taxi_game.dart';
@@ -131,6 +132,29 @@ class TrafficVehicle extends PositionComponent
       angle: -pi / 2,
       anchor: Anchor.center,
     ));
+  }
+
+  @override
+  void render(Canvas canvas) {
+    // Headlights (issue #24): on a night shift every car throws light
+    // ahead of itself, so traffic reads as lit vehicles instead of shapes
+    // in the dark. Additive glows at the front corners. In this local
+    // space the front edge is always −y: same-direction traffic draws
+    // unrotated, and oncoming traffic's π rotation already maps local −y
+    // to its world-facing direction.
+    final darkness = game.isMounted ? game.darkness : 0.0;
+    if (darkness > 0.12) {
+      final alpha = 0.55 * ((darkness - 0.12) / 0.88).clamp(0.0, 1.0);
+      final glow = Paint()
+        ..color = const Color(0xFFFFE9B0).withValues(alpha: alpha)
+        ..blendMode = BlendMode.plus
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+      for (final sideX in [size.x * 0.25, size.x * 0.75]) {
+        canvas.drawCircle(Offset(sideX, 3), 4.5, glow);
+      }
+    }
+
+    super.render(canvas);
   }
 
   @override
