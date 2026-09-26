@@ -12,8 +12,10 @@ import 'components/background.dart';
 import 'components/traffic_spawner.dart';
 import 'components/pickup_zone.dart';
 import 'components/dropoff_zone.dart';
+import 'components/scrape_marker.dart';
 import 'levels/level.dart';
 import '../models/passenger_data.dart';
+import 'systems/collision_rules.dart';
 import '../services/game_state_service.dart';
 import '../services/level_loader_service.dart';
 
@@ -39,6 +41,14 @@ class TaxiGame extends FlameGame
 
   bool isGameActive = false;
   int currentLevelNumber = 1;
+
+  /// Telemetry for the most recent player–traffic contact — a scrape or a
+  /// crash — so overlays and logs can explain exactly what happened
+  /// (issue #6 contact legibility). Cleared whenever a level loads.
+  CrashReport? lastImpact;
+
+  /// Rate-limits scrape feedback so a jittering grind cannot spam markers.
+  double _scrapeMarkerCooldown = 0;
 
   // The road spans x 100..300 in world coordinates (center 200, width 200).
   static const double roadCenterX = 200;
@@ -71,6 +81,7 @@ class TaxiGame extends FlameGame
   Future<void> loadLevel(int levelNumber) async {
     isGameActive = false;
     currentLevelNumber = levelNumber;
+    lastImpact = null;
     currentLevel = await levelLoader.loadLevel(levelNumber);
 
     // Tear down the previous level, if any.
@@ -192,12 +203,40 @@ class TaxiGame extends FlameGame
     return true;
   }
 
-  void onLevelFailed() {
+  /// Ends the level after a real collision. [report] carries the full
+  /// telemetry of the contact for the failure overlay and logs.
+  void onLevelFailed([CrashReport? report]) {
     if (!isGameActive) return;
+    lastImpact = report;
+    if (report != null) {
+      debugPrint('[crash] ${report.explanation}');
+    }
     isGameActive = false;
     _freezePlayer();
     trafficSpawner.pause();
     overlays.add('levelFailed');
+  }
+
+  /// Records a low-speed glancing scrape: no life is lost, the player was
+  /// already slowed by [PlayerVehicle]; this only surfaces feedback naming
+  /// what was hit.
+  void onScrape(CrashReport report) {
+    lastImpact = report;
+    if (_scrapeMarkerCooldown <= 0) {
+      _scrapeMarkerCooldown = 0.4;
+      world.add(ScrapeMarker(
+        position: report.contactPoint.clone(),
+        vehicleKind: report.vehicleKind,
+      ));
+    }
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (_scrapeMarkerCooldown > 0) {
+      _scrapeMarkerCooldown = math.max(0.0, _scrapeMarkerCooldown - dt);
+    }
   }
 
   void _freezePlayer() {

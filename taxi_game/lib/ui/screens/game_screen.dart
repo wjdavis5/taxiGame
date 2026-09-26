@@ -41,7 +41,7 @@ class _GameScreenState extends State<GameScreen> {
               'levelComplete': (context, TaxiGame game) =>
                   _buildLevelComplete(context),
               'levelFailed': (context, TaxiGame game) =>
-                  _buildLevelFailed(context),
+                  LevelFailedOverlay(game: game),
             },
             initialActiveOverlays: const ['hud'],
           ),
@@ -157,7 +157,17 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  Widget _buildLevelFailed(BuildContext context) {
+}
+
+/// The crash overlay. Names what hit the player and how fast, from the
+/// telemetry recorded at the moment of contact (issue #6).
+class LevelFailedOverlay extends StatelessWidget {
+  const LevelFailedOverlay({super.key, required this.game});
+
+  final TaxiGame game;
+
+  @override
+  Widget build(BuildContext context) {
     return Center(
       child: Container(
         padding: const EdgeInsets.all(20),
@@ -180,6 +190,15 @@ class _GameScreenState extends State<GameScreen> {
               style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              game.lastImpact?.explanation ?? 'You collided with traffic.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
                 color: Colors.white,
               ),
             ),

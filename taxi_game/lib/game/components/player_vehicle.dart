@@ -5,8 +5,9 @@ import 'package:flame/collisions.dart';
 
 import '../taxi_game.dart';
 import '../vehicle_sprites.dart';
-import 'traffic_vehicle.dart';
+import '../systems/collision_rules.dart';
 import '../systems/pathfinding_system.dart';
+import 'traffic_vehicle.dart';
 
 /// Player-controlled taxi vehicle
 class PlayerVehicle extends PositionComponent
@@ -53,11 +54,13 @@ class PlayerVehicle extends PositionComponent
     // Set size
     size = vehicleSize;
 
-    // Add hitbox (slightly smaller than visual for fairness). Sized from the
+    // Add hitbox. Tightened to 75% of the logical box (issue #6): grazing
+    // contact the art only overlaps must not register. Sized from the
     // logical vehicle box only — never from the sprite.
     final hitbox = RectangleHitbox(
-      size: vehicleSize * 0.9,
-      position: vehicleSize * 0.05,
+      size: vehicleSize * CollisionRules.playerHitboxScale,
+      position: vehicleSize *
+          ((1 - CollisionRules.playerHitboxScale) / 2),
     );
     add(hitbox);
 
@@ -171,14 +174,59 @@ class PlayerVehicle extends PositionComponent
     stopNavigation();
   }
 
+  /// Judged on contact start (one ruling per touch episode) instead of
+  /// every overlapping tick, so a scrape applies once and a sustained
+  /// grind does not re-fire the ruling every frame.
   @override
-  void onCollision(Set<Vector2> intersectionPoints, PositionComponent other) {
-    super.onCollision(intersectionPoints, other);
+  void onCollisionStart(
+    Set<Vector2> intersectionPoints,
+    PositionComponent other,
+  ) {
+    super.onCollisionStart(intersectionPoints, other);
 
-    // Handle collisions with traffic vehicles
-    if (other is TrafficVehicle) {
-      // Collision occurred - trigger game over
-      game.onLevelFailed();
+    // Only traffic is lethal/relevant; zones handle themselves.
+    if (other is! TrafficVehicle) return;
+    // No rulings while the level is already over or frozen.
+    if (!game.isGameActive) return;
+
+    final contactPoint = intersectionPoints.isEmpty
+        ? (position + other.position) / 2
+        : intersectionPoints.first;
+
+    // Fairness rule (issue #6): judge the touch by how fast the two
+    // vehicles close along the impact axis, not by the mere fact of
+    // overlap. Brushing a car at low speed must not end the run.
+    final axis = CollisionRules.impactAxis(position, other.position);
+    final approachSpeed = CollisionRules.approachSpeed(
+      playerVelocity: velocity,
+      trafficVelocity: other.velocity,
+      impactAxis: axis,
+    );
+    final severity = CollisionRules.severityFor(approachSpeed);
+    final report = CollisionRules.buildReport(
+      severity: severity,
+      vehicleKind: other.vehicleType.name,
+      playerVelocity: velocity,
+      playerPosition: position,
+      trafficVelocity: other.velocity,
+      trafficPosition: other.position,
+      contactPoint: contactPoint,
+    );
+
+    switch (severity) {
+      case ContactSeverity.crash:
+        game.onLevelFailed(report);
+      case ContactSeverity.scrape:
+        _applyScrape(axis, report);
     }
+  }
+
+  /// Low-speed glancing contact: keep the run alive, shed most of the
+  /// speed, push the taxi out of overlap so the same touch does not grind,
+  /// and let the game surface feedback naming what was hit.
+  void _applyScrape(Vector2 axis, CrashReport report) {
+    velocity = velocity * CollisionRules.scrapeSpeedKeep;
+    position.add(axis * CollisionRules.scrapePushback);
+    game.onScrape(report);
   }
 }

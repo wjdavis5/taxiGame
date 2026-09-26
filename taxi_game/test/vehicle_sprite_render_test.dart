@@ -77,7 +77,13 @@ void main() {
       final player = game.player;
       await settleSprite(player, game);
 
-      expect(hitboxOf(player).size, Vector2(40, 60) * 0.9);
+      // 75% of the logical box (issue #6 tightened it in the player's
+      // favour), still centred.
+      expect(hitboxOf(player).size, Vector2(40, 60) * 0.75);
+      expect(
+        hitboxOf(player).position,
+        Vector2(40, 60) * (1 - 0.75) / 2,
+      );
       // The sprite art is 33x14 — nothing like the 40x60 hitbox footprint —
       // proving collision geometry is independent of the art.
       expect(spriteOf(player).sprite!.srcSize, Vector2(33, 14));
@@ -142,9 +148,10 @@ void main() {
       expect(spriteComponent.angle, closeTo(-math.pi / 2, 1e-9));
       // Oncoming traffic still faces the player...
       expect(bus.angle, math.pi);
-      // ...while the hitbox keeps the logical footprint (0.85 * 50x100),
-      // independent of the sprite art.
-      expect(hitboxOf(bus).size, Vector2(50, 100) * 0.85);
+      // ...while the hitbox keeps the logical footprint (80% of 50x100,
+      // tightened in the player's favour by issue #6), independent of the
+      // sprite art.
+      expect(hitboxOf(bus).size, Vector2(50, 100) * 0.80);
     });
 
     test('same-direction traffic faces up the screen', () async {
