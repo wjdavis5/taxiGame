@@ -19,6 +19,9 @@ class GameStateService extends ChangeNotifier {
   List<String> get unlockedVehicles => _saveData.unlockedVehicles;
   bool get soundEnabled => _saveData.settings.soundEnabled;
   bool get musicEnabled => _saveData.settings.musicEnabled;
+
+  /// The best score an endless shift has ever ended with (issue #15).
+  int get endlessBestScore => _saveData.endlessBestScore;
   
   /// Load save data from storage
   Future<void> loadSaveData() async {
@@ -61,6 +64,20 @@ class GameStateService extends ChangeNotifier {
       notifyListeners();
       save();
     }
+  }
+
+  /// Records the score an endless shift just ended with against the
+  /// personal best (issue #15). Returns true when [score] beats the
+  /// stored best — a new PB — and stores it; a tie keeps the old best.
+  /// The score counts however the shift ended: banked payouts and
+  /// forfeited unbanked scores are both the number a replay tries to
+  /// beat.
+  bool recordEndlessScore(int score) {
+    if (score <= _saveData.endlessBestScore) return false;
+    _saveData.endlessBestScore = score;
+    notifyListeners();
+    save();
+    return true;
   }
   
   /// Unlock a vehicle

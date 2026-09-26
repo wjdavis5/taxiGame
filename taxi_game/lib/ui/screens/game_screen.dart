@@ -7,6 +7,7 @@ import '../../services/game_state_service.dart';
 import '../../services/level_loader_service.dart';
 import '../widgets/bank_prompt_overlay.dart';
 import '../widgets/hud_overlay.dart';
+import '../widgets/run_summary_panel.dart';
 
 /// Game screen that contains the actual game widget
 class GameScreen extends StatefulWidget {
@@ -48,16 +49,23 @@ class _GameScreenState extends State<GameScreen> {
                   _buildLevelComplete(context),
               'levelFailed': (context, TaxiGame game) =>
                   LevelFailedOverlay(game: game),
-              // The end-of-shift panel after the third crash (issue #14)
-              // — the forfeit is stated, not swallowed.
-              'shiftWrecked': (context, TaxiGame game) =>
-                  _ShiftWreckedPanel(game: game),
+              // The end-of-shift run summaries (issues #14, #15): the
+              // wrecked shift names its forfeit, the banked one celebrates
+              // its payout, and both show the full run's numbers.
+              'shiftWrecked': (context, TaxiGame game) => RunSummaryPanel(
+                    game: game,
+                    // Finalized in the same call stack that added this
+                    // overlay — the snapshot always precedes the panel.
+                    summary: game.lastRunSummary!,
+                  ),
               // The timed bank-or-push choice at every endless dropoff
               // (issue #13) — asked over live traffic, not a modal.
               'bankOrPush': (context, TaxiGame game) =>
                   BankPromptOverlay(game: game),
-              'shiftBanked': (context, TaxiGame game) =>
-                  _ShiftBankedPanel(game: game),
+              'shiftBanked': (context, TaxiGame game) => RunSummaryPanel(
+                    game: game,
+                    summary: game.lastRunSummary!,
+                  ),
             },
             initialActiveOverlays: const ['hud'],
           ),
@@ -184,205 +192,6 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-}
-
-/// The end-of-shift panel after banking (issue #13). Static content: the
-/// shift is over, the numbers on it are final.
-class _ShiftBankedPanel extends StatelessWidget {
-  const _ShiftBankedPanel({required this.game});
-
-  final TaxiGame game;
-
-  /// World px to metres — the same scale the HUD's distance badge uses.
-  static const double pixelsPerMetre = 10.0;
-
-  String get _distanceLabel {
-    final metres = game.lastBankedDistance / pixelsPerMetre;
-    return metres >= 1000
-        ? '${(metres / 1000).toStringAsFixed(1)} km'
-        : '${metres.round()} m';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        margin: const EdgeInsets.symmetric(horizontal: 40),
-        decoration: BoxDecoration(
-          color: Colors.blueGrey.shade800,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.savings,
-              size: 80,
-              color: Colors.white,
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'SHIFT BANKED',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 10),
-            // The payout: the whole run score, now permanent in the
-            // wallet — the thing pushing would have grown and a crash
-            // would have taken.
-            Text(
-              '+${game.lastBankedScore ?? 0} Coins',
-              style: const TextStyle(
-                fontSize: 24,
-                color: Colors.yellow,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Score ${game.score} · ${game.faresDelivered} fares · $_distanceLabel',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                color: Colors.white70,
-              ),
-            ),
-            const SizedBox(height: 30),
-            ElevatedButton(
-              onPressed: () {
-                // A fresh shift: a new seed draws a new city.
-                game.overlays.remove('shiftBanked');
-                final seed =
-                    DateTime.now().microsecondsSinceEpoch & 0x3FFFFFFF;
-                game.startEndlessRun(seed: seed);
-              },
-              child: const Text('DRIVE AGAIN'),
-            ),
-            const SizedBox(height: 10),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text(
-                'MAIN MENU',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The end-of-shift panel after the third crash (issue #14). Static
-/// content: the shift is over, the numbers on it are final — and the
-/// forfeit is stated outright, because a silent loss teaches nothing.
-class _ShiftWreckedPanel extends StatelessWidget {
-  const _ShiftWreckedPanel({required this.game});
-
-  final TaxiGame game;
-
-  /// World px to metres — the same scale the HUD's distance badge uses.
-  static const double pixelsPerMetre = 10.0;
-
-  String get _distanceLabel {
-    final metres = game.runDistance / pixelsPerMetre;
-    return metres >= 1000
-        ? '${(metres / 1000).toStringAsFixed(1)} km'
-        : '${metres.round()} m';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        margin: const EdgeInsets.symmetric(horizontal: 40),
-        decoration: BoxDecoration(
-          color: Colors.red.shade900,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.car_crash,
-              size: 80,
-              color: Colors.white,
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'SHIFT OVER',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 10),
-            // What ended it: the third crash, named like every other.
-            Text(
-              game.lastImpact?.explanation ??
-                  'Three crashes — the shift is over.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 10),
-            // The forfeit: everything the chain held was never banked,
-            // so it dies with the shift — worth exactly the coins it
-            // would have paid at the dropoff window.
-            Text(
-              'Forfeited: ${game.score} coins',
-              style: const TextStyle(
-                fontSize: 22,
-                color: Colors.yellow,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '${game.faresDelivered} fares · $_distanceLabel',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                color: Colors.white70,
-              ),
-            ),
-            const SizedBox(height: 30),
-            ElevatedButton(
-              onPressed: () {
-                // A fresh shift, three new lives: a new seed draws a
-                // new city.
-                game.overlays.remove('shiftWrecked');
-                final seed =
-                    DateTime.now().microsecondsSinceEpoch & 0x3FFFFFFF;
-                game.startEndlessRun(seed: seed);
-              },
-              child: const Text('DRIVE AGAIN'),
-            ),
-            const SizedBox(height: 10),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text(
-                'MAIN MENU',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 /// The crash overlay. Names what hit the player and how fast, from the

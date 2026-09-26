@@ -170,7 +170,9 @@ void main() {
       expect(game.isGameActive, isFalse, reason: 'the shift is over');
       expect(game.overlays.isActive('shiftBanked'), isTrue);
       expect(game.overlays.isActive('bankOrPush'), isFalse);
-      expect(game.lastBankedDistance, greaterThan(0));
+      // The run summary (issue #15) carries the distance the shift
+      // covered by the time it was banked.
+      expect(game.lastRunSummary!.distancePx, greaterThan(0));
     });
 
     test('a crash kills the open prompt and leaves the score unbanked',
@@ -237,7 +239,7 @@ void main() {
       await game.startEndlessRun(seed: 43);
 
       expect(game.lastBankedScore, isNull);
-      expect(game.lastBankedDistance, 0);
+      expect(game.lastRunSummary, isNull);
       expect(game.bankPrompt.isActive, isFalse);
       expect(game.overlays.isActive('bankOrPush'), isFalse);
       expect(game.score, 0);

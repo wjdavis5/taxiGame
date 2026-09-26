@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../game/taxi_game.dart';
 import '../../services/game_state_service.dart';
 import 'credits_screen.dart';
 import 'game_screen.dart';
@@ -79,7 +80,52 @@ class MainMenuScreen extends StatelessWidget {
 
                   const SizedBox(height: 60),
 
-                  // Play Button
+                  // Endless shift is the headline mode (issue #15): the
+                  // first button on the menu, in the primary style, with
+                  // the score to beat right beneath it. A procedurally
+                  // generated run (issue #11) — each shift gets a fresh
+                  // seed, and the seed fully determines the course.
+                  Consumer<GameStateService>(
+                    builder: (context, gameState, child) {
+                      return Column(
+                        children: [
+                          _MenuButton(
+                            buttonKey: const ValueKey('endless_button'),
+                            icon: Icons.all_inclusive,
+                            label: 'ENDLESS SHIFT',
+                            primary: true,
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => GameScreen(
+                                    endlessSeed: TaxiGame.freshSeed(),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          if (gameState.endlessBestScore > 0) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              'BEST ${gameState.endlessBestScore}',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // The hand-made career ladder (issue #11's predecessor):
+                  // one crash fails the level, and completion unlocks the
+                  // next.
                   _MenuButton(
                     buttonKey: const Key('play_button'),
                     icon: Icons.play_arrow,
@@ -89,28 +135,6 @@ class MainMenuScreen extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (context) => const GameScreen(),
-                        ),
-                      );
-                    },
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // Endless shift: a procedurally generated run (issue #11).
-                  // Each shift gets a fresh seed; the seed fully determines
-                  // the course, so identical seeds replay identical runs.
-                  _MenuButton(
-                    buttonKey: const ValueKey('endless_button'),
-                    icon: Icons.all_inclusive,
-                    label: 'ENDLESS SHIFT',
-                    onPressed: () {
-                      final seed =
-                          DateTime.now().microsecondsSinceEpoch & 0x3FFFFFFF;
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              GameScreen(endlessSeed: seed),
                         ),
                       );
                     },
@@ -200,11 +224,16 @@ class _MenuButton extends StatelessWidget {
   final VoidCallback onPressed;
   final Key? buttonKey;
 
+  /// Primary buttons are the menu's headline actions: bigger, in the
+  /// app's signature yellow. Everything else steps back in white.
+  final bool primary;
+
   const _MenuButton({
     required this.icon,
     required this.label,
     required this.onPressed,
     this.buttonKey,
+    this.primary = false,
   });
 
   @override
@@ -212,23 +241,26 @@ class _MenuButton extends StatelessWidget {
     return ElevatedButton.icon(
       key: buttonKey,
       onPressed: onPressed,
-      icon: Icon(icon, size: 32),
+      icon: Icon(icon, size: primary ? 34 : 32),
       label: Text(
         label,
-        style: const TextStyle(
-          fontSize: 24,
+        style: TextStyle(
+          fontSize: primary ? 26 : 22,
           fontWeight: FontWeight.bold,
         ),
       ),
       style: ElevatedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-        minimumSize: const Size(250, 60),
-        backgroundColor: Colors.yellow,
-        foregroundColor: Colors.black,
+        padding: EdgeInsets.symmetric(
+          horizontal: primary ? 44 : 40,
+          vertical: primary ? 18 : 15,
+        ),
+        minimumSize: Size(primary ? 280 : 250, primary ? 70 : 60),
+        backgroundColor: primary ? Colors.yellow : Colors.white,
+        foregroundColor: primary ? Colors.black : Colors.blue.shade900,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(30),
         ),
-        elevation: 8,
+        elevation: primary ? 10 : 6,
       ),
     );
   }

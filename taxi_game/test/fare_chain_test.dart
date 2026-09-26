@@ -218,7 +218,52 @@ void main() {
 
       expect(chain.score, 0);
       expect(chain.multiplier, 1);
+      expect(chain.bestMultiplier, 1, reason: 'the best chain resets too');
       expect(chain.isCarryingFare, isFalse);
+    });
+
+    test('best chain records the peak multiplier (issue #15)', () {
+      final chain = FareChain();
+      expect(chain.bestMultiplier, 1);
+
+      // Two clean deliveries: 1x -> 2x -> 3x.
+      for (var i = 0; i < 2; i++) {
+        final passenger = fareOf('p$i', 400, -300);
+        chain.startFare(passenger);
+        chain.completeFare(passenger, fareValue: 50);
+      }
+      expect(chain.multiplier, 3);
+      expect(chain.bestMultiplier, 3);
+    });
+
+    test('a break lowers the multiplier but never the recorded best '
+        '(issue #15)', () {
+      final chain = FareChain();
+      for (var i = 0; i < 2; i++) {
+        final passenger = fareOf('p$i', 400, -300);
+        chain.startFare(passenger);
+        chain.completeFare(passenger, fareValue: 50);
+      }
+      expect(chain.bestMultiplier, 3);
+
+      // Let a meter run out: the chain collapses to 1x.
+      chain.startFare(fareOf('late', 400, -300));
+      chain.update(FareChain.maxFareSeconds + 2);
+
+      expect(chain.multiplier, 1);
+      expect(chain.bestMultiplier, 3,
+          reason: 'the record of what the chain once was is the point');
+    });
+
+    test('a push bonus counts toward the best chain (issue #15)', () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+      chain.completeFare(passenger, fareValue: 50);
+      chain.applyPushBonus();
+
+      expect(chain.multiplier, 3);
+      expect(chain.bestMultiplier, 3);
     });
 
     test('breakChain resets the multiplier and nothing else (issue #14)',

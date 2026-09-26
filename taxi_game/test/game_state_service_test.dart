@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
@@ -77,5 +78,62 @@ void main() {
 
     expect(gameStateService.soundEnabled, isFalse);
     expect(gameStateService.musicEnabled, isFalse);
+  });
+
+  group('endless personal best (issue #15)', () {
+    test('a new player has no best score', () {
+      expect(gameStateService.endlessBestScore, 0);
+    });
+
+    test('the first ended shift is always a new best', () {
+      expect(gameStateService.recordEndlessScore(120), isTrue);
+      expect(gameStateService.endlessBestScore, 120);
+    });
+
+    test('a lower score does not beat the best and does not store it', () {
+      gameStateService.recordEndlessScore(120);
+
+      expect(gameStateService.recordEndlessScore(90), isFalse);
+      expect(gameStateService.endlessBestScore, 120);
+    });
+
+    test('a tie keeps the old best', () {
+      gameStateService.recordEndlessScore(120);
+
+      expect(gameStateService.recordEndlessScore(120), isFalse);
+      expect(gameStateService.endlessBestScore, 120);
+    });
+
+    test('the best survives an app restart', () async {
+      gameStateService.recordEndlessScore(340);
+
+      // Simulate an app restart: a brand-new service stack reading the
+      // same on-device store.
+      final reloadedStorage = StorageService();
+      await reloadedStorage.init();
+      final reloaded = GameStateService(reloadedStorage);
+      await reloaded.loadSaveData();
+
+      expect(reloaded.endlessBestScore, 340);
+    });
+
+    test('a save written before the best existed loads as no best', () {
+      // A pre-issue-#15 save: no endlessBestScore key at all.
+      final save = SaveData.fromJson({
+        'currentLevel': 3,
+        'totalCoins': 40,
+        'totalGems': 0,
+        'unlockedVehicles': ['taxi_yellow'],
+        'selectedVehicle': 'taxi_yellow',
+        'achievements': <String, bool>{},
+        'settings': Settings.createDefault().toJson(),
+      });
+
+      expect(save.endlessBestScore, 0,
+          reason: 'a missing key means "no shift ever ended", not a '
+              'corrupt save');
+      expect(save.toJson()['endlessBestScore'], 0,
+          reason: 'and it round-trips into new saves');
+    });
   });
 }

@@ -6,8 +6,12 @@ class SaveData {
   List<String> unlockedVehicles;
   String selectedVehicle;
   Map<String, bool> achievements;
+
+  /// The best score any endless shift has ever ended with, banked or
+  /// forfeited (issue #15). Compared against at every shift end.
+  int endlessBestScore;
   Settings settings;
-  
+
   SaveData({
     required this.currentLevel,
     required this.totalCoins,
@@ -15,9 +19,10 @@ class SaveData {
     required this.unlockedVehicles,
     required this.selectedVehicle,
     required this.achievements,
+    this.endlessBestScore = 0,
     required this.settings,
   });
-  
+
   /// Create default save data for new players
   factory SaveData.createDefault() {
     return SaveData(
@@ -27,10 +32,11 @@ class SaveData {
       unlockedVehicles: ['taxi_yellow'], // Default vehicle
       selectedVehicle: 'taxi_yellow',
       achievements: {},
+      endlessBestScore: 0,
       settings: Settings.createDefault(),
     );
   }
-  
+
   /// Load from JSON
   factory SaveData.fromJson(Map<String, dynamic> json) {
     return SaveData(
@@ -40,10 +46,13 @@ class SaveData {
       unlockedVehicles: List<String>.from(json['unlockedVehicles'] as List),
       selectedVehicle: json['selectedVehicle'] as String,
       achievements: Map<String, bool>.from(json['achievements'] as Map),
+      // Saves written before issue #15 have no best score yet; a missing
+      // key means "no shift has ever ended", not a corrupt save.
+      endlessBestScore: (json['endlessBestScore'] as int?) ?? 0,
       settings: Settings.fromJson(json['settings'] as Map<String, dynamic>),
     );
   }
-  
+
   /// Convert to JSON
   Map<String, dynamic> toJson() {
     return {
@@ -53,6 +62,7 @@ class SaveData {
       'unlockedVehicles': unlockedVehicles,
       'selectedVehicle': selectedVehicle,
       'achievements': achievements,
+      'endlessBestScore': endlessBestScore,
       'settings': settings.toJson(),
     };
   }

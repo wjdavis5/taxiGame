@@ -25,6 +25,7 @@ import 'systems/endless_fare_controller.dart';
 import 'systems/bank_prompt.dart';
 import 'systems/fare_chain.dart';
 import 'systems/lives.dart';
+import 'systems/run_summary.dart';
 import 'systems/road_chunk_manager.dart';
 import 'systems/impact_fx.dart';
 import '../services/game_state_service.dart';
@@ -82,6 +83,10 @@ class TaxiGame extends FlameGame
   /// Score accrued this run or level (issue #12).
   int get score => fareChain.score;
 
+  /// A seed for a brand-new shift, from the clock. Each shift gets a
+  /// fresh seed, so each draws a fresh city (issue #11).
+  static int freshSeed() => DateTime.now().microsecondsSinceEpoch & 0x3FFFFFFF;
+
   /// The timed bank-or-push choice offered at every endless dropoff
   /// (issue #13). Inactive in level mode — levels settle at completion.
   final BankPrompt bankPrompt = BankPrompt();
@@ -90,8 +95,15 @@ class TaxiGame extends FlameGame
   /// panel. Null until a shift is banked; cleared when a new run starts.
   int? lastBankedScore;
 
-  /// How far into the shift the taxi had driven when it was banked, in px.
-  double lastBankedDistance = 0;
+  /// The settled record of the shift that just ended (issue #15) — the
+  /// run-summary panel reads it. Set the instant the shift ends, before
+  /// its overlay goes up, and cleared when the next run starts.
+  RunSummary? lastRunSummary;
+
+  /// Coins credited to the wallet during the current run (issue #15):
+  /// each delivered fare's base reward, plus the banked payout if the
+  /// shift ends in a bank. The summary's "earned" line.
+  int _runCoinsEarned = 0;
 
   List<PassengerData> passengers = [];
   int passengersDelivered = 0;
@@ -213,7 +225,8 @@ class TaxiGame extends FlameGame
     fareChain.reset();
     _dismissBankPrompt();
     lastBankedScore = null;
-    lastBankedDistance = 0;
+    lastRunSummary = null;
+    _runCoinsEarned = 0;
 
     // Tear down the previous run, if any.
     world.removeAll(world.children.toList());
@@ -421,6 +434,7 @@ class TaxiGame extends FlameGame
       ));
     }
     gameState.addCoins(passenger.reward);
+    _runCoinsEarned += passenger.reward;
 
     // Every completed dropoff asks the question (issue #13): bank the
     // score and end the shift, or push on at an increased multiplier. The
@@ -471,7 +485,6 @@ class TaxiGame extends FlameGame
   /// stays readable for the panel until the next run resets it.
   void _endShiftAsBanked() {
     lastBankedScore = fareChain.score;
-    lastBankedDistance = runDistance;
 
     isGameActive = false;
     _freezePlayer();
@@ -479,7 +492,39 @@ class TaxiGame extends FlameGame
     _dismissBankPrompt();
 
     gameState.addCoins(lastBankedScore!);
+    _runCoinsEarned += lastBankedScore!;
+    _finalizeRunSummary(ShiftOutcome.banked);
     overlays.add('shiftBanked');
+  }
+
+  /// Settles the shift that just ended into [lastRunSummary] (issue #15):
+  /// snapshots the final numbers and records the score against the
+  /// personal best. Called before the summary overlay goes up, so the
+  /// panel always reads a complete snapshot.
+  void _finalizeRunSummary(ShiftOutcome outcome) {
+    final previousBest = gameState.endlessBestScore;
+    final isPersonalBest = gameState.recordEndlessScore(fareChain.score);
+    lastRunSummary = RunSummary(
+      outcome: outcome,
+      score: fareChain.score,
+      bestChain: fareChain.bestMultiplier,
+      faresDelivered: faresDelivered,
+      distancePx: runDistance,
+      coinsEarned: _runCoinsEarned,
+      isPersonalBest: isPersonalBest,
+      previousBest: previousBest,
+    );
+  }
+
+  /// The run summary's DRIVE AGAIN (issue #15): tears down whichever
+  /// end-of-shift panel is up and puts a fresh shift — three new lives, a
+  /// new seed, a new city — on the same road immediately. The retry never
+  /// routes through the menu; the friction between "I died" and "I'm
+  /// driving again" is where retention is won or lost.
+  void retryShift() {
+    overlays.remove('shiftBanked');
+    overlays.remove('shiftWrecked');
+    startEndlessRun(seed: freshSeed());
   }
 
   void _completeLevel() {
@@ -620,6 +665,7 @@ class TaxiGame extends FlameGame
     isGameActive = false;
     _freezePlayer();
     trafficSpawner.pause();
+    _finalizeRunSummary(ShiftOutcome.wrecked);
 
     // The wreck panel waits out the hit-stop (issue #7): the impact
     // lands first, then the forfeit is explained.

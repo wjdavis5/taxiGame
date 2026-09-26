@@ -86,6 +86,11 @@ class FareChain {
   /// push-on; any expiry resets it to 1x.
   int multiplier = 1;
 
+  /// The highest the multiplier reached this run (issue #15) — the "best
+  /// chain" line on the run summary. A break lowers [multiplier] but never
+  /// this: the record of what the chain once was is the whole point.
+  int bestMultiplier = 1;
+
   final Map<String, FareTimer> _timers = {};
 
   /// The time budget for a ride of [rideDistance] px.
@@ -138,6 +143,7 @@ class FareChain {
 
     score += fareValue * multiplier;
     multiplier = onTime ? multiplier + multiplierStep : 1;
+    _trackBest();
 
     return onTime ? FareSettlement.onTime : FareSettlement.late;
   }
@@ -148,6 +154,12 @@ class FareChain {
   /// default, and it must cost the same either way.
   void applyPushBonus() {
     multiplier += pushBonusStep;
+    _trackBest();
+  }
+
+  /// Folds a multiplier increase into the run's best-chain record.
+  void _trackBest() {
+    if (multiplier > bestMultiplier) bestMultiplier = multiplier;
   }
 
   /// Breaks the chain back to 1x without touching the score or any live
@@ -172,11 +184,12 @@ class FareChain {
     if (expired) multiplier = 1;
   }
 
-  /// Clears the chain: score, multiplier, and every live countdown. Called
-  /// whenever a run or level (re)starts.
+  /// Clears the chain: score, multiplier, best chain, and every live
+  /// countdown. Called whenever a run or level (re)starts.
   void reset() {
     score = 0;
     multiplier = 1;
+    bestMultiplier = 1;
     _timers.clear();
   }
 }
