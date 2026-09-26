@@ -54,4 +54,17 @@ void main() {
     expect(playButton, findsOneWidget);
     expect(tester.widget<ElevatedButton>(playButton).onPressed, isNotNull);
   });
+
+  testWidgets('garage button is present and enabled', (tester) async {
+    final storageService = StorageService();
+    await storageService.init();
+    final gameStateService = GameStateService(storageService);
+
+    await tester.pumpWidget(buildMenu(gameStateService, storageService));
+    await tester.pump();
+
+    final garageButton = find.byKey(const ValueKey('garage_button'));
+    expect(garageButton, findsOneWidget);
+    expect(tester.widget<ElevatedButton>(garageButton).onPressed, isNotNull);
+  });
 }

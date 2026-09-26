@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../services/game_state_service.dart';
 import 'credits_screen.dart';
 import 'game_screen.dart';
+import 'garage_screen.dart';
 import 'settings_screen.dart';
 
 /// Main menu screen - entry point of the app
@@ -88,6 +89,23 @@ class MainMenuScreen extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (context) => const GameScreen(),
+                        ),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // Garage Button
+                  _MenuButton(
+                    buttonKey: const Key('garage_button'),
+                    icon: Icons.directions_car,
+                    label: 'GARAGE',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const GarageScreen(),
                         ),
                       );
                     },

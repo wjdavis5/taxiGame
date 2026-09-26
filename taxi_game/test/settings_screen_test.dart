@@ -6,6 +6,7 @@ import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/credits_screen.dart';
+import 'package:taxi_game/ui/screens/garage_screen.dart';
 import 'package:taxi_game/ui/screens/main_menu_screen.dart';
 import 'package:taxi_game/ui/screens/settings_screen.dart';
 
@@ -31,13 +32,21 @@ void main() {
         child: MaterialApp(home: child),
       );
 
-  group('menu placeholders', () {
-    testWidgets('no garage button is offered', (tester) async {
+  group('menu destinations', () {
+    testWidgets('garage opens the real garage screen', (tester) async {
+      // The garage used to be a dead 'coming soon' snackbar and was removed;
+      // now that it exists, the button must lead to a working screen.
       await tester.pumpWidget(wrap(const MainMenuScreen()));
       await tester.pump();
 
-      expect(find.byKey(const ValueKey('garage_button')), findsNothing);
-      expect(find.text('GARAGE'), findsNothing);
+      final button = find.byKey(const ValueKey('garage_button'));
+      expect(button, findsOneWidget);
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(GarageScreen), findsOneWidget);
+      expect(find.textContaining('coming soon'), findsNothing);
     });
 
     testWidgets('settings opens the settings screen rather than a snackbar',

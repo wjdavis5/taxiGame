@@ -133,7 +133,9 @@ class _GameScreenState extends State<GameScreen> {
                 if (!hasNext) {
                   messenger.showSnackBar(
                     const SnackBar(
-                      content: Text('You beat every level! More coming soon.'),
+                      content: Text(
+                        'You beat every level — the city is yours, cabbie!',
+                      ),
                     ),
                   );
                   navigator.pop();

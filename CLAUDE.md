@@ -60,7 +60,7 @@ xcrun simctl status_bar "$SIM" override \
   --time "9:41" --batteryState charged --batteryLevel 100 \
   --cellularMode active --cellularBars 4 --wifiMode active --wifiBars 3
 
-# SHOT = menu | game | credits | settings
+# SHOT = menu | game | garage | credits | settings
 flutter build ios --simulator --debug \
   -t tool/screenshot_entry.dart --dart-define=SHOT=settings
 xcrun simctl uninstall "$SIM" com.wjdavis5.taxigame

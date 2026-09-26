@@ -39,6 +39,23 @@ void main() {
     expect(gameStateService.unlockedVehicles, contains('sport_taxi'));
   });
 
+  test('unlocked and selected vehicles survive a reload', () async {
+    gameStateService.addCoins(500);
+    expect(gameStateService.unlockVehicle('sedan_blue', 250), isTrue);
+    gameStateService.selectVehicle('sedan_blue');
+
+    // Simulate an app restart: a brand-new service stack reading the same
+    // on-device store.
+    final reloadedStorage = StorageService();
+    await reloadedStorage.init();
+    final reloaded = GameStateService(reloadedStorage);
+    await reloaded.loadSaveData();
+
+    expect(reloaded.totalCoins, 250);
+    expect(reloaded.unlockedVehicles, contains('sedan_blue'));
+    expect(reloaded.selectedVehicle, 'sedan_blue');
+  });
+
   test('completeLevel awards coins and unlocks the next level', () {
     gameStateService.completeLevel(1, 50);
 
