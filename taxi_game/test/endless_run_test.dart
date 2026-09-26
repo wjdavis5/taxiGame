@@ -10,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/dropoff_zone.dart';
 import 'package:taxi_game/game/components/pickup_zone.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
+import 'package:taxi_game/game/systems/endless_course.dart';
+import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/systems/road_chunk_manager.dart';
 import 'package:taxi_game/game/vehicle_sprites.dart';
 import 'package:taxi_game/game/taxi_game.dart';
@@ -222,6 +224,75 @@ void main() {
         isNotEmpty,
         reason: 'the course keeps producing fares',
       );
+    });
+  });
+
+  group('fare chain scoring (issue #12)', () {
+    /// Delivers the fare with the given index by teleporting the taxi to
+    /// its kerbs, the way the delivery test above does. Assumes the fare's
+    /// zones are already mounted and live in the world.
+    void deliverFare(TaxiGame game, EndlessFare fare) {
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+      game.update(1 / 60);
+      expect(game.player.hasPassenger, isTrue, reason: 'passenger boarded');
+      game.player.position = Vector2(fare.dropoff.x, fare.dropoff.y + 30);
+      game.update(1 / 60);
+    }
+
+    test('chained deliveries multiply the payout', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      final coinsBefore = gameState.totalCoins;
+
+      // First fare pays 1x and arms a 2x chain.
+      final fare0 = game.course!.fare(0);
+      deliverFare(game, fare0);
+      expect(game.fareChain.multiplier, 2);
+      expect(game.score, fare0.reward);
+
+      // Let the camera catch up so the next fare generates and mounts,
+      // then deliver it: it pays 2x.
+      await tickAndSettle(game);
+      final fare1 = game.course!.fare(1);
+      deliverFare(game, fare1);
+      expect(game.fareChain.multiplier, 3);
+      expect(game.score, fare0.reward + 2 * fare1.reward,
+          reason: 'score accrues as fare value x current multiplier');
+      expect(gameState.totalCoins, coinsBefore + fare0.reward + fare1.reward,
+          reason: 'coins pay unbunched: the economy is unchanged');
+    });
+
+    test('letting the meter run out breaks the chain back to 1x', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      // Chain a delivery first so there is something to lose.
+      final fare0 = game.course!.fare(0);
+      deliverFare(game, fare0);
+      expect(game.fareChain.multiplier, 2);
+      await tickAndSettle(game);
+
+      // Pick up the next fare and sit on it until the meter dies. The
+      // taxi is parked on the kerb, out of every traffic lane.
+      final fare1 = game.course!.fare(1);
+      game.player.position = Vector2(fare1.pickup.x, fare1.pickup.y + 30);
+      game.update(1 / 60);
+      expect(game.player.hasPassenger, isTrue);
+
+      final ticks = (FareChain.maxFareSeconds + 2).ceil();
+      for (var i = 0; i < ticks; i++) {
+        game.update(1.0);
+      }
+      expect(game.fareChain.multiplier, 1,
+          reason: 'expiry resets the multiplier the moment it happens');
+
+      // Delivering late still pays the fare — at 1x, and the chain does
+      // not grow.
+      game.player.position = Vector2(fare1.dropoff.x, fare1.dropoff.y + 30);
+      game.update(1 / 60);
+      expect(game.score, fare0.reward + fare1.reward,
+          reason: 'late fare pays value x 1');
+      expect(game.fareChain.multiplier, 1);
     });
   });
 

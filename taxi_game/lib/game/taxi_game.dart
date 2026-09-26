@@ -22,6 +22,7 @@ import 'systems/collision_rules.dart';
 import 'systems/difficulty_curve.dart';
 import 'systems/endless_course.dart';
 import 'systems/endless_fare_controller.dart';
+import 'systems/fare_chain.dart';
 import 'systems/road_chunk_manager.dart';
 import 'systems/impact_fx.dart';
 import '../services/game_state_service.dart';
@@ -60,6 +61,13 @@ class TaxiGame extends FlameGame
   EndlessCourse? course;
   EndlessFareController? fareController;
   RoadChunkManager? roadChunks;
+
+  /// The fare chain — score, multiplier, and the live fare countdowns
+  /// (issue #12). Run-local: reset with every level or endless run.
+  final FareChain fareChain = FareChain();
+
+  /// Score accrued this run or level (issue #12).
+  int get score => fareChain.score;
 
   List<PassengerData> passengers = [];
   int passengersDelivered = 0;
@@ -157,6 +165,7 @@ class TaxiGame extends FlameGame
     course = EndlessCourse(seed: seed);
     passengers.clear();
     passengersDelivered = 0;
+    fareChain.reset();
 
     // Tear down the previous run, if any.
     world.removeAll(world.children.toList());
@@ -212,6 +221,7 @@ class TaxiGame extends FlameGame
     _applyShake(0); // restores the viewport position, dropping any shake
 
     currentLevel = await levelLoader.loadLevel(levelNumber);
+    fareChain.reset();
 
     // Tear down the previous level, if any.
     world.removeAll(world.children.toList());
@@ -292,6 +302,10 @@ class TaxiGame extends FlameGame
   void _onPassengerPickup(PassengerData passenger) {
     player.hasPassenger = true;
 
+    // The meter starts running: this passenger's countdown begins now
+    // (issue #12).
+    fareChain.startFare(passenger);
+
     // Green burst: a passenger boarded (issue #7).
     world.add(BurstParticles(
       position: passenger.pickupLocation,
@@ -303,6 +317,10 @@ class TaxiGame extends FlameGame
     passengersDelivered++;
     player.hasPassenger =
         passengers.any((p) => p.isPickedUp && !p.isDelivered);
+
+    // Score the delivery against the fare chain (issue #12); coins are
+    // unchanged — the chain is mastery on top of the existing economy.
+    fareChain.completeFare(passenger, fareValue: passenger.reward);
 
     // Blue-and-gold burst: the fare is paid (issue #7).
     world.add(BurstParticles(
@@ -328,6 +346,10 @@ class TaxiGame extends FlameGame
   /// spot — there is no level completion to settle up at.
   void _onEndlessFareDelivered(PassengerData passenger) {
     player.hasPassenger = fareController?.hasActivePickup ?? false;
+
+    // Score the delivery against the fare chain (issue #12); the coin
+    // payout below is unchanged.
+    fareChain.completeFare(passenger, fareValue: passenger.reward);
 
     // Blue-and-gold burst: the fare is paid (issue #7).
     world.add(BurstParticles(
@@ -473,6 +495,14 @@ class TaxiGame extends FlameGame
 
     super.update(dt);
     _applyShake(dt);
+
+    // Fare countdowns tick only while the run is live (issue #12): a
+    // crash, the completion panel, or a pause freezes the meter with
+    // everything else. (Pause stops this whole method; overlays set
+    // isGameActive false first.)
+    if (isGameActive) {
+      fareChain.update(dt);
+    }
 
     // Speed lines track the taxi's forward speed so velocity reads
     // without looking at a number (issue #7).

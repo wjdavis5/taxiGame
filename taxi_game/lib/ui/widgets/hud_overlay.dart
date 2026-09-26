@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../game/systems/fare_chain.dart';
 import '../../game/taxi_game.dart';
 import '../../services/game_state_service.dart';
 
@@ -111,6 +112,11 @@ class HudOverlay extends StatelessWidget {
               ],
             ),
             
+            // Scoring bar: run score, chain multiplier, and the active
+            // fare countdown (issue #12).
+            const SizedBox(height: 10),
+            _ScoringBar(game: game),
+
             const Spacer(),
             
             // Bottom instruction
@@ -189,6 +195,169 @@ class _EndlessDistanceBadgeState extends State<_EndlessDistanceBadge> {
         color: Colors.white,
         fontSize: 18,
         fontWeight: FontWeight.bold,
+      ),
+    );
+  }
+}
+
+/// Live scoring readout (issue #12): the run score, the chain multiplier,
+/// and the most urgent fare countdown while a passenger is aboard. Like
+/// [_EndlessDistanceBadge], it polls the game on a short timer — the fare
+/// clock only reads to a tenth of a second, so that is plenty.
+class _ScoringBar extends StatefulWidget {
+  const _ScoringBar({required this.game});
+
+  final TaxiGame game;
+
+  @override
+  State<_ScoringBar> createState() => _ScoringBarState();
+}
+
+class _ScoringBarState extends State<_ScoringBar> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chain = widget.game.fareChain;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        // Run score, left.
+        _HudPill(
+          child: Text(
+            'SCORE ${chain.score}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        // Chain state, right: the fare meter next to the multiplier it
+        // feeds.
+        Row(
+          children: [
+            if (chain.isCarryingFare) ...[
+              _FareTimerBadge(timer: chain.mostUrgentTimer!),
+              const SizedBox(width: 8),
+            ],
+            _MultiplierBadge(multiplier: chain.multiplier),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// A rounded black pill matching the HUD's other badges.
+class _HudPill extends StatelessWidget {
+  const _HudPill({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// The chain multiplier (issue #12). Dim at 1x; gold and pulsing whenever
+/// the chain is alive, keyed on the value so each step re-pops it.
+class _MultiplierBadge extends StatelessWidget {
+  const _MultiplierBadge({required this.multiplier});
+
+  final int multiplier;
+
+  static Color _colorFor(int multiplier) =>
+      multiplier > 1 ? Colors.amber : Colors.white54;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      key: ValueKey('chain-pulse-$multiplier'),
+      tween: Tween(begin: 1.35, end: 1.0),
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+      builder: (context, scale, child) =>
+          Transform.scale(scale: scale, child: child),
+      child: _HudPill(
+        child: Text(
+          '\u00d7$multiplier',
+          style: TextStyle(
+            color: _colorFor(multiplier),
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The most urgent fare countdown (issue #12). Counts down in tenths;
+/// heats up as it runs out, and reads LATE once the window has closed
+/// (the chain is already broken — the badge only explains it).
+class _FareTimerBadge extends StatelessWidget {
+  const _FareTimerBadge({required this.timer});
+
+  final FareTimer timer;
+
+  static const double _warnSeconds = 5.0;
+  static const double _dangerSeconds = 2.5;
+
+  static Color _colorFor(FareTimer timer) {
+    if (timer.isExpired) return Colors.red;
+    if (timer.remainingSeconds <= _dangerSeconds) return Colors.red;
+    if (timer.remainingSeconds <= _warnSeconds) return Colors.orange;
+    return Colors.white;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _HudPill(
+      child: Row(
+        children: [
+          Icon(
+            timer.isExpired ? Icons.timer_off : Icons.timer,
+            color: _colorFor(timer),
+            size: 18,
+          ),
+          const SizedBox(width: 5),
+          Text(
+            timer.isExpired
+                ? 'LATE'
+                : '${timer.remainingSeconds.toStringAsFixed(1)}s',
+            style: TextStyle(
+              color: _colorFor(timer),
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
       ),
     );
   }

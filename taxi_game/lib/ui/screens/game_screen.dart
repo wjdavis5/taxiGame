@@ -129,6 +129,15 @@ class _GameScreenState extends State<GameScreen> {
                 color: Colors.yellow,
               ),
             ),
+            // The run's fare-chain score (issue #12): the number a replay
+            // tries to beat.
+            Text(
+              'Score: ${game.score}',
+              style: const TextStyle(
+                fontSize: 18,
+                color: Colors.white,
+              ),
+            ),
             const SizedBox(height: 30),
             ElevatedButton(
               onPressed: () async {

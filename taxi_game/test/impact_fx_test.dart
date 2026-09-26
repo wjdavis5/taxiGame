@@ -513,7 +513,9 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      // A fixed pump, not pumpAndSettle: the HUD's scoring bar (issue #12)
+      // polls the game on a repeating timer, so the frame never goes quiet.
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('0'), findsOneWidget);
 
       gameState.addCoins(50);
@@ -532,8 +534,8 @@ void main() {
       // Transform.scale stores the uniform scale in storage[0] (m11).
       expect(pulse.transform.storage[0], greaterThan(1.0));
 
-      // ...and settles back to rest.
-      await tester.pumpAndSettle();
+      // ...and settles back to rest. (Fixed pump again — see above.)
+      await tester.pump(const Duration(milliseconds: 300));
       final settled = tester.widget<Transform>(
         find
             .ancestor(
