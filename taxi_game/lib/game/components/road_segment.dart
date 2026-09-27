@@ -170,16 +170,20 @@ class RoadSegment extends PositionComponent {
 
   void _renderEnvironmentRoad(Canvas canvas) {
     final env = environment!;
-    // Chunk-local x of the road's centre line: the chunk's own origin is
-    // the centre line's top end.
+    // Chunk-local x of the road's centre line: the component is anchored
+    // top-centre at roadCenterX over a 200 px-wide box, so its local
+    // origin is the box's top-LEFT corner — world x centerX - size.x / 2
+    // — not the centre line. The level renderer's fixed draws and
+    // _placeCones' cone conversion both use exactly this reading.
     const centerX = RunEnvironment.roadCenterX;
+    final boxLeft = centerX - size.x / 2;
 
     // Sample the geometry down the chunk so tapers follow the road.
     final rows = <_RoadRow>[];
     for (var y = 0.0; y < length; y += _rowStep) {
-      rows.add(_rowFor(env, centerX, y));
+      rows.add(_rowFor(env, boxLeft, y));
     }
-    rows.add(_rowFor(env, centerX, length));
+    rows.add(_rowFor(env, boxLeft, length));
 
     _drawSidewalks(canvas, rows, env);
     _drawSurface(canvas, rows, env);
@@ -188,14 +192,14 @@ class RoadSegment extends PositionComponent {
     _drawIntersections(canvas, env, centerX);
   }
 
-  _RoadRow _rowFor(RunEnvironment env, double centerX, double localY) {
+  _RoadRow _rowFor(RunEnvironment env, double boxLeft, double localY) {
     // Local y runs positive down the chunk from its top edge, so the
     // distance at a row is the pinned top distance minus the run down.
     final distance = distanceAtTop - localY;
     final road = env.roadAt(distance);
     return _RoadRow(
       localY: localY,
-      leftLocalX: road.leftX - centerX,
+      leftLocalX: road.leftX - boxLeft,
       width: road.width,
       laneCount: road.laneCount,
     );
@@ -368,7 +372,10 @@ class RoadSegment extends PositionComponent {
       ..style = PaintingStyle.fill;
     const barHeight = 6.0;
     const barGap = 5.0;
-    final leftLocalX = road.leftX - centerX;
+    // The component's local origin is its box's top-left corner (anchor
+    // top-centre at roadCenterX, 200 px wide) — the same conversion the
+    // road rows use (issue #33).
+    final leftLocalX = road.leftX - (centerX - size.x / 2);
     for (var i = 0; i < 3; i++) {
       canvas.drawRect(
         Rect.fromLTWH(
