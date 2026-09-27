@@ -281,7 +281,7 @@ void main() {
       }
       expect(spawner.activeVehicleCount, 0);
       expect(game.world.children.whereType<TrafficVehicle>(), isEmpty);
-    }, timeout: Timeout(Duration(minutes: 3)));
+    }, timeout: const Timeout(Duration(minutes: 3)));
 
     test('same-direction traffic despawns at the end, never past it',
         () async {
@@ -320,7 +320,7 @@ void main() {
       // vehicle ever drove beyond the end of it.
       expect(spawner.activeVehicleCount, greaterThan(0));
       expect(minY, greaterThanOrEqualTo(roadTop));
-    }, timeout: Timeout(Duration(minutes: 3)));
+    }, timeout: const Timeout(Duration(minutes: 3)));
   });
 
   group('endless mode is untouched', () {
