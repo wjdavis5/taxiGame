@@ -19,8 +19,21 @@ class PlayerVehicle extends PositionComponent
   /// so the four catalog axes stay the whole story.
   static const double deceleration = 600.0;
 
+  /// How much harder a deliberate brake bites than letting go (issue
+  /// #29): a full drag-down applies 1x this on top of the release rate —
+  /// twice the deceleration — while easing off the stick coasts at the
+  /// ordinary release rate. Part of the same universal braking rule.
+  static const double brakeBoost = 1.0;
+
   Vector2 velocity = Vector2.zero();
   bool isAccelerating = false;
+
+  /// Analog throttle from the virtual stick (issue #29): 1 is full
+  /// throttle, negative brakes (harder the further the drag), 0 rests.
+  /// Nonzero, it wins over the keyboard's binary pedal; the two inputs
+  /// otherwise stay independent.
+  double throttleInput = 0;
+
   bool hasPassenger = false;
   double steeringInput = 0; // -1 (left) to 1 (right)
 
@@ -127,23 +140,31 @@ class PlayerVehicle extends PositionComponent
     position.x = position.x.clamp(minX, maxX);
   }
 
-  /// Throttle ramps speed up, releasing it brakes; steering sets the
-  /// lateral velocity directly. This is the only movement path — the taxi
-  /// is always under player control. The lateral half of the equation is
-  /// scaled by the road's grip (issue #24): rain cuts full lock's bite,
-  /// dry street leaves the stats untouched.
+  /// Throttle ramps speed up, releasing or braking slows it, and
+  /// steering sets the lateral velocity directly. This is the only
+  /// movement path — the taxi is always under player control. The
+  /// lateral half of the equation is scaled by the road's grip (issue
+  /// #24): rain cuts full lock's bite, dry street leaves the stats
+  /// untouched.
+  ///
+  /// The throttle is analog since the virtual stick (issue #29): a
+  /// partial drag-up ramps proportionally slower toward the same
+  /// per-car top speed, and a drag-down brakes up to
+  /// [deceleration] * (1 + [brakeBoost]). There is no reverse. With no
+  /// stick input the keyboard's binary pedal takes over unchanged.
   void _updateMovement(double dt) {
-    // Forward/backward movement
-    if (isAccelerating) {
-      // Ramp up gradually (spec: ~0.5s from stop to full speed)
-      velocity.y = (velocity.y - acceleration * dt).clamp(-maxSpeed, 0.0);
+    final throttle =
+        throttleInput != 0 ? throttleInput : (isAccelerating ? 1.0 : 0.0);
+    if (throttle > 0) {
+      // Ramp up gradually (spec: ~0.5s from stop to full speed at full
+      // throttle), scaled by how far the stick is pushed.
+      velocity.y = (velocity.y - acceleration * throttle * dt)
+          .clamp(-maxSpeed, 0.0);
     } else {
-      // Decelerate quickly
+      // Decelerate quickly; a deliberate drag-down bites harder.
+      final braking = deceleration * (1.0 - throttle);
       if (velocity.y < 0) {
-        velocity.y += deceleration * dt;
-        if (velocity.y > 0) {
-          velocity.y = 0;
-        }
+        velocity.y = math.min(0.0, velocity.y + braking * dt);
       }
     }
 
@@ -164,10 +185,16 @@ class PlayerVehicle extends PositionComponent
     steeringInput = input.clamp(-1.0, 1.0);
   }
 
+  /// Sets the stick's analog throttle (issue #29), clamped to -1..1.
+  void setThrottle(double input) {
+    throttleInput = input.clamp(-1.0, 1.0);
+  }
+
   void reset() {
     position = startPosition.clone();
     velocity = Vector2.zero();
     isAccelerating = false;
+    throttleInput = 0;
     hasPassenger = false;
     steeringInput = 0;
   }

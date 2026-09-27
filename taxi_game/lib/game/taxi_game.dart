@@ -20,6 +20,7 @@ import 'components/burst_particles.dart';
 import 'components/close_call_pop.dart';
 import 'components/coin_pop.dart';
 import 'components/speed_lines.dart';
+import 'components/virtual_stick.dart';
 import 'levels/level.dart';
 import '../models/passenger_data.dart';
 import '../models/run_record.dart';
@@ -43,7 +44,7 @@ import '../services/level_loader_service.dart';
 
 /// Main game class that manages the entire game loop and components
 class TaxiGame extends FlameGame
-    with HasCollisionDetection, TapCallbacks, KeyboardEvents {
+    with HasCollisionDetection, KeyboardEvents {
   TaxiGame({
     required this.levelLoader,
     required this.gameState,
@@ -312,8 +313,13 @@ class TaxiGame extends FlameGame
   static const double roadCenterX = 200;
   static const double roadWidth = 200;
 
-  // Touch position tracking for steering
-  Vector2? _touchPosition;
+  /// The one-thumb relative-drag virtual stick (issue #29), the sole
+  /// touch input: mounted on the viewport in [onLoad]. Null only before
+  /// that — handlers guard rather than assume.
+  VirtualStick? _virtualStick;
+
+  /// Exposed for tests and the keyboard guard.
+  VirtualStick? get virtualStick => _virtualStick;
 
   @override
   Color backgroundColor() => const Color(0xFF1A1A1A); // Letterbox outside the viewport
@@ -335,6 +341,12 @@ class TaxiGame extends FlameGame
     // lines so weather reads over them; the HUD still rides above both.
     _environmentOverlay = EnvironmentOverlay();
     camera.viewport.add(_environmentOverlay!);
+
+    // The virtual stick (issue #29): screen-space control surface, drawn
+    // over the world and the weather, under the Flutter HUD. It mounts
+    // its own drag-event dispatcher on the game.
+    _virtualStick = VirtualStick();
+    camera.viewport.add(_virtualStick!);
 
     // Endless runs skip the level system entirely (issue #11).
     if (endlessSeed != null) {
@@ -1238,8 +1250,11 @@ class TaxiGame extends FlameGame
   }
 
   void _freezePlayer() {
-    _touchPosition = null;
+    // A dead stick zeroes its own inputs on release (issue #29); the
+    // explicit zeroes cover a run ending without a touch at all.
+    _virtualStick?.release();
     player.stopAccelerating();
+    player.setThrottle(0);
     player.setSteering(0);
     // The run is over; the windshield effect ends with it (issue #7).
     _speedLines?.intensity = 0;
@@ -1253,32 +1268,6 @@ class TaxiGame extends FlameGame
   void resumeGame() {
     paused = false;
     overlays.remove('pauseMenu');
-  }
-
-  @override
-  void onTapDown(TapDownEvent event) {
-    super.onTapDown(event);
-    if (isGameActive) {
-      _touchPosition = event.canvasPosition;
-      player.startAccelerating();
-      _updateSteeringFromTouch();
-    }
-  }
-
-  @override
-  void onTapUp(TapUpEvent event) {
-    super.onTapUp(event);
-    _touchPosition = null;
-    player.stopAccelerating();
-    player.setSteering(0);
-  }
-
-  @override
-  void onTapCancel(TapCancelEvent event) {
-    super.onTapCancel(event);
-    _touchPosition = null;
-    player.stopAccelerating();
-    player.setSteering(0);
   }
 
   @override
@@ -1296,29 +1285,19 @@ class TaxiGame extends FlameGame
     final right = keysPressed.contains(LogicalKeyboardKey.arrowRight) ||
         keysPressed.contains(LogicalKeyboardKey.keyD);
 
-    // Keyboard input only overrides "stop" when no touch is active, so
-    // touch and keyboard can be used together.
+    // Keyboard input only overrides "stop" when no thumb owns the stick
+    // (issue #29), so the two inputs can be used together.
+    final stickActive = _virtualStick?.isActive ?? false;
     if (accelerate) {
       player.startAccelerating();
-    } else if (_touchPosition == null) {
+    } else if (!stickActive) {
       player.stopAccelerating();
     }
     if (left != right) {
       player.setSteering(left ? -1 : 1);
-    } else if (_touchPosition == null) {
+    } else if (!stickActive) {
       player.setSteering(0);
     }
     return KeyEventResult.handled;
-  }
-
-  void _updateSteeringFromTouch() {
-    if (_touchPosition == null || !isGameActive) return;
-
-    // Steer based on touch position relative to the screen center:
-    // left half steers left, right half steers right.
-    final screenCenter = canvasSize.x / 2;
-    final deltaX = _touchPosition!.x - screenCenter;
-    final steeringInput = (deltaX / (canvasSize.x / 2)).clamp(-1.0, 1.0);
-    player.setSteering(steeringInput);
   }
 }
