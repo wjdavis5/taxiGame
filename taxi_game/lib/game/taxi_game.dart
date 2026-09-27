@@ -400,6 +400,31 @@ class TaxiGame extends FlameGame
     await loadLevel(gameState.currentLevel);
   }
 
+  /// Retires the previous run's or level's world wholesale (issue #32).
+  ///
+  /// A teardown sweep of [world.children] can never be complete. Flame
+  /// defers tree changes: a component added to a mounted parent during a
+  /// tick — a road chunk the chunk manager synced in the shift's final
+  /// frames, a fare zone, a traffic car — is *queued* to mount at the next
+  /// tick's start, and until then it is not in [world.children] at all. A
+  /// retry tapped between ticks would sweep only the children it can see,
+  /// and the queued straggler would mount straight into the fresh run's
+  /// world afterwards: previous-run geometry nobody tracks and nothing
+  /// culls, composited into the new run's first frames. When the ended
+  /// shift had crossed a fold, that straggler's canonical position
+  /// (computed under the old shift) lands exactly on the fresh run's
+  /// opening street — the sheared two-worlds frame TestFlight caught.
+  ///
+  /// Retiring the world itself closes the race by construction. The
+  /// camera re-points at the fresh world synchronously, so the old one
+  /// can never render again, and anything still queued to mount mounts
+  /// into a world that is already detached — it can only ever come back
+  /// on the tree as a child of the retired one, and is carried out with
+  /// it when that removal processes.
+  void _clearWorld() {
+    world = World();
+  }
+
   /// Starts an endless procedural run (issue #11): recycled road chunks,
   /// fares generated continuously from the seeded course, and traffic on
   /// the distance curve. The same [seed] always builds the same run.
@@ -454,7 +479,7 @@ class TaxiGame extends FlameGame
     _runDrivenSeconds = 0;
 
     // Tear down the previous run, if any.
-    world.removeAll(world.children.toList());
+    _clearWorld();
 
     // The endless road: chunks are added ahead of the camera and culled
     // behind it forever (issue #11). Chunks render the run's own geometry
@@ -479,10 +504,14 @@ class TaxiGame extends FlameGame
 
     // The player starts at y 0 and only drives upward (negative y); chunk
     // indices below 0 already cover the road behind the start line.
+    // The game reference is pinned at construction (issue #32): the world
+    // swap below can leave this player's own add queued past the next
+    // teardown, and an in-flight sprite load must not depend on walking a
+    // tree that is being retired underneath it.
     player = PlayerVehicle(
       startPosition: Vector2(roadCenterX, 0),
       vehicleId: gameState.selectedVehicle,
-    );
+    )..game = this;
     world.add(player);
     _playerReady = true;
 
@@ -569,7 +598,7 @@ class TaxiGame extends FlameGame
     lastBankedScore = null;
 
     // Tear down the previous level, if any.
-    world.removeAll(world.children.toList());
+    _clearWorld();
 
     // The player can only drive forward (up), so it must start below every
     // pickup point. Dropoffs extend upward into negative y.
@@ -595,11 +624,12 @@ class TaxiGame extends FlameGame
       length: roadBottom - roadTop,
     ));
 
-    // Render the vehicle selected in the garage/save data.
+    // Render the vehicle selected in the garage/save data. Game reference
+    // pinned at construction, as in [startEndlessRun] (issue #32).
     player = PlayerVehicle(
       startPosition: Vector2(roadCenterX, playerStartY),
       vehicleId: gameState.selectedVehicle,
-    );
+    )..game = this;
     world.add(player);
     _playerReady = true;
 

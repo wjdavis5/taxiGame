@@ -41,6 +41,19 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
 
   final List<TrafficVehicle> _activeVehicles = [];
 
+  /// The world this run's traffic belongs to, captured on mount (issue
+  /// #32). A retired spawner can still get one update after [TaxiGame]
+  /// has swapped in the fresh run's world; spawning through the live
+  /// [TaxiGame.world] getter then would drop a previous-run car onto the
+  /// new run's street. Vehicles always go to this spawner's own world.
+  World? _runWorld;
+
+  @override
+  void onMount() {
+    super.onMount();
+    _runWorld = game.world;
+  }
+
   // Spawn area (ahead of camera view)
   static const double spawnDistanceAhead = 500.0;
 
@@ -143,16 +156,21 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
       oncoming: laneConfig.oncoming,
     );
 
-    // Create or reuse vehicle
+    // Create or reuse vehicle. The game reference is pinned at
+    // construction (issue #32): a retired spawner's last spawn may outlive
+    // its tree attachment, and the vehicle's sprite load must not depend
+    // on walking a tree that is being torn down underneath it.
     final vehicle = TrafficVehicle.random(
       position: Vector2(spawnX, spawnY),
       baseSpeed: speed,
       path: path,
       random: random,
-    );
+    )..game = game;
 
-    // Add to the game world so it scrolls with the camera
-    game.world.add(vehicle);
+    // Add to this run's world so it scrolls with the camera (issue #32:
+    // this spawner's own world, never the live getter — a retired
+    // spawner's last tick must not write into the fresh run's world).
+    _runWorld!.add(vehicle);
     _activeVehicles.add(vehicle);
   }
 

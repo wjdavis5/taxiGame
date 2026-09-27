@@ -70,6 +70,20 @@ class EndlessFareController extends Component
 
   final List<_ActiveFare> _active = [];
 
+  /// The world this run's fares belong to, captured on mount (issue #32).
+  /// A retired controller can still get one update after [TaxiGame] has
+  /// swapped in the fresh run's world; spawning through the live
+  /// [TaxiGame.world] getter then would drop a previous-run passenger on
+  /// the new run's kerb. Zones and notes always go to this controller's
+  /// own world.
+  World? _runWorld;
+
+  @override
+  void onMount() {
+    super.onMount();
+    _runWorld = game.world;
+  }
+
   /// Generate fares this far above the camera centre (px past the view top).
   static const double generationAhead = 1200.0;
 
@@ -214,8 +228,8 @@ class EndlessFareController extends Component
       },
     );
 
-    game.world.add(pickupZone);
-    game.world.add(dropoffZone);
+    _runWorld!.add(pickupZone);
+    _runWorld!.add(dropoffZone);
 
     _active.add(_ActiveFare(
       fare: fare,
@@ -263,7 +277,7 @@ class EndlessFareController extends Component
 
       // The passenger speaks at the kerb they expected; the note is world
       // space, so it scrolls away behind with the street as it reads.
-      game.world.add(PassengerNote(position: f.dropoffZone.position.clone()));
+      _runWorld!.add(PassengerNote(position: f.dropoffZone.position.clone()));
 
       f.dropoffZone.position = spot;
       // Keep the data in step so the delivery's burst and coin flight

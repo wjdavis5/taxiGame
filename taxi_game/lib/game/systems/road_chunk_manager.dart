@@ -47,6 +47,24 @@ class RoadChunkManager extends Component with HasGameReference<TaxiGame> {
 
   final Map<int, RoadSegment> _chunks = {};
 
+  /// The world this run's chunks belong to, captured on mount (issue #32).
+  ///
+  /// [TaxiGame] retires a whole world when a shift ends and a fresh one
+  /// begins, and the retirement is queued like every Flame tree change:
+  /// this manager can still get one update — its last — while the fresh
+  /// run's world is already [TaxiGame.world]. Syncing through the live
+  /// getter then would drop a recycled chunk straight into the new run's
+  /// world, where nobody tracks or culls it. Chunks always go to the
+  /// world this manager was mounted into; a retired manager's output
+  /// dies with its own world.
+  World? _runWorld;
+
+  @override
+  void onMount() {
+    super.onMount();
+    _runWorld = game.world;
+  }
+
   /// Top (largest-y) edge of chunk [index] before any world fold (issue
   /// #30): chunk 0 covers [-800, 0]; negative indices cover the road
   /// behind the run's start. Kept for the first-frame view of the road —
@@ -102,7 +120,7 @@ class RoadChunkManager extends Component with HasGameReference<TaxiGame> {
       );
       if (environment != null) _placeCones(chunk, i);
       _chunks[i] = chunk;
-      game.world.add(chunk);
+      _runWorld!.add(chunk);
     }
 
     _chunks.removeWhere((index, chunk) {
