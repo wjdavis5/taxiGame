@@ -232,6 +232,12 @@ void main() {
     });
   });
 
+  // The flood-spawner tests here simulate 30 s of traffic in 1800 frames
+  // with hundreds of interleaved drains — roughly 1-2 s locally, but a
+  // loaded CI runner can blow past dart's default 30 s per-test timeout,
+  // which is exactly what blocked the ios-release.yml pipeline twice
+  // (2026-09-27). The simulated window stays as long as it needs to be;
+  // only the wall-clock budget grows.
   group('level mode: traffic and the course end', () {
     /// Lets pending component mounts finish before the next simulated
     /// tick (the endless-run test pattern): a mid-test `world.add` is
@@ -275,7 +281,7 @@ void main() {
       }
       expect(spawner.activeVehicleCount, 0);
       expect(game.world.children.whereType<TrafficVehicle>(), isEmpty);
-    });
+    }, timeout: Timeout(Duration(minutes: 3)));
 
     test('same-direction traffic despawns at the end, never past it',
         () async {
@@ -314,7 +320,7 @@ void main() {
       // vehicle ever drove beyond the end of it.
       expect(spawner.activeVehicleCount, greaterThan(0));
       expect(minY, greaterThanOrEqualTo(roadTop));
-    });
+    }, timeout: Timeout(Duration(minutes: 3)));
   });
 
   group('endless mode is untouched', () {
