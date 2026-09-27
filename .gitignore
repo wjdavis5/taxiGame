@@ -61,3 +61,6 @@ __azurite_db_blob_extent__.json
 # Local credentials (App Store Connect key IDs, etc.)
 .env
 .env.*
+
+# ZCode harness workspace config (regenerated locally by the harness on sync)
+.zcodeignore
