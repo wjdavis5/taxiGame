@@ -99,6 +99,45 @@ class EndlessCourse {
   /// invariant. One px is invisible; the invariant stays exact.
   static const double awkwardRideLength = minRideLength + 1.0;
 
+  // --- Second chances (issue #28) -----------------------------------------
+
+  /// How far ahead of a passed dropoff the relocated one waits, at least
+  /// and at most. A rideable distance: long enough to read as a real ride
+  /// and to land clearly beyond the kerb the player just missed, short
+  /// enough that a driver who reacts promptly can still beat the meter.
+  static const double minRelocationRide = 450.0;
+  static const double maxRelocationRide = 750.0;
+
+  /// Where fare [index]'s dropoff waits after the player has driven past
+  /// it (issue #28): a fresh kerb spot further up the road. [attempt] 0 is
+  /// the first pass; each further attempt chains another
+  /// [minRelocationRide]..[maxRelocationRide] px past the previous spot,
+  /// so the passenger always waits ahead, no matter how many times the
+  /// taxi blows past.
+  ///
+  /// Pure in (seed, index, attempt) — never in where the taxi happens to
+  /// be — so every run of the same course relocates identically, and a
+  /// ghost race relocates with you. The draws come from a salted stream
+  /// per attempt, never from [fare]'s: relocating a fare can never rewrite
+  /// the road a seed already dealt.
+  Vector2 relocatedDropoff(int index, {int attempt = 0}) {
+    var y = fare(index).dropoff.y;
+    var x = fare(index).dropoff.x;
+    for (var a = 0; a <= attempt; a++) {
+      final random = Random(_slotSeed(index) ^ (0x51EC0DE * (a + 1)));
+      final extraRide = minRelocationRide +
+          random.nextDouble() * (maxRelocationRide - minRelocationRide);
+      final onLeft = random.nextBool();
+      y -= extraRide;
+      // The kerb the road actually has at the new stop (issue #24), the
+      // same rule [fare] itself places passengers by.
+      x = onLeft
+          ? (environment?.leftCurbXAt(-y) ?? leftCurbX)
+          : (environment?.rightCurbXAt(-y) ?? rightCurbX);
+    }
+    return Vector2(x, y);
+  }
+
   /// Generates fare [index]. Deterministic and order-independent.
   EndlessFare fare(int index) {
     final random = Random(_slotSeed(index));

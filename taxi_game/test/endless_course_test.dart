@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
+import 'package:taxi_game/game/systems/run_environment.dart';
 import 'package:taxi_game/models/fare_type.dart';
 
 /// The seeded course generator (issue #11): the same seed must reproduce
@@ -125,6 +126,90 @@ void main() {
 
       final huge = EndlessCourse(seed: 0x7FFFFFFFFFFFFFFF);
       expectRewardInBand(huge.fare(0), 'fare 0 (huge seed)');
+    });
+  });
+
+  group('relocated dropoffs (issue #28)', () {
+    test('relocation is a pure function of (seed, index, attempt)', () {
+      final a = EndlessCourse(seed: 42);
+      final b = EndlessCourse(seed: 42);
+
+      for (var i = 0; i < 50; i++) {
+        for (var attempt = 0; attempt < 3; attempt++) {
+          final pa = a.relocatedDropoff(i, attempt: attempt);
+          final pb = b.relocatedDropoff(i, attempt: attempt);
+          expect(pa.x, closeTo(pb.x, 1e-9),
+              reason: 'fare $i attempt $attempt x');
+          expect(pa.y, closeTo(pb.y, 1e-9),
+              reason: 'fare $i attempt $attempt y');
+        }
+      }
+    });
+
+    test('the relocated spot waits a rideable distance ahead, on a curb', () {
+      final course = EndlessCourse(seed: 42);
+      const curbs = [EndlessCourse.leftCurbX, EndlessCourse.rightCurbX];
+
+      for (var i = 0; i < 200; i++) {
+        final fare = course.fare(i);
+        final spot = course.relocatedDropoff(i);
+
+        expect(spot.y, lessThan(fare.dropoff.y),
+            reason: 'fare $i relocates ahead of the passed kerb');
+        final extraRide = fare.dropoff.y - spot.y;
+        expect(extraRide,
+            greaterThanOrEqualTo(EndlessCourse.minRelocationRide - 0.001),
+            reason: 'fare $i relocation ride lower bound');
+        expect(extraRide,
+            lessThanOrEqualTo(EndlessCourse.maxRelocationRide + 0.001),
+            reason: 'fare $i relocation ride upper bound');
+        expect(curbs, contains(spot.x), reason: 'fare $i relocation curb x');
+      }
+    });
+
+    test('relocation follows the kerbs the environment draws (issue #24)', () {
+      final env = RunEnvironment(seed: 4242);
+      final course = EndlessCourse(seed: 4242, environment: env);
+
+      for (var i = 0; i < 100; i++) {
+        final spot = course.relocatedDropoff(i);
+        expect(
+          spot.x,
+          anyOf(
+            closeTo(env.leftCurbXAt(-spot.y), 0.01),
+            closeTo(env.rightCurbXAt(-spot.y), 0.01),
+          ),
+          reason: 'fare $i relocation sits on a real kerb at its distance',
+        );
+      }
+    });
+
+    test('each attempt chains further up the road', () {
+      final course = EndlessCourse(seed: 7);
+
+      for (var i = 0; i < 50; i++) {
+        final first = course.relocatedDropoff(i, attempt: 0);
+        final second = course.relocatedDropoff(i, attempt: 1);
+
+        expect(second.y, lessThan(first.y),
+            reason: 'fare $i second relocation above the first');
+        expect(first.y - second.y,
+            greaterThanOrEqualTo(EndlessCourse.minRelocationRide - 0.001),
+            reason: 'fare $i second relocation is a rideable hop, so the '
+                'taxi can never be past it the moment it lands');
+      }
+    });
+
+    test('relocating never perturbs the course draw itself', () {
+      final a = EndlessCourse(seed: 99);
+      final b = EndlessCourse(seed: 99);
+
+      for (var i = 0; i < 20; i++) {
+        a.relocatedDropoff(i, attempt: 2);
+      }
+      for (var i = 0; i < 20; i++) {
+        expectFaresEqual(a.fare(i), b.fare(i), 'fare $i');
+      }
     });
   });
 }

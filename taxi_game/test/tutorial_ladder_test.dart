@@ -4,6 +4,7 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/dropoff_zone.dart';
 import 'package:taxi_game/game/levels/level.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/systems/lives.dart';
@@ -478,6 +479,26 @@ void main() {
           (await gameStateAtLevel(GameLevel.ladderLength + 1))
               .tutorialComplete,
           isTrue);
+    });
+  });
+
+  group('levels keep their authored dropoffs (issue #28)', () {
+    test('driving past a level dropoff never relocates it', () async {
+      final game = await mountGame(ladderGame());
+      await tickAndSettle(game);
+      expect(game.isEndless, isFalse);
+
+      final zone = game.world.children.whereType<DropoffZone>().first;
+      final authored = zone.position.clone();
+
+      // Drive straight past the dropoff down the road's middle: level
+      // objectives are hand-placed and mandatory, and issue #28's
+      // forgiveness is an endless-run behaviour only.
+      game.player.position = Vector2(200, authored.y - 400);
+      game.update(1 / 60);
+      await drain();
+
+      expect(zone.position, authored);
     });
   });
 

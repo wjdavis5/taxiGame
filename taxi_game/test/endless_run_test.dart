@@ -8,9 +8,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/dropoff_zone.dart';
+import 'package:taxi_game/game/components/passenger_note.dart';
 import 'package:taxi_game/game/components/pickup_zone.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
+import 'package:taxi_game/game/systems/endless_fare_controller.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/systems/road_chunk_manager.dart';
 import 'package:taxi_game/game/vehicle_sprites.dart';
@@ -229,6 +231,146 @@ void main() {
         isNotEmpty,
         reason: 'the course keeps producing fares',
       );
+    });
+  });
+
+  group('a passed dropoff (issue #28)', () {
+    DropoffZone dropoffZoneOf(TaxiGame game, EndlessFare fare) =>
+        game.world.children.whereType<DropoffZone>().firstWhere(
+              (z) => z.passenger.id == 'endless_${fare.index}',
+            );
+
+    test('passing a carried dropoff relocates it ahead, and the fare '
+        'still settles', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final fare = game.course!.fare(0);
+      final zone = dropoffZoneOf(game, fare);
+      expect(zone.position.y, closeTo(fare.dropoff.y, 1e-3));
+
+      // Board the passenger at the kerb.
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+      game.update(1 / 60);
+      expect(game.player.hasPassenger, isTrue);
+
+      // Blow straight past the dropoff down the road's middle. The street
+      // is one-way (velocity.y never goes positive), so before issue #28
+      // this stranded the fare — and the passenger — forever.
+      game.player.position = Vector2(
+          200, fare.dropoff.y - EndlessFareController.passHysteresis - 10);
+      await tickAndSettle(game);
+
+      // The dropoff now waits ahead of the taxi, on a fresh curb.
+      final relocated = game.course!.relocatedDropoff(fare.index);
+      expect(zone.position.x, closeTo(relocated.x, 1e-3));
+      expect(zone.position.y, closeTo(relocated.y, 1e-3));
+      expect(zone.position.y, lessThan(fare.dropoff.y));
+      expect(game.fareController!.faresRelocated, 1);
+      expect(game.player.hasPassenger, isTrue,
+          reason: 'the passenger is still aboard');
+      expect(game.world.children.whereType<PassengerNote>(), isNotEmpty,
+          reason: 'the passenger says where to meet them');
+
+      // Reaching the relocated kerb settles the fare: score lands and the
+      // chain steps, exactly as an unmissed dropoff would.
+      game.player.position = Vector2(relocated.x, relocated.y + 30);
+      game.update(1 / 60);
+      expect(game.fareController!.faresDelivered, 1);
+      expect(game.player.hasPassenger, isFalse);
+      expect(game.score, fare.reward, reason: 'on time: value x 1x');
+      expect(game.fareChain.multiplier, 2, reason: 'the chain steps');
+    });
+
+    test('the meter keeps running through the miss: a late delivery '
+        'pays 1x', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final fare = game.course!.fare(0);
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+      game.update(1 / 60);
+      game.player.position = Vector2(
+          200, fare.dropoff.y - EndlessFareController.passHysteresis - 10);
+      game.update(1 / 60);
+      await drain();
+      expect(game.fareController!.faresRelocated, 1);
+
+      // Sit on the road until the meter dies: relocation bought back the
+      // fare, never the clock — the chain already prices the miss in time.
+      final ticks = (FareChain.maxFareSeconds + 2).ceil();
+      for (var i = 0; i < ticks; i++) {
+        game.update(1.0);
+      }
+      expect(game.fareChain.multiplier, 1, reason: 'the meter broke the chain');
+
+      final relocated = game.course!.relocatedDropoff(fare.index);
+      game.player.position = Vector2(relocated.x, relocated.y + 30);
+      game.update(1 / 60);
+
+      expect(game.fareController!.faresDelivered, 1);
+      expect(game.score, fare.reward, reason: 'late fare pays value x 1');
+      expect(game.fareChain.multiplier, 1);
+    });
+
+    test('riding up to a dropoff without passing it leaves it in place',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final fare = game.course!.fare(0);
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+      game.update(1 / 60);
+      expect(game.player.hasPassenger, isTrue);
+
+      // Approaching down the road's middle, still below the kerb: no
+      // relocation — the delivery can still happen the normal way.
+      game.player.position = Vector2(200, fare.dropoff.y + 70);
+      game.update(1 / 60);
+      expect(game.fareController!.faresRelocated, 0);
+
+      // Just barely past, inside the pass hysteresis: still no
+      // relocation — the taxi is not clearly beyond the zone's reach yet.
+      game.player.position = Vector2(200, fare.dropoff.y - 50);
+      game.update(1 / 60);
+      expect(game.fareController!.faresRelocated, 0);
+      expect(game.fareController!.hasActivePickup, isTrue,
+          reason: 'the fare rides on either way');
+    });
+
+    test('passing the relocated dropoff relocates it again', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final fare = game.course!.fare(0);
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+      game.update(1 / 60);
+      game.player.position = Vector2(
+          200, fare.dropoff.y - EndlessFareController.passHysteresis - 10);
+      game.update(1 / 60);
+      await drain();
+      expect(game.fareController!.faresRelocated, 1);
+
+      // Blow past the relocated kerb too: the passenger must still never
+      // be stranded, wherever the taxi decides to go.
+      final firstRelocated = game.course!.relocatedDropoff(fare.index);
+      game.player.position = Vector2(
+          200, firstRelocated.y - EndlessFareController.passHysteresis - 10);
+      game.update(1 / 60);
+      await drain();
+
+      final secondRelocated =
+          game.course!.relocatedDropoff(fare.index, attempt: 1);
+      final zone = dropoffZoneOf(game, fare);
+      expect(zone.position.x, closeTo(secondRelocated.x, 1e-3));
+      expect(zone.position.y, closeTo(secondRelocated.y, 1e-3));
+      expect(game.fareController!.faresRelocated, 2);
+
+      // And the ride still ends at the newest kerb.
+      game.player.position = Vector2(secondRelocated.x, secondRelocated.y + 30);
+      game.update(1 / 60);
+      expect(game.fareController!.faresDelivered, 1);
+      expect(game.player.hasPassenger, isFalse);
     });
   });
 
