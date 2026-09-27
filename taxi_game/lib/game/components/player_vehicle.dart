@@ -142,6 +142,20 @@ class PlayerVehicle extends PositionComponent
       maxX = TaxiGame.roadCenterX + TaxiGame.roadWidth / 2 - halfWidth;
     }
     position.x = position.x.clamp(minX, maxX);
+
+    // The level course's end (issue #31): the street stops here, and
+    // forward is the only gear, so without this the taxi would drive off
+    // the road into the void with no way back. The centre is clamped one
+    // car length inside the road's top edge — y grows downward, so "a
+    // car length short of the end" is road top + length — which leaves
+    // the nose pressing against the finish line, the whole body still on
+    // the asphalt. Endless roads are infinite (issue #11) and fold their
+    // coordinates (issue #30): [TaxiGame.levelRoadTopY] is null there,
+    // so this clamps levels only.
+    final roadTopY = isMounted ? game.levelRoadTopY : null;
+    if (roadTopY != null) {
+      position.y = math.max(position.y, roadTopY + vehicleSize.y);
+    }
   }
 
   /// Throttle ramps speed up, releasing or braking slows it, and

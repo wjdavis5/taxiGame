@@ -334,6 +334,20 @@ class TaxiGame extends FlameGame
   static const double roadCenterX = 200;
   static const double roadWidth = 200;
 
+  /// How far past a level's topmost zone the street keeps going (issue
+  /// #31). A level's road is finite — that is what makes it a course —
+  /// but its end must read as the end of a street, not a cliff into the
+  /// void: this much surface beyond the last zone, a barrier, stop line,
+  /// and crossing painted on it (see `RoadSegment`), and the taxi clamped
+  /// one car length inside it (see [levelRoadTopY]).
+  static const double levelRoadEndMargin = 800.0;
+
+  /// World y of the level road's top end (issue #31): the line the taxi
+  /// noses against at the course's finish. Null outside level mode — an
+  /// endless run's road is infinite, and its coordinate space belongs to
+  /// the world fold (issue #30), so nothing may clamp it.
+  double? levelRoadTopY;
+
   /// The one-thumb relative-drag virtual stick (issue #29), the sole
   /// touch input: mounted on the viewport in [onLoad]. Null only before
   /// that — handlers guard rather than assume.
@@ -425,6 +439,10 @@ class TaxiGame extends FlameGame
     course = EndlessCourse(seed: seed, environment: environment);
     _worldShift = 0;
     _rebaseCount = 0;
+    // The endless road has no end (issue #11): whatever level street was
+    // here before — the tutorial handoff (#16) drives this path — owed
+    // its clamp to the level road's finish, and that finish is gone.
+    levelRoadTopY = null;
     passengers.clear();
     passengersDelivered = 0;
     fareChain.reset();
@@ -565,9 +583,13 @@ class TaxiGame extends FlameGame
         allPoints.map((p) => p.y).fold(0.0, math.min); // smallest y
     final playerStartY = lowestPointY + 250;
 
-    // Road long enough to cover the whole route with margin on both ends.
-    final roadTop = highestPointY - 900;
+    // The street runs a fixed, generous margin past the topmost zone
+    // (issue #31): the course ends in road — a painted dead end — and
+    // the taxi noses against that end ([PlayerVehicle] reads
+    // [levelRoadTopY]) instead of driving off the world.
+    final roadTop = highestPointY - levelRoadEndMargin;
     final roadBottom = playerStartY + 500;
+    levelRoadTopY = roadTop;
     world.add(RoadSegment(
       position: Vector2(roadCenterX, roadTop),
       length: roadBottom - roadTop,

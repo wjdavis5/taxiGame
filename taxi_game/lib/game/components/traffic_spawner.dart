@@ -8,12 +8,14 @@ import '../systems/difficulty_curve.dart';
 
 /// Manages spawning of traffic vehicles based on patterns
 class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
-  /// Level mode: a fixed per-level pattern for the whole level.
-  TrafficSpawner({required TrafficPattern pattern})
+  /// Level mode: a fixed per-level pattern for the whole level. The RNG
+  /// is injectable so tests (and any future seed) can pin the weather of
+  /// spawn rolls.
+  TrafficSpawner({required TrafficPattern pattern, Random? random})
       : _fixedPattern = pattern,
         _profileOf = null,
         _distanceOf = null,
-        random = Random();
+        random = random ?? Random();
 
   /// Endless mode (issue #11): density and speed come from a continuous
   /// profile curve evaluated at the run's current distance, and the RNG is
@@ -41,6 +43,16 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
 
   // Spawn area (ahead of camera view)
   static const double spawnDistanceAhead = 500.0;
+
+  /// Length in px of the longest traffic body any lane can spawn (issue
+  /// #31): the clearance traffic keeps from the level course's end — a
+  /// spawn holds half of this inside the street so the vehicle
+  /// materialises entirely on it, and a same-direction path terminates
+  /// this far below the end so the vehicle despawns on arrival before
+  /// any part of it crosses the barrier.
+  static double get longestTrafficBodyLength => TrafficVehicleType.values
+      .map((type) => type.size.y)
+      .reduce(max);
 
   /// Factory constructors for common patterns
   factory TrafficSpawner.light() => TrafficSpawner(pattern: TrafficPattern.light);
@@ -90,6 +102,18 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     // Calculate spawn position (ahead of player/camera)
     final spawnY = game.camera.viewfinder.position.y - spawnDistanceAhead;
     final spawnX = laneConfig.laneX;
+
+    // The level course ends (issue #31): nothing materialises past its
+    // end, and whatever spawns near it stays fully on the street — half
+    // the longest body is the least depth that guarantees that. The roll
+    // above already happened, so skipping keeps the RNG stream — and any
+    // seed's reproducibility — untouched. Endless roads are infinite and
+    // need no gate.
+    final roadTopY = game.levelRoadTopY;
+    if (roadTopY != null &&
+        spawnY - longestTrafficBodyLength / 2 < roadTopY) {
+      return;
+    }
 
     // The living road (issue #24) keeps some ground clear: traffic never
     // materialises inside a work zone's closed lanes or on a cross
@@ -148,6 +172,20 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     final path = <Vector2>[startPosition];
     for (var i = 1; i <= (oncoming ? 3 : sameDirectionWaypoints); i++) {
       path.add(Vector2(startPosition.x, startPosition.y + step * i));
+    }
+
+    // The level street ends (issue #31): a same-direction path stops a
+    // body-length inside the end, so the vehicle despawns on arrival
+    // instead of driving off the road past the barrier. Oncoming paths
+    // run down-screen, away from the end, and are left alone.
+    final roadTopY = game.levelRoadTopY;
+    if (roadTopY != null && !oncoming) {
+      final minWaypointY = roadTopY + longestTrafficBodyLength;
+      for (var i = 0; i < path.length; i++) {
+        if (path[i].y < minWaypointY) {
+          path[i] = Vector2(path[i].x, minWaypointY);
+        }
+      }
     }
     return path;
   }

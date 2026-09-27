@@ -120,6 +120,50 @@ class RoadSegment extends PositionComponent {
       Offset(size.x, size.y),
       edgePaint,
     );
+
+    // The course end (issue #31): the street's top edge is a real dead
+    // end, painted so it reads long before the taxi noses against it.
+    _renderStreetEnd(canvas);
+  }
+
+  /// The level street's finish, painted at the segment's top edge (issue
+  /// #31): a red-and-white hazard barrier right at the end, the stop
+  /// line a closed street wears, and a zebra crossing below it — the
+  /// same crossing language the endless road paints at its junctions
+  /// (see [_drawCrosswalk]). Endless chunks never draw this: their road
+  /// has no end.
+  void _renderStreetEnd(Canvas canvas) {
+    // Hazard barrier: alternating red and white blocks across the road.
+    const bandHeight = 14.0;
+    const blockWidth = 25.0;
+    for (var x = 0.0; x < size.x; x += blockWidth) {
+      final isRed = (x / blockWidth).floor().isEven;
+      canvas.drawRect(
+        Rect.fromLTWH(x, 0, blockWidth, bandHeight),
+        Paint()..color = isRed ? const Color(0xFFD32F2F) : Colors.white,
+      );
+    }
+
+    // The stop line below the barrier.
+    canvas.drawRect(
+      Rect.fromLTWH(4, 22, size.x - 8, 4),
+      Paint()..color = Colors.white,
+    );
+
+    // The zebra crossing below the stop line, matching [_drawCrosswalk]:
+    // three horizontal bars spanning the road, as a crossing reads from
+    // a driver's top-down view.
+    final crossingPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.85)
+      ..style = PaintingStyle.fill;
+    const barHeight = 6.0;
+    const barGap = 5.0;
+    for (var i = 0; i < 3; i++) {
+      canvas.drawRect(
+        Rect.fromLTWH(4, 34 + i * (barHeight + barGap), size.x - 8, barHeight),
+        crossingPaint,
+      );
+    }
   }
 
   // --- The living street (endless mode, issue #24) ------------------------
