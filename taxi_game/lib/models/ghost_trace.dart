@@ -59,12 +59,15 @@ class GhostTrace {
   /// default sprite at render time, never an error.
   final String vehicleId;
 
-  /// The path, as flat pairs `[x0, y0, x1, y1, ...]` in whole world px,
+  /// The path, as flat pairs `[x0, y0, x1, y1, ...]` in whole px of *true
+  /// distance* into the run (stored as negative y, matching world
+  /// coordinates; the world's y folds back toward the origin as the run
+  /// deepens — issue #30 — so a trace counts the road, never the frame),
   /// sampled every [samplePeriodSeconds] of *driven* time — the clock
   /// that freezes through crash hit-stops and stalls, so the replay
   /// measures driving, not dead time. Whole-pixel precision is plenty
   /// for a translucent after-image; the replay interpolates between
-  /// samples.
+  /// samples and re-enters the live frame with the run's world shift.
   final List<int> samples;
 
   /// The grid this trace was sampled on, in seconds. Defaults to

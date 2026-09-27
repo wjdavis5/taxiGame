@@ -94,10 +94,12 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     // The living road (issue #24) keeps some ground clear: traffic never
     // materialises inside a work zone's closed lanes or on a cross
     // street. The roll above already happened, so skipping keeps the RNG
-    // stream — and with it the seed's reproducibility — untouched.
+    // stream — and with it the seed's reproducibility — untouched. The
+    // clearance reads true distance (issue #30): world y folds back
+    // toward the origin as the run deepens.
     final env = game.environment;
     if (env != null) {
-      final spawnDistance = max(0.0, -spawnY);
+      final spawnDistance = max(0.0, game.worldShift - spawnY);
       if (env.isIntersectionAt(spawnDistance)) return;
       if (env.isLaneBlockedAt(spawnDistance, spawnX)) return;
     }
@@ -148,6 +150,19 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
       path.add(Vector2(startPosition.x, startPosition.y + step * i));
     }
     return path;
+  }
+
+  /// Moves every active vehicle's stored path into the world frame
+  /// shifted by [dy] (issue #30's fold). The vehicles themselves are world
+  /// components the game's fold moves directly; their waypoints live here,
+  /// so a vehicle steering across a fold would otherwise aim at a spot a
+  /// whole period behind the road it is on.
+  void shiftWorld(double dy) {
+    for (final vehicle in _activeVehicles) {
+      for (var i = 0; i < vehicle.path.length; i++) {
+        vehicle.path[i] = Vector2(vehicle.path[i].x, vehicle.path[i].y + dy);
+      }
+    }
   }
 
   /// Pauses traffic spawning

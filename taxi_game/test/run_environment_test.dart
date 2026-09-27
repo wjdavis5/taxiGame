@@ -420,6 +420,108 @@ void main() {
     });
   });
 
+  group('RunEnvironment — the road never degenerates (issue #30)', () {
+    /// The road must be drivable at every distance a run can reach: finite
+    /// edges and a width that always fits at least the narrow profile.
+    /// Canvas silently skips non-finite paths, so a single bad sample here
+    /// reads on screen as "the road is just blue" from that point on.
+    RunEnvironment? env;
+
+    void expectDrivable(double d) {
+      final road = env!.roadAt(d);
+      expect(road.width.isFinite, isTrue, reason: 'width at $d');
+      expect(road.leftX.isFinite, isTrue, reason: 'leftX at $d');
+      expect(road.rightX.isFinite, isTrue, reason: 'rightX at $d');
+      expect(road.width,
+          inInclusiveRange(RoadProfile.narrow.width, RoadProfile.avenue.width),
+          reason: 'width at $d');
+      expect(road.leftX, lessThanOrEqualTo(road.rightX),
+          reason: 'edges ordered at $d');
+      for (final x in road.laneXs) {
+        expect(x.isFinite, isTrue, reason: 'lane x at $d');
+        expect(x, inInclusiveRange(road.leftX, road.rightX),
+            reason: 'lane inside the road at $d');
+      }
+    }
+
+    /// Samples [from]..[to] at 1 px and checks both the geometry and that
+    /// the width never jumps between samples (a step wider than the
+    /// smoothstep's worst slope means the kerb teleports).
+    void sweepFine(double from, double to) {
+      var previous = env!.roadAt(from).width;
+      for (var d = from; d <= to; d += 1.0) {
+        expectDrivable(d);
+        final width = env!.roadAt(d).width;
+        expect((width - previous).abs(), lessThanOrEqualTo(0.5),
+            reason: 'width step at $d');
+        previous = width;
+      }
+    }
+
+    /// Every boundary the geometry math can break on: segment starts (the
+    /// taper begins), taper ends, cross streets, and each work zone's
+    /// start and end line.
+    void sweepBoundaries(double limit) {
+      // Segment starts and taper ends.
+      for (var i = 1;
+          i <= (limit / RunEnvironment.geometrySegmentLength).ceil();
+          i++) {
+        sweepFine(i * RunEnvironment.geometrySegmentLength - 2.0,
+            i * RunEnvironment.geometrySegmentLength + 2.0);
+        sweepFine(i * RunEnvironment.geometrySegmentLength +
+                RunEnvironment.taperLength -
+                2.0,
+            i * RunEnvironment.geometrySegmentLength +
+                RunEnvironment.taperLength +
+                2.0);
+      }
+      // Cross streets: the junction band and both approaches.
+      for (var k = 1;
+          k <= (limit / RunEnvironment.intersectionSpacing).floor();
+          k++) {
+        final center = k * RunEnvironment.intersectionSpacing;
+        sweepFine(center - RunEnvironment.intersectionHalfBand - 2.0,
+            center + RunEnvironment.intersectionHalfBand + 2.0);
+      }
+      // Work zones: every rolled zone in range, across its whole length.
+      for (var i = 2;
+          i <= (limit / RunEnvironment.geometrySegmentLength).floor();
+          i++) {
+        final zone = env!.constructionForSegment(i);
+        if (zone == null) continue;
+        sweepFine(zone.startDistance - 2.0, zone.endDistance + 2.0);
+      }
+    }
+
+    for (final seed in const [1, 42, 999983, 20260927]) {
+      test('sweep 0..500,000 px stays drivable (seed $seed)', () {
+        env = RunEnvironment(seed: seed);
+        for (var d = 0.0; d <= 500000; d += 37.0) {
+          expectDrivable(d);
+        }
+        sweepBoundaries(500000);
+      });
+    }
+
+    test('the width sweep never leaves the profile band on any seed', () {
+      // One more pass across every seed's full range, asserting only the
+      // bound — cheap enough to run at 1 px resolution, which is where an
+      // off-by-one at a segment edge would show.
+      for (final seed in const [31337, 7, 2026, 555]) {
+        final e = RunEnvironment(seed: seed);
+        for (var d = 0.0; d <= 500000; d += 1.0) {
+          final width = e.roadAt(d).width;
+          expect(width.isFinite, isTrue, reason: 'width at $d seed $seed');
+          expect(
+              width,
+              inInclusiveRange(
+                  RoadProfile.narrow.width, RoadProfile.avenue.width),
+              reason: 'width at $d seed $seed');
+        }
+      }
+    });
+  });
+
   group('EndlessCourse on the living road', () {
     test('passengers wait on the kerbs the road actually has', () {
       final env = RunEnvironment(seed: 55);
@@ -427,10 +529,12 @@ void main() {
 
       for (var i = 0; i < 400; i++) {
         final fare = course.fare(i);
+        // The kerb is sampled at the fare's true distance (issue #30):
+        // past the world fold, world y no longer reads as distance.
         // Vector2 stores float32, so the y the course sampled the kerb at
         // and the y read back here can differ by a hair — enough to move
         // a tapering kerb by ~0.002 px. Hence 0.01, not 0.001.
-        final pickupRoad = env.roadAt(-fare.pickup.y);
+        final pickupRoad = env.roadAt(fare.pickupDistance);
         expect(
           fare.pickup.x,
           anyOf(
@@ -439,7 +543,7 @@ void main() {
           ),
           reason: 'fare $i pickup sits on a real kerb',
         );
-        final dropoffRoad = env.roadAt(-fare.dropoff.y);
+        final dropoffRoad = env.roadAt(fare.dropoffDistance);
         expect(
           fare.dropoff.x,
           anyOf(

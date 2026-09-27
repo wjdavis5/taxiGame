@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
-import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -11,12 +10,16 @@ import 'package:taxi_game/game/components/dropoff_zone.dart';
 import 'package:taxi_game/game/components/passenger_note.dart';
 import 'package:taxi_game/game/components/pickup_zone.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
+import 'package:taxi_game/game/components/ghost_car.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
 import 'package:taxi_game/game/systems/endless_fare_controller.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/systems/road_chunk_manager.dart';
+import 'package:taxi_game/game/systems/world_origin.dart';
 import 'package:taxi_game/game/vehicle_sprites.dart';
 import 'package:taxi_game/game/taxi_game.dart';
+import 'package:taxi_game/game/systems/daily_shift.dart';
+import 'package:taxi_game/models/ghost_trace.dart';
 import 'package:taxi_game/models/traffic_pattern.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
@@ -617,6 +620,233 @@ void main() {
       expect(game.world.children.length, lessThan(200),
           reason: 'world size at the end of the run');
     }, timeout: longRun);
+  });
+
+  /// Asserts the live chunks cover the camera's visible band with no gap:
+  /// every stretch of road the viewport shows falls inside some existing
+  /// chunk, and the chunk indices are contiguous across the band (a hole
+  /// anywhere between them is a stripe of bare sky mid-road).
+  void expectViewportCovered(TaxiGame game) {
+    final manager = game.roadChunks!;
+    final centerY = game.camera.viewfinder.position.y;
+    final halfView = game.camera.viewport.size.y / 2;
+    // The viewport's band of true distance (issue #30): world y folds,
+    // the distance it stands for does not.
+    final topDistance = game.worldShift - (centerY - halfView);
+    final bottomDistance = game.worldShift - (centerY + halfView);
+    final topIndex = RoadChunkManager.chunkIndexForDistance(topDistance);
+    final bottomIndex =
+        RoadChunkManager.chunkIndexForDistance(bottomDistance);
+    for (var i = bottomIndex; i <= topIndex; i++) {
+      expect(manager.hasChunk(i), isTrue,
+          reason: 'chunk $i missing at camera y $centerY — '
+              'the viewport would show bare sky');
+    }
+    // Chunk [i] holds distances [i·L, (i+1)·L], so the band is gapless
+    // exactly when the topmost chunk reaches above the view top.
+    expect(
+      (topIndex + 1) * RoadChunkManager.chunkLength,
+      greaterThanOrEqualTo(topDistance),
+      reason: 'the topmost chunk does not reach the view top',
+    );
+  }
+
+  group('the road never leaves the viewport (issue #30)', () {
+    test('a 30-minute camera path always has road under the view',
+        () async {
+      final game = await mountGame(endlessGame(20260927));
+      await preloadSprites(game);
+
+      // Coverage, not survival: silence the taxi's hitbox so contacts
+      // cannot end the run; the stall pauses below are scripted instead.
+      game.player.children.whereType<RectangleHitbox>().single.collisionType =
+          CollisionType.inactive;
+
+      const dt = 0.1; // 10 fps sim: same wall clock, a tenth of the ticks
+      const cruiseSpeed = 150.0; // px/s, the top cruise of the starter cab
+      const totalSeconds = 30 * 60;
+
+      var frame = 0;
+      var stallFramesLeft = 0;
+      var secondsUntilNextStall = 240.0;
+
+      for (var s = 0.0; s < totalSeconds; s += dt) {
+        if (stallFramesLeft > 0) {
+          // A crash stall: the world holds still — the camera goes nowhere
+          // — but the loop keeps ticking, exactly like the live game's.
+          stallFramesLeft--;
+        } else {
+          game.player.position += Vector2(0, -cruiseSpeed * dt);
+          secondsUntilNextStall -= dt;
+          if (secondsUntilNextStall <= 0) {
+            stallFramesLeft = (TaxiGame.crashStallSeconds / dt).ceil();
+            secondsUntilNextStall = 240.0;
+          }
+        }
+        game.update(dt);
+        expectViewportCovered(game);
+
+        // Let component mounts complete, as the real loop does.
+        frame++;
+        if (frame % 60 == 0) await drain();
+      }
+
+      // The run really happened: hundreds of chunks rolled past — and two
+      // world folds went by (100,800 px each) without the road noticing.
+      expect(game.runDistance, greaterThanOrEqualTo(240000),
+          reason: 'the camera travelled half an hour of road');
+      expect(game.worldShift, greaterThanOrEqualTo(2 * WorldOrigin.period),
+          reason: 'the world folded at least twice on the way');
+      expect(game.player.position.y, inInclusiveRange(-WorldOrigin.period, 0),
+          reason: 'world coordinates stay folded near the origin');
+      expect(game.roadChunks!.chunkIndices.reduce(math.max), greaterThan(290),
+          reason: 'chunks were recycled the whole way, not hoarded');
+      expect(game.roadChunks!.chunkCount, lessThanOrEqualTo(10),
+          reason: 'the steady-state chunk count stays small');
+      expectViewportCovered(game);
+    }, timeout: const Timeout(Duration(minutes: 8)));
+  });
+
+  group('the world fold (issue #30)', () {
+    Future<TaxiGame> mountQuietGame(int seed) async {
+      final game = await mountGame(endlessGame(seed));
+      // Coverage and geometry, not survival.
+      game.player.children.whereType<RectangleHitbox>().single.collisionType =
+          CollisionType.inactive;
+      return game;
+    }
+
+    /// Drives the taxi to true distance [target] in one teleport and
+    /// settles the fold, mounts, and chunk sync that follow it.
+    Future<TaxiGame> driveTo(int seed, double target) async {
+      final game = await mountQuietGame(seed);
+      game.player.position = Vector2(200, -target);
+      await tickAndSettle(game);
+      return game;
+    }
+
+    test('crossing the boundary folds the world without losing the road',
+        () async {
+      const target = WorldOrigin.period + 2000.0;
+      final game = await driveTo(424242, target);
+
+      // The world folded exactly once, the taxi sits near the origin, and
+      // true distance is untouched.
+      expect(game.worldShift, WorldOrigin.period);
+      expect(game.player.position.y, inInclusiveRange(-WorldOrigin.period, 0));
+      expect(game.runDistance, closeTo(target, 1.0));
+      expect(game.camera.viewfinder.position.y,
+          inInclusiveRange(-WorldOrigin.period, 0),
+          reason: 'the camera folded with the world');
+
+      // The road still covers the viewport after the fold.
+      expectViewportCovered(game);
+
+      // Fares past the fold generate in the live frame: skip the ~70
+      // slots the teleport jumped over, then the next fare spawns near
+      // the taxi — at its true distance, not a whole fold away.
+      var zones = <PickupZone>[];
+      for (var i = 0; i < 40 && zones.isEmpty; i++) {
+        await tickAndSettle(game);
+        zones = game.world.children.whereType<PickupZone>().toList();
+      }
+      expect(zones, isNotEmpty,
+          reason: 'the course keeps producing fares past a fold');
+      final cameraDistance =
+          game.worldShift - game.camera.viewfinder.position.y;
+      for (final zone in zones) {
+        final zoneDistance = game.worldShift - zone.position.y;
+        expect(
+          zoneDistance,
+          inInclusiveRange(
+            cameraDistance - EndlessFareController.cullBehind - 10,
+            cameraDistance + EndlessFareController.generationAhead + 10,
+          ),
+          reason: 'a fare past the fold waits in the live frame, '
+              'not one period away in a stale one',
+        );
+        expect(zone.position.y, inInclusiveRange(-WorldOrigin.period, 0),
+            reason: 'fares land in the live frame, not a stale one');
+      }
+    });
+
+    test('multiple folds in one leap all apply', () async {
+      final game = await driveTo(5150, 2.5 * WorldOrigin.period);
+
+      expect(game.worldShift, 2 * WorldOrigin.period,
+          reason: 'both crossed boundaries folded in one tick');
+      expect(game.runDistance, closeTo(2.5 * WorldOrigin.period, 1.0));
+      expectViewportCovered(game);
+    });
+
+    test('a ghost replay re-enters the live frame across a fold', () async {
+      final game = await mountQuietGame(777);
+      await preloadSprites(game);
+      game.player.position = Vector2(200, -(WorldOrigin.period + 500.0));
+      await tickAndSettle(game);
+      expect(game.worldShift, WorldOrigin.period);
+
+      // A trace recorded in true-distance coordinates: its car drove past
+      // true 50,000 px. In the folded frame that rides at the trace y
+      // plus the world's shift.
+      final ghost = GhostCar(
+        trace: const GhostTrace(
+          dateKey: '2026-09-27',
+          score: 0,
+          banked: true,
+          vehicleId: 'taxi_yellow',
+          samples: [200, -50000, 200, -50000],
+        ),
+        sprite: Sprite(game.images.fromCache(
+            VehicleSprites.playerSpritePath(gameState.selectedVehicle))),
+      );
+      game.world.add(ghost);
+      await tickAndSettle(game);
+
+      expect(ghost.position.y, closeTo(-50000 + WorldOrigin.period, 0.01),
+          reason: 'the ghost rides the same folded frame as the road');
+    });
+
+    test('a folded run records its ghost trace in true distance', () async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = StorageService();
+      await storage.init();
+      final dailyGameState = GameStateService(storage);
+      await dailyGameState.loadSaveData();
+
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: dailyGameState,
+        endlessSeed: 314,
+        isDailyShift: true,
+      )
+        ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink());
+      final daily = await mountGame(game);
+      daily.player.children
+          .whereType<RectangleHitbox>()
+          .single
+          .collisionType = CollisionType.inactive;
+
+      // Drive past the fold, then spend all three lives to settle the run
+      // and its trace (the wreck is what records it, issue #15).
+      daily.player.position = Vector2(200, -(WorldOrigin.period + 1000.0));
+      await tickAndSettle(game);
+      expect(game.worldShift, WorldOrigin.period);
+      for (var life = 0; life < 3; life++) {
+        game.onCrash();
+        for (var i = 0; i < 3; i++) {
+          game.update(1.0); // run out the crash stall between lives
+        }
+      }
+      await drain();
+
+      final stored = dailyGameState.ghostFor(DailyShift.todayKey);
+      expect(stored, isNotNull);
+      // The last recorded sample sits at the taxi's true distance.
+      final lastY = stored!.samples.last.toDouble();
+      expect(-lastY, closeTo(game.runDistance, 2.0),
+          reason: 'traces count true road, not folded world y');
+    });
   });
 
   group('endless HUD', () {

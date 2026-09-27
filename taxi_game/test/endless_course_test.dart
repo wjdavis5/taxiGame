@@ -46,10 +46,12 @@ void main() {
       EndlessFare previous = course.fare(0);
 
       // The far, far end of a 30-minute run must still generate cleanly.
+      // Advance is judged in true distance (issue #30): world y folds
+      // back toward the origin every period, the road does not.
       for (var i = 1; i <= 5000; i++) {
         final fare = course.fare(i);
 
-        expect(fare.pickup.y, lessThan(previous.pickup.y),
+        expect(fare.pickupDistance, greaterThan(previous.pickupDistance),
             reason: 'fare $i pickup above fare ${i - 1}');
         expect(fare.dropoff.y, lessThan(fare.pickup.y),
             reason: 'fare $i dropoff above its pickup');
@@ -80,20 +82,21 @@ void main() {
     test('fares never overlap slot boundaries', () {
       final course = EndlessCourse(seed: 1234);
 
+      // Slot packing is a fact about the road, not a world frame (issue
+      // #30), so it is judged in true distance.
       for (var i = 0; i < 500; i++) {
         final fare = course.fare(i);
-        final slotBottom = -(i * EndlessCourse.slotLength);
-        final slotTop = -((i + 1) * EndlessCourse.slotLength);
+        final slotBottom = i * EndlessCourse.slotLength;
+        final slotTop = (i + 1) * EndlessCourse.slotLength;
 
         // The pickup lives in slot i...
-        expect(fare.pickup.y, lessThanOrEqualTo(slotBottom));
-        expect(fare.pickup.y, greaterThan(slotTop));
+        expect(fare.pickupDistance, greaterThanOrEqualTo(slotBottom));
+        expect(fare.pickupDistance, lessThan(slotTop));
         // ...and the dropoff leaves the slot's tail margin free, so the
         // next fare's pickup can never crowd this dropoff.
         expect(
-          fare.dropoff.y,
-          greaterThanOrEqualTo(
-              slotTop + EndlessCourse.slotTailMargin - 0.001),
+          fare.dropoffDistance,
+          lessThanOrEqualTo(slotTop - EndlessCourse.slotTailMargin + 0.001),
           reason: 'fare $i dropoff clears the slot tail',
         );
       }
@@ -150,19 +153,22 @@ void main() {
       final course = EndlessCourse(seed: 42);
       const curbs = [EndlessCourse.leftCurbX, EndlessCourse.rightCurbX];
 
+      // Measured in true distance (issue #30): the hop can cross a world
+      // fold, where the world-y reading would jump by a whole period.
       for (var i = 0; i < 200; i++) {
         final fare = course.fare(i);
-        final spot = course.relocatedDropoff(i);
+        final spotDistance = course.relocatedDropoffDistance(i);
 
-        expect(spot.y, lessThan(fare.dropoff.y),
+        expect(spotDistance, greaterThan(fare.dropoffDistance),
             reason: 'fare $i relocates ahead of the passed kerb');
-        final extraRide = fare.dropoff.y - spot.y;
+        final extraRide = spotDistance - fare.dropoffDistance;
         expect(extraRide,
             greaterThanOrEqualTo(EndlessCourse.minRelocationRide - 0.001),
             reason: 'fare $i relocation ride lower bound');
         expect(extraRide,
             lessThanOrEqualTo(EndlessCourse.maxRelocationRide + 0.001),
             reason: 'fare $i relocation ride upper bound');
+        final spot = course.relocatedDropoff(i);
         expect(curbs, contains(spot.x), reason: 'fare $i relocation curb x');
       }
     });
@@ -173,11 +179,12 @@ void main() {
 
       for (var i = 0; i < 100; i++) {
         final spot = course.relocatedDropoff(i);
+        final spotDistance = course.relocatedDropoffDistance(i);
         expect(
           spot.x,
           anyOf(
-            closeTo(env.leftCurbXAt(-spot.y), 0.01),
-            closeTo(env.rightCurbXAt(-spot.y), 0.01),
+            closeTo(env.leftCurbXAt(spotDistance), 0.01),
+            closeTo(env.rightCurbXAt(spotDistance), 0.01),
           ),
           reason: 'fare $i relocation sits on a real kerb at its distance',
         );
@@ -187,13 +194,15 @@ void main() {
     test('each attempt chains further up the road', () {
       final course = EndlessCourse(seed: 7);
 
+      // Chaining is judged in true distance (issue #30): a hop across a
+      // world fold would read backwards in world y.
       for (var i = 0; i < 50; i++) {
-        final first = course.relocatedDropoff(i, attempt: 0);
-        final second = course.relocatedDropoff(i, attempt: 1);
+        final first = course.relocatedDropoffDistance(i, attempt: 0);
+        final second = course.relocatedDropoffDistance(i, attempt: 1);
 
-        expect(second.y, lessThan(first.y),
+        expect(second, greaterThan(first),
             reason: 'fare $i second relocation above the first');
-        expect(first.y - second.y,
+        expect(second - first,
             greaterThanOrEqualTo(EndlessCourse.minRelocationRide - 0.001),
             reason: 'fare $i second relocation is a rideable hop, so the '
                 'taxi can never be past it the moment it lands');

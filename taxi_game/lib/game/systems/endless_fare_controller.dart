@@ -6,6 +6,7 @@ import '../components/pickup_zone.dart';
 import '../components/passenger_note.dart';
 import '../taxi_game.dart';
 import 'endless_course.dart';
+import 'world_origin.dart';
 
 /// One fare currently in play.
 class _ActiveFare {
@@ -107,15 +108,20 @@ class EndlessFareController extends Component
   /// up the visible road — the one the player is about to reach, whose
   /// kind they can read and decline before committing to the kerb. Null
   /// when nothing waitable is on screen.
+  ///
+  /// Judged on the live zones, not the stored course geometry: the zone is
+  /// a world component the game's fold (issue #30) keeps in the current
+  /// frame, while a stored `EndlessFare` position is frozen at the frame
+  /// its slot was drawn in.
   PassengerData? get offerOnScreen {
     final cameraY = game.camera.viewfinder.position.y;
     _ActiveFare? offer;
     for (final f in _active) {
       if (f.passenger.isPickedUp) continue;
-      final pickupY = f.fare.pickup.y;
+      final pickupY = f.pickupZone.position.y;
       if (pickupY < cameraY - offerAbove) continue; // too far up yet
       if (pickupY > cameraY + offerBelow) continue; // already behind
-      if (offer == null || pickupY < offer.fare.pickup.y) offer = f;
+      if (offer == null || pickupY < offer.pickupZone.position.y) offer = f;
     }
     return offer?.passenger;
   }
@@ -154,21 +160,30 @@ class EndlessFareController extends Component
   }
 
   void _generateAhead() {
-    final cameraY = game.camera.viewfinder.position.y;
-    final horizonY = cameraY - generationAhead;
-    final behindY = cameraY + cullBehind;
+    // Compare in true distance (issue #30): world y folds back toward the
+    // origin every WorldOrigin.period px, so a slot just past a fold sits
+    // near y 0 while the camera may still be far from it — a y comparison
+    // would read "hopelessly behind" and burn every fare past the fold.
+    final cameraDistance = WorldOrigin.distanceForWorldY(
+        game.camera.viewfinder.position.y, game.worldShift);
+    final horizonDistance = cameraDistance + generationAhead;
+    final behindDistance = cameraDistance - cullBehind;
     var spawned = 0;
     while (spawned < _maxSpawnsPerUpdate) {
-      final pickupY = course.fare(nextFareIndex).pickup.y;
-      if (pickupY > behindY) {
+      final pickupDistance =
+          course.fare(nextFareIndex, worldShift: game.worldShift)
+              .pickupDistance;
+      if (pickupDistance < behindDistance) {
         // Hopelessly behind the player (a teleport or long freeze jumped
         // the course): skip it without ever putting it on the street.
         faresMissed++;
         nextFareIndex++;
         continue;
       }
-      if (pickupY < horizonY) break; // Not needed yet; check again later.
-      _spawnFare(course.fare(nextFareIndex));
+      if (pickupDistance > horizonDistance) {
+        break; // Not needed yet; check again later.
+      }
+      _spawnFare(course.fare(nextFareIndex, worldShift: game.worldShift));
       nextFareIndex++;
       spawned++;
     }
@@ -238,8 +253,11 @@ class EndlessFareController extends Component
       final dropoffY = f.dropoffZone.position.y;
       if (playerY > dropoffY - passHysteresis) continue; // not passed yet
 
-      final spot =
-          course.relocatedDropoff(f.fare.index, attempt: f.relocations);
+      final spot = course.relocatedDropoff(
+        f.fare.index,
+        attempt: f.relocations,
+        worldShift: game.worldShift,
+      );
       f.relocations++;
       faresRelocated++;
 
@@ -256,12 +274,16 @@ class EndlessFareController extends Component
   }
 
   /// Removes fares whose pending stop is hopelessly behind the player.
+  ///
+  /// Judged on the live zones (issue #30): a stored course position is
+  /// frozen in the frame its slot was drawn in, while the zone rides the
+  /// world's current frame across every fold.
   void _cullBehind() {
     final behindY = game.camera.viewfinder.position.y + cullBehind;
 
     _active.removeWhere((f) {
       final pickupMissed =
-          !f.passenger.isPickedUp && f.fare.pickup.y > behindY;
+          !f.passenger.isPickedUp && f.pickupZone.position.y > behindY;
       // The carried dropoff is judged by where its zone waits *now*
       // (issue #28): a relocated dropoff must never be culled against the
       // spot the course originally dealt — that one is long behind, but

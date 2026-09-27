@@ -4,6 +4,7 @@ import '../components/road_obstacle.dart';
 import '../components/road_segment.dart';
 import '../taxi_game.dart';
 import 'run_environment.dart';
+import 'world_origin.dart';
 
 /// Keeps the road in recycled chunks around the camera (issue #11).
 ///
@@ -12,9 +13,12 @@ import 'run_environment.dart';
 /// they scroll into view and culled once they fall far enough behind it, so
 /// a run can continue indefinitely at a constant handful of live chunks.
 ///
-/// Chunk placement is pure index math — chunk *i* covers
-/// y ∈ [[chunkTopY], [chunkTopY] + [chunkLength]] — so coverage is exactly
-/// reproducible for a given camera path.
+/// Chunk placement is pure index math over *true distance*: chunk *i*
+/// covers run distances [i · [chunkLength], (i + 1) · [chunkLength]), and
+/// sits at the world y [WorldOrigin.worldYForDistance] maps its top edge
+/// to — so coverage is exactly reproducible for a given camera path, and
+/// the world's folds (issue #30) never change which chunk holds which
+/// stretch of road.
 ///
 /// With an [environment] (issue #24) each chunk renders the road geometry
 /// that exists over its stretch, and carries that stretch's construction
@@ -43,13 +47,22 @@ class RoadChunkManager extends Component with HasGameReference<TaxiGame> {
 
   final Map<int, RoadSegment> _chunks = {};
 
-  /// Top (largest-y) edge of chunk [index]. Chunk 0 covers [-800, 0];
-  /// negative indices cover the road behind the run's start.
+  /// Top (largest-y) edge of chunk [index] before any world fold (issue
+  /// #30): chunk 0 covers [-800, 0]; negative indices cover the road
+  /// behind the run's start. Kept for the first-frame view of the road —
+  /// live placement always goes through [WorldOrigin.worldYForDistance].
   static double chunkTopY(int index) => -(index + 1) * chunkLength;
 
-  /// The chunk containing world y [y]. Values on a boundary resolve to the
-  /// chunk above; coverage is unaffected.
+  /// The chunk containing world y [y] in the first frame band (no fold
+  /// yet). Values on a boundary resolve to the chunk above; coverage is
+  /// unaffected.
   static int chunkIndexForY(double y) => (-y / chunkLength).ceil() - 1;
+
+  /// The chunk whose distance band contains true [distance]: chunk *i*
+  /// holds [i · [chunkLength], (i + 1) · [chunkLength]). Values on a
+  /// boundary resolve to the higher chunk; coverage is unaffected.
+  static int chunkIndexForDistance(double distance) =>
+      (distance / chunkLength).floor();
 
   int get chunkCount => _chunks.length;
 
@@ -68,16 +81,24 @@ class RoadChunkManager extends Component with HasGameReference<TaxiGame> {
   void sync() {
     final centerY = game.camera.viewfinder.position.y;
     final halfView = game.camera.viewport.size.y / 2;
+    final shift = game.worldShift;
 
-    final topIndex = chunkIndexForY(centerY - halfView - aheadMargin);
-    final bottomIndex = chunkIndexForY(centerY + halfView + behindMargin);
+    // The view's (margined) distance band, then the chunks holding it.
+    final topIndex = chunkIndexForDistance(
+        shift - (centerY - halfView - aheadMargin));
+    final bottomIndex = chunkIndexForDistance(
+        shift - (centerY + halfView + behindMargin));
 
     for (var i = bottomIndex; i <= topIndex; i++) {
       if (_chunks.containsKey(i)) continue;
       final chunk = RoadSegment(
-        position: Vector2(TaxiGame.roadCenterX, chunkTopY(i)),
+        // Chunk i's top edge is true distance (i + 1) · chunkLength;
+        // [WorldOrigin] maps it into the frame the camera is in.
+        position: Vector2(TaxiGame.roadCenterX,
+            WorldOrigin.worldYForDistance((i + 1) * chunkLength)),
         length: chunkLength,
         environment: environment,
+        topDistance: (i + 1) * chunkLength,
       );
       if (environment != null) _placeCones(chunk, i);
       _chunks[i] = chunk;
@@ -96,15 +117,14 @@ class RoadChunkManager extends Component with HasGameReference<TaxiGame> {
   /// cone's own y, so a line across a taper still tracks the kerb.
   void _placeCones(RoadSegment chunk, int index) {
     final env = environment!;
-    final topY = chunkTopY(index);
-    final fromDistance = -(topY + chunkLength);
-    final toDistance = -topY;
+    final fromDistance = index * chunkLength;
+    final toDistance = (index + 1) * chunkLength;
 
     for (final zone in env.constructionInRange(fromDistance, toDistance)) {
       final start = zone.startDistance.clamp(fromDistance, toDistance);
       final end = zone.endDistance.clamp(fromDistance, toDistance);
       for (var d = start; d <= end; d += coneSpacing) {
-        final worldY = -d;
+        final worldY = WorldOrigin.worldYForDistance(d);
         final road = env.roadAt(d);
         // The line itself sits on the boundary; [zone.closedRight] only
         // decides which lanes the spawner keeps clear beyond it.
@@ -116,7 +136,7 @@ class RoadChunkManager extends Component with HasGameReference<TaxiGame> {
         chunk.add(RoadObstacle(
           position: Vector2(
             coneX - (TaxiGame.roadCenterX - 100),
-            worldY - topY,
+            worldY - chunk.position.y,
           ),
         ));
       }

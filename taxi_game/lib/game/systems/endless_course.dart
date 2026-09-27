@@ -5,6 +5,7 @@ import 'package:flame/components.dart';
 import '../../models/fare_type.dart';
 import 'difficulty_curve.dart';
 import 'run_environment.dart';
+import 'world_origin.dart';
 
 /// One procedurally generated fare: a pickup followed by a dropoff further
 /// up the road.
@@ -14,13 +15,16 @@ class EndlessFare {
     required this.pickup,
     required this.dropoff,
     required this.reward,
+    required this.pickupDistance,
+    required this.dropoffDistance,
     this.fareType = FareType.standard,
   });
 
   /// Position of this fare in the run's sequence (0-based).
   final int index;
 
-  /// Sidewalk position where the passenger waits.
+  /// Sidewalk position where the passenger waits (world frame — see
+  /// [WorldOrigin]).
   final Vector2 pickup;
 
   /// Sidewalk position further up the road (smaller y) to deliver to.
@@ -34,8 +38,15 @@ class EndlessFare {
   /// the geometry, the payout, or the clock (see [FareType]).
   final FareType fareType;
 
-  /// Distance the ride covers, in px.
-  double get rideLength => pickup.y - dropoff.y;
+  /// True distance into the run of the pickup and the dropoff, in px —
+  /// frame-independent, unlike [pickup]/[dropoff], whose world y folds
+  /// back toward the origin every [WorldOrigin.period] px (issue #30).
+  final double pickupDistance;
+  final double dropoffDistance;
+
+  /// Distance the ride covers, in px. The dropoff waits further up the
+  /// road, so its true distance is the larger one.
+  double get rideLength => dropoffDistance - pickupDistance;
 }
 
 /// The deterministic course of an endless run (issue #11).
@@ -115,31 +126,63 @@ class EndlessCourse {
   /// so the passenger always waits ahead, no matter how many times the
   /// taxi blows past.
   ///
+  /// True distance of fare [index]'s relocated dropoff after [attempt] +
+  /// 1 chained hops — the road term of what [relocatedDropoff] places,
+  /// readable without pinning a world frame (issue #30: world y folds,
+  /// the road does not). Each attempt's draw order matches
+  /// [relocatedDropoff]'s: the extra ride is the first draw of the
+  /// attempt's salted stream, the kerb side the second.
+  double relocatedDropoffDistance(int index, {int attempt = 0}) {
+    var distance = fare(index).dropoffDistance;
+    for (var a = 0; a <= attempt; a++) {
+      final random = Random(_slotSeed(index) ^ (0x51EC0DE * (a + 1)));
+      distance += minRelocationRide +
+          random.nextDouble() * (maxRelocationRide - minRelocationRide);
+    }
+    return distance;
+  }
+
   /// Pure in (seed, index, attempt) — never in where the taxi happens to
   /// be — so every run of the same course relocates identically, and a
   /// ghost race relocates with you. The draws come from a salted stream
   /// per attempt, never from [fare]'s: relocating a fare can never rewrite
-  /// the road a seed already dealt.
-  Vector2 relocatedDropoff(int index, {int attempt = 0}) {
-    var y = fare(index).dropoff.y;
+  /// the road a seed already dealt. The chain runs in true distance (issue
+  /// #30) — relocations can cross a world fold, where raw world y would
+  /// jump the spot a whole [WorldOrigin.period] away. [worldShift] is the
+  /// live fold, with the same window rule [fare] applies.
+  Vector2 relocatedDropoff(
+    int index, {
+    int attempt = 0,
+    double? worldShift,
+  }) {
+    var distance = relocatedDropoffDistance(index, attempt: attempt);
     var x = fare(index).dropoff.x;
     for (var a = 0; a <= attempt; a++) {
       final random = Random(_slotSeed(index) ^ (0x51EC0DE * (a + 1)));
-      final extraRide = minRelocationRide +
-          random.nextDouble() * (maxRelocationRide - minRelocationRide);
+      random.nextDouble(); // the extra ride, already folded into [distance]
       final onLeft = random.nextBool();
-      y -= extraRide;
       // The kerb the road actually has at the new stop (issue #24), the
       // same rule [fare] itself places passengers by.
       x = onLeft
-          ? (environment?.leftCurbXAt(-y) ?? leftCurbX)
-          : (environment?.rightCurbXAt(-y) ?? rightCurbX);
+          ? (environment?.leftCurbXAt(distance) ?? leftCurbX)
+          : (environment?.rightCurbXAt(distance) ?? rightCurbX);
     }
-    return Vector2(x, y);
+    final shift =
+        max(WorldOrigin.shiftForDistance(distance), worldShift ?? 0.0);
+    return Vector2(x, shift - distance);
   }
 
   /// Generates fare [index]. Deterministic and order-independent.
-  EndlessFare fare(int index) {
+  ///
+  /// [worldShift] is the live world fold (issue #30) when the fare is
+  /// being placed into a running world. A slot just *behind* a fresh fold
+  /// boundary canonically lives in the previous window — without the live
+  /// shift it would be placed a whole period away from the road it
+  /// belongs to. With it, such a slot lands just below the start line of
+  /// the live frame, exactly where that stretch of road is. Null (the
+  /// default) keeps the pure canonical mapping, which is what the
+  /// determinism tests and any out-of-run query want.
+  EndlessFare fare(int index, {double? worldShift}) {
     final random = Random(_slotSeed(index));
 
     // Draw in a fixed order — reordering these lines changes the course.
@@ -178,19 +221,31 @@ class EndlessCourse {
         break; // Standard geometry; the VIP's deal is payout and clock.
     }
 
-    final pickupY = -(index * slotLength) - pickupInset;
-    final dropoffY = pickupY - rideLength;
+    // True distances into the run (issue #30): fares are placed at the
+    // canonical world y for their distance — or the live fold's frame
+    // when the slot sits behind it — so a fare generated past a world
+    // fold lands in the frame the camera is actually in. Pickup and
+    // dropoff share one slot, and a slot never straddles a fold boundary
+    // (the period is a whole number of slots), so one shift covers both.
+    final pickupDistance = index * slotLength + pickupInset;
+    final dropoffDistance = pickupDistance + rideLength;
+    final shift =
+        max(WorldOrigin.shiftForDistance(pickupDistance), worldShift ?? 0.0);
+    final pickupY = shift - pickupDistance;
+    final dropoffY = shift - dropoffDistance;
 
     // Kerbs follow the road (issue #24): the passenger waits just past
     // the road edge that exists at *their* stop, so a fare is always
     // reachable from the clamp the taxi is actually held by. Each stop
-    // samples its own y — pickup and dropoff can sit on different
+    // samples its own distance — pickup and dropoff can sit on different
     // streets. Without an environment this is the standard road's fixed
     // curbs, as always.
-    final pickupLeft = environment?.leftCurbXAt(-pickupY) ?? leftCurbX;
-    final pickupRight = environment?.rightCurbXAt(-pickupY) ?? rightCurbX;
-    final dropoffLeft = environment?.leftCurbXAt(-dropoffY) ?? leftCurbX;
-    final dropoffRight = environment?.rightCurbXAt(-dropoffY) ?? rightCurbX;
+    final pickupLeft = environment?.leftCurbXAt(pickupDistance) ?? leftCurbX;
+    final pickupRight =
+        environment?.rightCurbXAt(pickupDistance) ?? rightCurbX;
+    final dropoffLeft = environment?.leftCurbXAt(dropoffDistance) ?? leftCurbX;
+    final dropoffRight =
+        environment?.rightCurbXAt(dropoffDistance) ?? rightCurbX;
 
     // ~40–70 coins a standard fare: in band with the 50-coin level
     // rewards the economy was tuned around. Special kinds scale that base
@@ -205,6 +260,8 @@ class EndlessCourse {
       dropoff: Vector2(dropoffOnLeft ? dropoffLeft : dropoffRight, dropoffY),
       reward: reward,
       fareType: fareType,
+      pickupDistance: pickupDistance,
+      dropoffDistance: dropoffDistance,
     );
   }
 

@@ -81,11 +81,15 @@ class GhostCar extends PositionComponent with HasGameReference<TaxiGame> {
   void update(double dt) {
     super.update(dt);
 
-    // The recorded clock only ran while the shift was live, so the
-    // replay freezes whenever the shift does — hit-stop, crash stall,
-    // and the settled shift after a bank or wreck.
+    // The recorded clock only ran while the shift was live, so the replay
+    // freezes whenever the shift does — hit-stop, crash stall, and the
+    // settled shift after a bank or wreck.
     if (!game.isGameActive) return;
     _elapsed += dt;
-    position = playback.positionAt(_elapsed);
+    // Trace samples are true-distance coordinates; the world's y folds
+    // back toward the origin as the run deepens (issue #30), so the
+    // replay re-enters the live frame every tick.
+    final sample = playback.positionAt(_elapsed);
+    position = Vector2(sample.x, sample.y + game.worldShift);
   }
 }

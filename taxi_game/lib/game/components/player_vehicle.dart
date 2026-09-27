@@ -130,7 +130,11 @@ class PlayerVehicle extends PositionComponent
     final double minX;
     final double maxX;
     if (env != null) {
-      final road = env.roadAt(math.max(0.0, -position.y));
+      // True distance into the run: world y folds back toward the origin
+      // as the run deepens (issue #30), so the raw reading loses a whole
+      // fold per boundary and would clamp the taxi to the wrong kerb.
+      final road =
+          env.roadAt(math.max(0.0, game.worldShift - position.y));
       minX = road.leftX + halfWidth;
       maxX = road.rightX - halfWidth;
     } else {

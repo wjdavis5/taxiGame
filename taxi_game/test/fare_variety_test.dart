@@ -119,13 +119,15 @@ void main() {
           case FareType.longHaul:
             sawLongHaul = true;
             // The distant dropoff: earliest pickup, the whole slot of
-            // ride, tail margin respected. (closeTo, not equals: the
+            // ride, tail margin respected. The inset is a fact about the
+            // slot, judged in true distance (issue #30: world y folds
+            // every period; the road does not). (closeTo, not equals: the
             // world's Vector2s store float32, and deep slots read
             // geometry a few thousandths off its true values.)
             expect(
-              fare.pickup.y,
+              fare.pickupDistance,
               closeTo(
-                  -(i * EndlessCourse.slotLength) - EndlessCourse.minPickupInset,
+                  i * EndlessCourse.slotLength + EndlessCourse.minPickupInset,
                   0.01),
               reason: 'fare $i long-haul pickup inset',
             );

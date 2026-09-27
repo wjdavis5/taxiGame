@@ -4,6 +4,7 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 import '../systems/run_environment.dart';
+import '../systems/world_origin.dart';
 
 /// Road segment component that renders the road.
 ///
@@ -20,6 +21,18 @@ class RoadSegment extends PositionComponent {
   /// The run's living world. Null renders the fixed level road.
   final RunEnvironment? environment;
 
+  /// True distance into the run at this chunk's top edge (local y 0),
+  /// pinned at construction. World y folds back toward the origin as the
+  /// run deepens (issue #30), so sampling by raw `-position.y` would lose
+  /// a whole [WorldOrigin.period] at every fold; the pinned distance
+  /// cannot drift. Null in level mode, where the road is finite and the
+  /// classic reading still holds.
+  final double? _topDistance;
+
+  /// The true distance at local y 0: the pinned value for an endless
+  /// chunk, the classic world reading for a level's single segment.
+  double get distanceAtTop => _topDistance ?? -position.y;
+
   /// How far apart (px) the geometry is sampled down the chunk. Small
   /// enough that tapers render smoothly, large enough that three live
   /// chunks stay cheap.
@@ -30,7 +43,9 @@ class RoadSegment extends PositionComponent {
     required this.length,
     this.lanes = 2,
     this.environment,
-  }) : super(position: position);
+    double? topDistance,
+  })  : _topDistance = topDistance,
+        super(position: position);
 
   @override
   Future<void> onLoad() async {
@@ -130,9 +145,9 @@ class RoadSegment extends PositionComponent {
   }
 
   _RoadRow _rowFor(RunEnvironment env, double centerX, double localY) {
-    // World y runs negative up the road; local y runs positive down the
-    // chunk, so the distance into the run at this row is −(worldY).
-    final distance = -position.y - localY;
+    // Local y runs positive down the chunk from its top edge, so the
+    // distance at a row is the pinned top distance minus the run down.
+    final distance = distanceAtTop - localY;
     final road = env.roadAt(distance);
     return _RoadRow(
       localY: localY,
@@ -143,7 +158,7 @@ class RoadSegment extends PositionComponent {
   }
 
   void _drawSidewalks(Canvas canvas, List<_RoadRow> rows, RunEnvironment env) {
-    final distance = -position.y - length / 2;
+    final distance = distanceAtTop - length / 2;
     final rain = env.rainIntensityAt(distance);
     var color = const Color(0xFFBDBDBD);
     if (rain > 0) {
@@ -197,7 +212,7 @@ class RoadSegment extends PositionComponent {
 
     // A wet street reads darker and cooler while the rain lasts (issue
     // #24): the same cue that tells the player their grip is gone.
-    final mid = -position.y - length / 2;
+    final mid = distanceAtTop - length / 2;
     final rain = env.rainIntensityAt(mid);
     if (rain > 0) {
       canvas.drawPath(
@@ -256,10 +271,11 @@ class RoadSegment extends PositionComponent {
 
   void _drawIntersections(Canvas canvas, RunEnvironment env,
       double centerX) {
-    // The chunk covers world y ∈ [position.y, position.y + length], so it
-    // covers run distances [−(y+length), −y].
-    final from = -position.y - length;
-    final to = -position.y;
+    // The chunk covers true distances [distanceAtTop − length,
+    // distanceAtTop] — the pinned reading survives every world fold
+    // (issue #30), where raw −position.y would lose a fold per boundary.
+    final from = distanceAtTop - length;
+    final to = distanceAtTop;
     final asphalt = Paint()
       ..color = const Color(0xFF4A4A4A)
       ..style = PaintingStyle.fill;
@@ -276,13 +292,15 @@ class RoadSegment extends PositionComponent {
         continue;
       }
 
-      // Cross street: a carriageway band spanning the whole view.
-      final bandTopLocal =
-          -(centerDistance + RunEnvironment.intersectionHalfBand) -
-              position.y;
-      final bandBottomLocal =
-          -(centerDistance - RunEnvironment.intersectionHalfBand) -
-              position.y;
+      // Cross street: a carriageway band spanning the whole view. Its
+      // edges convert from true distance through [WorldOrigin], so the
+      // band lands in the chunk's own frame whatever fold it sits past.
+      final bandTopLocal = WorldOrigin.worldYForDistance(
+              centerDistance + RunEnvironment.intersectionHalfBand) -
+          position.y;
+      final bandBottomLocal = WorldOrigin.worldYForDistance(
+              centerDistance - RunEnvironment.intersectionHalfBand) -
+          position.y;
       canvas.drawRect(
         Rect.fromLTRB(-centerX, bandTopLocal, centerX, bandBottomLocal),
         asphalt,

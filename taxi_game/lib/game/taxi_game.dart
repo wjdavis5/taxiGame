@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flame/camera.dart';
+import 'package:flame/components.dart' show PositionComponent;
 import 'package:flame/game.dart';
 import 'package:flame/events.dart';
 import 'package:flutter/material.dart';
@@ -39,6 +40,7 @@ import 'systems/run_environment.dart';
 import 'systems/run_summary.dart';
 import 'systems/road_chunk_manager.dart';
 import 'systems/impact_fx.dart';
+import 'systems/world_origin.dart';
 import '../services/game_state_service.dart';
 import '../services/level_loader_service.dart';
 
@@ -149,6 +151,22 @@ class TaxiGame extends FlameGame
   /// the environment every frame; 1.0 in level mode.
   double gripMultiplier = 1.0;
 
+  /// How far the world has folded back toward the origin so far this run
+  /// (issue #30): the y delta applied to every world component at each
+  /// [WorldOrigin.period] of true road. World y stays small so the
+  /// canvas's single-precision transforms never degrade the road into
+  /// bare sky; true distance is always `worldShift − world y`. Zero in
+  /// level mode — levels are finite roads.
+  double _worldShift = 0;
+
+  /// How many folds have been applied: the [WorldOrigin.period] multiple
+  /// the world's coordinates are canonical for.
+  int _rebaseCount = 0;
+
+  /// The current world fold, in px. Read by everything that converts
+  /// between world y and true distance (see [WorldOrigin]).
+  double get worldShift => _worldShift;
+
   /// How dark it is right now, 0..1 (issue #24). Traffic reads it to
   /// light its headlights; level mode keeps it at 0.
   double darkness = 0;
@@ -232,9 +250,12 @@ class TaxiGame extends FlameGame
   /// How far into an endless run the taxi has driven, in px. Zero in
   /// level mode. Stays readable while a crash stall holds the world (the
   /// run is paused, not rewound), so the HUD's distance badge does not
-  /// flash zero.
+  /// flash zero. True distance, not world y: the fold (issue #30) keeps
+  /// the world's coordinates small, this keeps count of the road.
   double get runDistance =>
-      (isEndless && _playerReady) ? math.max(0.0, -player.position.y) : 0.0;
+      (isEndless && _playerReady)
+          ? math.max(0.0, worldShift - player.position.y)
+          : 0.0;
 
   /// Fares delivered so far in this endless run.
   int get faresDelivered => fareController?.faresDelivered ?? 0;
@@ -398,8 +419,12 @@ class TaxiGame extends FlameGame
     // weather, and sky as it draws fares — the Daily Shift's course and
     // its mood are one reproducible thing. The course reads the
     // environment to put passengers on the kerbs the road really has.
+    // A fresh shift also starts a fresh world frame (issue #30): no folds
+    // applied, world y and true distance the same thing again.
     environment = RunEnvironment(seed: seed);
     course = EndlessCourse(seed: seed, environment: environment);
+    _worldShift = 0;
+    _rebaseCount = 0;
     passengers.clear();
     passengersDelivered = 0;
     fareChain.reset();
@@ -498,8 +523,11 @@ class TaxiGame extends FlameGame
     roadChunks = null;
     _activeRunSeed = null;
     // The living world goes with it (issue #24): a level is the classic
-    // fixed daylight street, with dry grip and a bright sky.
+    // fixed daylight street, with dry grip and a bright sky. The world
+    // frame resets with it (issue #30) — an Endless handoff starts clean.
     environment = null;
+    _worldShift = 0;
+    _rebaseCount = 0;
     gripMultiplier = 1.0;
     darkness = 0;
     _background.darkness = 0;
@@ -1169,6 +1197,11 @@ class TaxiGame extends FlameGame
       return;
     }
 
+    // Keep the world's coordinates small (issue #30): fold the whole
+    // world back one period whenever the taxi crosses the next boundary,
+    // before anything reads a position this frame.
+    _maybeRebaseWorld();
+
     super.update(dt);
     _applyShake(dt);
 
@@ -1186,8 +1219,11 @@ class TaxiGame extends FlameGame
 
         // The ghost trace samples the same clock (issue #20), so the
         // replay measures driving — never hit-stops, stalls, or dead
-        // time — exactly the beats it races against.
-        _ghostRecorder?.tick(dt, player.position.x, player.position.y);
+        // time — exactly the beats it races against. Samples are stored
+        // in true-distance coordinates (issue #30): the replay adds the
+        // fold it replays under, so traces stay comparable across runs.
+        _ghostRecorder?.tick(
+            dt, player.position.x, player.position.y - worldShift);
       }
 
       // The bank-or-push window ticks with the same clock (issue #13).
@@ -1238,6 +1274,50 @@ class TaxiGame extends FlameGame
       overlay.rainIntensity = env.rainIntensityAt(distance);
       overlay.fogIntensity = env.fogIntensityAt(distance);
     }
+  }
+
+  /// Folds the world back toward the origin (issue #30) whenever the taxi
+  /// has crossed the next [WorldOrigin.period] boundary: every world
+  /// component and the camera move by the same delta in the same tick, so
+  /// nothing on screen moves and world y never grows past one period —
+  /// which is what keeps the canvas's single-precision transforms from
+  /// degrading the road into bare sky on long runs.
+  ///
+  /// The world frame the fold produces is exactly the canonical mapping
+  /// [WorldOrigin.worldYForDistance] defines, so placement code never
+  /// needs to know a fold happened. Anything holding coordinates outside
+  /// the component tree (traffic waypoints, ghost traces, coin anchors)
+  /// converts through [worldShift] instead.
+  void _maybeRebaseWorld() {
+    if (!isEndless || !_playerReady) return;
+
+    final trueDistance = worldShift - player.position.y;
+    final frame = (trueDistance / WorldOrigin.period).floor();
+    if (frame <= _rebaseCount) return;
+
+    final delta = (frame - _rebaseCount) * WorldOrigin.period;
+    _rebaseCount = frame;
+    _worldShift += delta;
+
+    // World children only: a chunk's cones and a vehicle's sprite are in
+    // their parent's local space and must not move twice. Traffic paths
+    // are the one world-sized state held outside the tree — shifted at
+    // their owner.
+    for (final child in world.children) {
+      if (child is PositionComponent) child.position.y += delta;
+    }
+    trafficSpawner.shiftWorld(delta);
+    // The viewfinder's getter hands back a copy (it reads a transform
+    // offset), so the fold assigns a fresh vector — `+=` on `.position.y`
+    // would fold everything but the camera. The follow behavior locks the
+    // viewfinder on the taxi at infinite speed anyway, so snapping it to
+    // the folded taxi keeps the same frame the follow would produce — and
+    // world components that update before the camera this very tick read
+    // a viewfinder that agrees with the folded world.
+    camera.viewfinder.position = Vector2(
+      camera.viewfinder.position.x,
+      player.position.y,
+    );
   }
 
   /// Applies one frame of screen shake as a delta on the viewport

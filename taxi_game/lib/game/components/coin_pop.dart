@@ -51,11 +51,18 @@ class CoinPop extends PositionComponent with HasGameReference<TaxiGame> {
   late double _delayRemaining;
   double _age = 0;
 
-  /// Where the coin spawned.
-  late final Vector2 _start;
+  /// Where the coin spawned, x fixed and y in true-distance terms: world
+  /// y folds back toward the origin mid-flight (issue #30), so the stored
+  /// anchors re-enter the live frame on every use.
+  late final double _startX;
+  late final double _startTrueY;
 
-  /// The outward pop ends here; the homing leg starts from this point.
-  late final Vector2 _scatterEnd;
+  /// The outward pop's offset from the spawn; the homing leg starts where
+  /// it ends.
+  late final Vector2 _scatterOffset;
+
+  /// The spawn point in the world's live frame.
+  Vector2 get _start => Vector2(_startX, _startTrueY + game.worldShift);
 
   final Paint _rimPaint = Paint()
     ..color = const Color(0xFFB8860B)
@@ -74,12 +81,13 @@ class CoinPop extends PositionComponent with HasGameReference<TaxiGame> {
     super.onLoad();
 
     _delayRemaining = delay;
-    _start = position.clone();
+    _startX = position.x;
+    _startTrueY = position.y - game.worldShift;
 
     // Pop outward in a random direction before homing in on the counter.
     final angle = _random.nextDouble() * 2 * math.pi;
     final distance = 26 + 18 * _random.nextDouble();
-    _scatterEnd = _start + Vector2(math.cos(angle), math.sin(angle)) * distance;
+    _scatterOffset = Vector2(math.cos(angle), math.sin(angle)) * distance;
   }
 
   @override
@@ -99,14 +107,15 @@ class CoinPop extends PositionComponent with HasGameReference<TaxiGame> {
     if (t <= scatterPortion) {
       final s = t / scatterPortion;
       final easeOut = 1 - (1 - s) * (1 - s);
-      position = _start + (_scatterEnd - _start) * easeOut;
+      position = _start + _scatterOffset * easeOut;
     } else {
       final p = (t - scatterPortion) / (1 - scatterPortion);
       final eased = p * p; // ease-in: the coin accelerates toward the HUD
       final target = _hudTarget();
+      final scatterEnd = _start + _scatterOffset;
       position = Vector2(
-        _scatterEnd.x + (target.x - _scatterEnd.x) * eased,
-        _scatterEnd.y + (target.y - _scatterEnd.y) * eased,
+        scatterEnd.x + (target.x - scatterEnd.x) * eased,
+        scatterEnd.y + (target.y - scatterEnd.y) * eased,
       );
     }
 
