@@ -204,11 +204,12 @@ void main() {
     });
 
     test('a fleet purchase unlocks the cars-collected tier', () async {
-      gameState.addCoins(2000);
+      final compact = VehicleCatalog.byId('compact_red')!;
+      gameState.addCoins(compact.price);
 
       // The starter cab is owned from the first launch; one purchase is
       // two cars.
-      expect(gameState.unlockVehicle('compact_red', 150), isTrue);
+      expect(gameState.unlockVehicle('compact_red', compact.price), isTrue);
       expect(gameState.isAchievementUnlocked('cars_2'), isTrue);
       expect(gameState.isAchievementUnlocked('cars_4'), isFalse);
     });

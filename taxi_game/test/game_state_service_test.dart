@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -41,8 +42,9 @@ void main() {
   });
 
   test('unlocked and selected vehicles survive a reload', () async {
-    gameStateService.addCoins(500);
-    expect(gameStateService.unlockVehicle('sedan_blue', 250), isTrue);
+    final sedanPrice = VehicleCatalog.byId('sedan_blue')!.price;
+    gameStateService.addCoins(sedanPrice);
+    expect(gameStateService.unlockVehicle('sedan_blue', sedanPrice), isTrue);
     gameStateService.selectVehicle('sedan_blue');
 
     // Simulate an app restart: a brand-new service stack reading the same
@@ -52,7 +54,7 @@ void main() {
     final reloaded = GameStateService(reloadedStorage);
     await reloaded.loadSaveData();
 
-    expect(reloaded.totalCoins, 250);
+    expect(reloaded.totalCoins, 0);
     expect(reloaded.unlockedVehicles, contains('sedan_blue'));
     expect(reloaded.selectedVehicle, 'sedan_blue');
   });

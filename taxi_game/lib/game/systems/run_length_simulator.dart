@@ -6,6 +6,31 @@ import '../components/player_vehicle.dart' show PlayerVehicle;
 import 'collision_rules.dart';
 import 'run_environment.dart';
 
+/// One fare stop the simulated driver completed: the distance the shift
+/// had reached when the taxi pulled over, and how long the whole stop
+/// cycle took — the px driven and the seconds elapsed since the previous
+/// stop (or the start line). The raw material of the earnings harness
+/// (issue #34): the real course deals one fare per slot, so stop *k* is
+/// the delivery of fare *k*, and the cycle time is what its meter is
+/// judged against.
+class FareStop {
+  const FareStop({
+    required this.distancePx,
+    required this.cyclePx,
+    required this.cycleSeconds,
+  });
+
+  /// True distance into the shift of the boarding, in px.
+  final double distancePx;
+
+  /// Distance driven since the previous boarding (or the start), in px.
+  final double cyclePx;
+
+  /// Seconds the cycle took, including the board itself and the kerb
+  /// approach — every second between one delivery and the next.
+  final double cycleSeconds;
+}
+
 /// The outcome of one simulated shift.
 class SimulatedRun {
   const SimulatedRun({
@@ -14,6 +39,7 @@ class SimulatedRun {
     required this.drivenSeconds,
     required this.crashDistancesPx,
     required this.survived,
+    this.fareStops = const [],
   });
 
   final int seed;
@@ -32,6 +58,11 @@ class SimulatedRun {
   /// True when the run hit the harness's distance cap still alive — the
   /// curve never caught this driver. Counts as an extremely long run.
   final bool survived;
+
+  /// Every fare stop the driver completed, in delivery order. Recorded at
+  /// each boarding — the moment the real game starts a fare's meter and
+  /// banks a delivery.
+  final List<FareStop> fareStops;
 
   double get distanceMetres => distancePx / 10.0; // RunSummary.pixelsPerMetre
 }
@@ -255,6 +286,13 @@ class RunLengthSimulator {
     var pxSinceStop = 0.0;
     var nextStopGap = fareSlotLength * (0.7 + random.nextDouble() * 0.6);
 
+    // The fare ledger (issue #34): every completed boarding is recorded
+    // with the distance it landed at and the time the cycle took, so the
+    // earnings harness can price each delivery against its meter.
+    final fareStops = <FareStop>[];
+    var lastStopPx = 0.0;
+    var lastStopSeconds = 0.0;
+
     final playerHalfW = stats.width * CollisionRules.playerHitboxScale / 2;
     final playerHalfH = stats.height * CollisionRules.playerHitboxScale / 2;
 
@@ -455,6 +493,18 @@ class RunLengthSimulator {
         if ((x - curbX).abs() < 3) {
           mode = _DriveMode.boarding;
           stopTimer = 1.0;
+          // Boarded: the delivery lands here. The cycle is everything
+          // since the previous boarding — the drive to the kerb, the
+          // approach, the merge — and that whole span is what a meter is
+          // judged against in the earnings harness.
+          final distanceNow = math.max(0.0, -y);
+          fareStops.add(FareStop(
+            distancePx: distanceNow,
+            cyclePx: distanceNow - lastStopPx,
+            cycleSeconds: drivenSeconds - lastStopSeconds,
+          ));
+          lastStopPx = distanceNow;
+          lastStopSeconds = drivenSeconds;
         }
       } else if (mode == _DriveMode.boarding) {
         stopTimer -= dt;
@@ -639,6 +689,7 @@ class RunLengthSimulator {
       drivenSeconds: drivenSeconds,
       crashDistancesPx: List.unmodifiable(crashDistances),
       survived: survived,
+      fareStops: List.unmodifiable(fareStops),
     );
   }
 

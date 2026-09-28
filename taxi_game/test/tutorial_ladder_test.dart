@@ -283,8 +283,13 @@ void main() {
 
       expect(game.lastBankedScore, score,
           reason: 'the bank converts the whole chain score');
-      expect(saveAtNine.totalCoins, coinsBefore + score + level.coinReward,
-          reason: 'the payout plus the level reward land in the wallet');
+      // The bank is the whole payout (issue #34): the chain score OR the
+      // flat level reward, never both. Banking forfeits the reward along
+      // with the undelivered fares — the same trade an endless bank makes.
+      expect(saveAtNine.totalCoins, coinsBefore + score,
+          reason: 'only the bank lands in the wallet — no reward on top');
+      expect(level.coinReward, greaterThan(0),
+          reason: 'the rung does carry a reward, which banking gives up');
       expect(game.isGameActive, isFalse, reason: 'the level is settled');
       expect(game.overlays.isActive('levelComplete'), isTrue);
       expect(game.overlays.isActive('bankOrPush'), isFalse);
@@ -552,7 +557,11 @@ void main() {
       game.lastBankedScore = 120;
       await showPanel(tester, game);
 
-      expect(find.text('Banked: +120 score'), findsOneWidget);
+      // The bank is the payout (issue #34): the panel names it in coins
+      // and does not also claim the flat reward that banking forfeited.
+      expect(find.text('Banked: +120 Coins'), findsOneWidget);
+      expect(find.text('+${game.currentLevel.coinReward} Coins'),
+          findsNothing);
     });
 
     testWidgets('tapping START SHIFT begins the first endless shift',

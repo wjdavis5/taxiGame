@@ -818,10 +818,18 @@ class TaxiGame extends FlameGame
   /// 1:1 — and the level settles as a success, unlocking the next rung.
   /// The fares left undelivered are the trade the lesson is about: a sure
   /// payout now against a bigger, riskier one had the player pushed on.
+  ///
+  /// The bank is the *whole* payout (issue #34): the flat level reward is
+  /// forfeited with the undelivered fares, exactly as an endless bank
+  /// forfeits everything after it. The lesson is the bank mechanic, and
+  /// paying the score *and* the flat reward would double-pay the rung —
+  /// so a banked level pays the chain score OR the flat reward, never
+  /// both. Pushing on instead keeps the classic settlement: complete the
+  /// level, collect the flat reward, no bank line.
   void _bankAndCompleteLevel() {
     lastBankedScore = fareChain.score;
     gameState.addCoins(lastBankedScore!);
-    _completeLevel();
+    _completeLevel(banked: true);
   }
 
   /// Push on: keep driving at the increased multiplier. The window
@@ -952,7 +960,10 @@ class TaxiGame extends FlameGame
     startEndlessRun(seed: freshSeed());
   }
 
-  void _completeLevel() {
+  /// Settles a completed level: freezes the run, pays the flat reward —
+  /// unless the level was [banked], whose payout is the chain score
+  /// already in the wallet (issue #34) — and unlocks the next rung.
+  void _completeLevel({bool banked = false}) {
     isGameActive = false;
     _freezePlayer();
     trafficSpawner.pause();
@@ -964,7 +975,8 @@ class TaxiGame extends FlameGame
     _dismissBankPrompt();
 
     // A volley of coins streams from the taxi to the HUD counter as the
-    // reward lands (issue #7).
+    // reward lands (issue #7). A banked level paid its coins at the
+    // dropoff, so the volley celebrates the bank already on the counter.
     for (var i = 0; i < 6; i++) {
       world.add(CoinPop(
         startPosition: player.position,
@@ -972,8 +984,10 @@ class TaxiGame extends FlameGame
       ));
     }
 
-    // Award coins and unlock the next level.
-    gameState.completeLevel(currentLevelNumber, currentLevel.coinReward);
+    // Award coins and unlock the next level. A bank pays the chain score
+    // OR the flat reward, never both (issue #34): the score is in, so the
+    // reward pays nothing.
+    gameState.completeLevel(currentLevelNumber, banked ? 0 : currentLevel.coinReward);
 
     overlays.add('levelComplete');
   }

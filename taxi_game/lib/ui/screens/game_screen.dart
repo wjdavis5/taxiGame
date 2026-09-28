@@ -175,24 +175,19 @@ class LevelCompleteOverlay extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
+            // The payout line (issue #34): a banked level was paid the
+            // chain score at the dropoff — the flat reward was forfeited
+            // with the undelivered fares — so the bank is the payout the
+            // panel names. Any other completion pays the flat reward.
             Text(
-              '+${game.currentLevel.coinReward} Coins',
+              game.lastBankedScore != null
+                  ? 'Banked: +${game.lastBankedScore} Coins'
+                  : '+${game.currentLevel.coinReward} Coins',
               style: const TextStyle(
                 fontSize: 24,
                 color: Colors.yellow,
               ),
             ),
-            // A bank's payout, for the levels that teach banking (issue
-            // #16): the chain score converted to coins at the dropoff.
-            // Null unless a bank happened this level.
-            if (game.lastBankedScore != null)
-              Text(
-                'Banked: +${game.lastBankedScore} score',
-                style: const TextStyle(
-                  fontSize: 18,
-                  color: Colors.white,
-                ),
-              ),
             // The run's fare-chain score (issue #12): the number a replay
             // tries to beat.
             Text(

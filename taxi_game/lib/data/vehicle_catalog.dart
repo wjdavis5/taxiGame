@@ -66,11 +66,19 @@ class GarageVehicle {
 /// ([VehicleSprites.playerVehicleIds]), named, priced as an ascending
 /// ladder, and given a handling identity (issue #9).
 ///
-/// Prices are sized against the level economy (rewards run 50 for level 1 to
-/// 300 for level 10), so the first car lands within the first session and the
-/// priciest takes a few playthroughs. The starter cab costs nothing — it is
-/// owned from the first launch (`SaveData.createDefault`), so its price never
-/// renders; it is listed so the garage shows one card per vehicle that exists.
+/// Prices are sized against the **endless** economy (issue #34): a shift
+/// pays its fares on delivery and banks the chain score 1:1, and the
+/// instrument behind `test/economy_simulation_test.dart` measured the
+/// result at 1,240–1,584 coins of fares alone per shift (p25–p75 across
+/// three skill stand-ins) before banking — a competent banked shift lands
+/// well past the audit's 800–2,000 figure. The ladder is priced off the
+/// conservative wallet those floors imply: roughly 2,000 coins a shift
+/// for a first-session player, 2,300–3,000 for a competent one. The
+/// targets: the first car costs two to three shifts, the mid fleet about
+/// a week of dailies, and The Executive is a real grind — weeks, not one
+/// lucky run. The starter cab costs nothing — it is owned from the first
+/// launch (`SaveData.createDefault`), so its price never renders; it is
+/// listed so the garage shows one card per vehicle that exists.
 ///
 /// The handling ladder, by character:
 ///
@@ -108,7 +116,7 @@ class VehicleCatalog {
     GarageVehicle(
       id: 'compact_red',
       name: 'City Compact',
-      price: 150,
+      price: 5000,
       stats: VehicleStats(
         topSpeed: 132,
         acceleration: 380,
@@ -120,7 +128,7 @@ class VehicleCatalog {
     GarageVehicle(
       id: 'sedan_blue',
       name: 'Street Sedan',
-      price: 250,
+      price: 7500,
       stats: VehicleStats(
         topSpeed: 158,
         acceleration: 415,
@@ -132,7 +140,7 @@ class VehicleCatalog {
     GarageVehicle(
       id: 'minivan_gray',
       name: 'Family Minivan',
-      price: 400,
+      price: 12000,
       stats: VehicleStats(
         topSpeed: 138,
         acceleration: 480,
@@ -144,7 +152,7 @@ class VehicleCatalog {
     GarageVehicle(
       id: 'suv_green',
       name: 'Trail SUV',
-      price: 600,
+      price: 16000,
       stats: VehicleStats(
         topSpeed: 162,
         acceleration: 470,
@@ -156,7 +164,7 @@ class VehicleCatalog {
     GarageVehicle(
       id: 'sports_black',
       name: 'Night Racer',
-      price: 850,
+      price: 24000,
       stats: VehicleStats(
         topSpeed: 188,
         acceleration: 540,
@@ -168,7 +176,7 @@ class VehicleCatalog {
     GarageVehicle(
       id: 'luxury_white',
       name: 'The Executive',
-      price: 1200,
+      price: 40000,
       stats: VehicleStats(
         topSpeed: 172,
         acceleration: 370,

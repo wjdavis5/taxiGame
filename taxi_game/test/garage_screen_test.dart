@@ -91,14 +91,14 @@ void main() {
 
   testWidgets('buying spends coins, unlocks, and equips the car',
       (tester) async {
-    gameState.addCoins(1000);
+    final racer = VehicleCatalog.byId('sports_black')!;
+    gameState.addCoins(racer.price + 137);
     await pumpGarage(tester);
 
-    final racer = VehicleCatalog.byId('sports_black')!;
     await tester.tap(find.byKey(const ValueKey('garage_buy_sports_black')));
     await tester.pumpAndSettle();
 
-    expect(gameState.totalCoins, 1000 - racer.price);
+    expect(gameState.totalCoins, 137);
     expect(gameState.unlockedVehicles, contains('sports_black'));
     // A purchase goes straight into service so it shows up in play.
     expect(gameState.selectedVehicle, 'sports_black');
@@ -130,7 +130,7 @@ void main() {
     // The starter cab is owned from the first launch, so the first
     // purchase is the second car — the TWO-CAB OPERATION tier (issue
     // #21).
-    gameState.addCoins(1000);
+    gameState.addCoins(VehicleCatalog.byId('compact_red')!.price);
     await pumpGarage(tester);
 
     expect(find.textContaining('Achievement unlocked'), findsNothing);
@@ -147,8 +147,9 @@ void main() {
   });
 
   testWidgets('selecting an owned car swaps the equipment', (tester) async {
-    gameState.addCoins(500);
-    expect(gameState.unlockVehicle('sedan_blue', 250), isTrue);
+    final sedan = VehicleCatalog.byId('sedan_blue')!;
+    gameState.addCoins(sedan.price);
+    expect(gameState.unlockVehicle('sedan_blue', sedan.price), isTrue);
     await pumpGarage(tester);
 
     expect(gameState.selectedVehicle, 'taxi_yellow');
@@ -163,7 +164,9 @@ void main() {
   });
 
   testWidgets('the header balance tracks spending', (tester) async {
-    gameState.addCoins(400);
+    final compact = VehicleCatalog.byId('compact_red')!;
+    // Enough to buy the compact and keep a visible 400-coin remainder.
+    gameState.addCoins(compact.price + 400);
     await pumpGarage(tester);
 
     Finder balanceText(String amount) => find.descendant(
@@ -171,14 +174,13 @@ void main() {
           matching: find.text(amount),
         );
 
-    expect(balanceText('400'), findsOneWidget);
+    expect(balanceText('${compact.price + 400}'), findsOneWidget);
 
-    final compact = VehicleCatalog.byId('compact_red')!;
     await tester.tap(find.byKey(const ValueKey('garage_buy_compact_red')));
     await tester.pumpAndSettle();
 
-    expect(balanceText('${400 - compact.price}'), findsOneWidget);
-    expect(balanceText('400'), findsNothing);
+    expect(balanceText('400'), findsOneWidget);
+    expect(balanceText('${compact.price + 400}'), findsNothing);
   });
 
   testWidgets('every card surfaces the four handling stats', (tester) async {
