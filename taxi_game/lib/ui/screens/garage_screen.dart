@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../data/vehicle_catalog.dart';
 import '../../game/vehicle_sprites.dart';
+import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
 
 /// The garage: browse, buy, and equip vehicles.
@@ -235,7 +236,10 @@ class _VehicleCard extends StatelessWidget {
     if (unlocked) {
       return ElevatedButton(
         key: Key('garage_select_${vehicle.id}'),
-        onPressed: () => gameState.selectVehicle(vehicle.id),
+        onPressed: () {
+          audioOf(context)?.playButtonSound();
+          gameState.selectVehicle(vehicle.id);
+        },
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.yellow,
           foregroundColor: Colors.black,
@@ -277,11 +281,14 @@ class _VehicleCard extends StatelessWidget {
   /// that grows the fleet is a gameplay event (issue #21): any achievement
   /// the new car earned is announced here, where the purchase happened.
   void _purchase(BuildContext context) {
+    audioOf(context)?.playButtonSound();
     final bought = gameState.unlockVehicle(vehicle.id, vehicle.price);
     if (bought) {
       // New wheels go straight into service so the purchase shows up in
       // play on the very next ride.
       gameState.selectVehicle(vehicle.id);
+      // The coins leave with a ring (issue #4).
+      audioOf(context)?.playCoinSound();
       for (final achievement in gameState.takePendingAchievementUnlocks()) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

@@ -44,6 +44,12 @@ void main() {
     });
 
     testWidgets('renders a block for every credit entry', (tester) async {
+      // A tall surface so the ListView builds every block — a short phone
+      // viewport only materializes what is scrolled to.
+      tester.view.physicalSize = const Size(750, 3200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
       await tester.pumpWidget(const MaterialApp(home: CreditsScreen()));
       await tester.pump();
 

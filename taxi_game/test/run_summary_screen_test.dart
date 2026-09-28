@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/fake_audio_platform.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
@@ -9,6 +10,7 @@ import 'package:taxi_game/game/systems/lives.dart';
 import 'package:taxi_game/game/systems/run_summary.dart';
 import 'package:taxi_game/models/achievements.dart';
 import 'package:taxi_game/game/taxi_game.dart';
+import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -24,6 +26,7 @@ void main() {
   late GameStateService gameState;
 
   setUp(() async {
+    installFakeAudioPlatform();
     SharedPreferences.setMockInitialValues({});
     final storage = StorageService();
     await storage.init();
@@ -76,6 +79,7 @@ void main() {
       MultiProvider(
         providers: [
           ChangeNotifierProvider<GameStateService>.value(value: gameState),
+          Provider<AudioService>.value(value: AudioService()),
           Provider<LevelLoaderService>.value(value: LevelLoaderService()),
         ],
         child: MaterialApp(

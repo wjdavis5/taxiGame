@@ -41,6 +41,7 @@ import 'systems/run_summary.dart';
 import 'systems/road_chunk_manager.dart';
 import 'systems/impact_fx.dart';
 import 'systems/world_origin.dart';
+import '../services/audio_service.dart';
 import '../services/game_state_service.dart';
 import '../services/level_loader_service.dart';
 
@@ -50,6 +51,7 @@ class TaxiGame extends FlameGame
   TaxiGame({
     required this.levelLoader,
     required this.gameState,
+    this.audio,
     this.endlessSeed,
     this.isDailyShift = false,
     this.isGhostRace = false,
@@ -59,6 +61,11 @@ class TaxiGame extends FlameGame
 
   final LevelLoaderService levelLoader;
   final GameStateService gameState;
+
+  /// The audio service (issue #4); null in the headless tests, which run the
+  /// game without any audio graph. Every call site is a null-aware poke —
+  /// the game never depends on sound existing.
+  final AudioService? audio;
 
   /// When non-null the game was constructed to run an endless procedural
   /// run (issue #11) instead of a hand-made level: recycled road chunks,
@@ -742,6 +749,8 @@ class TaxiGame extends FlameGame
       position: passenger.pickupLocation,
       colors: ImpactFxPalettes.pickup,
     ));
+    // ...and the boarding chirp (issue #4).
+    audio?.playPickupSound();
   }
 
   void _onPassengerDropoff(PassengerData passenger) {
@@ -767,6 +776,9 @@ class TaxiGame extends FlameGame
         delay: 0.06 * i,
       ));
     }
+
+    // The two-tone delivery chime (issue #4).
+    audio?.playDropoffSound();
 
     if (passengersDelivered >= passengers.length) {
       _completeLevel();
@@ -804,6 +816,9 @@ class TaxiGame extends FlameGame
     }
     gameState.addCoins(passenger.reward);
     _runCoinsEarned += passenger.reward;
+
+    // The two-tone delivery chime (issue #4).
+    audio?.playDropoffSound();
 
     // Every completed dropoff asks the question (issue #13): bank the
     // score and end the shift, or push on at an increased multiplier. The
@@ -888,6 +903,8 @@ class TaxiGame extends FlameGame
 
     gameState.addCoins(lastBankedScore!);
     _runCoinsEarned += lastBankedScore!;
+    // A payout deserves its sting (issue #4).
+    audio?.playBankedJingle();
     _finalizeRunSummary(ShiftOutcome.banked);
     overlays.add('shiftBanked');
   }
@@ -1014,6 +1031,9 @@ class TaxiGame extends FlameGame
         delay: 0.05 * i,
       ));
     }
+    // Coins ring and the completion jingle plays (issue #4).
+    audio?.playCoinSound();
+    audio?.playLevelCompleteSound();
 
     // Award coins and unlock the next level. A bank pays the chain score
     // OR the flat reward, never both (issue #34): the score is in, so the
@@ -1098,6 +1118,8 @@ class TaxiGame extends FlameGame
     } else {
       overlays.add('levelFailed');
     }
+    // The wreck sting lands with the impact, panel or no panel (issue #4).
+    audio?.playLevelFailedSound();
   }
 
   // --- Three strikes (issue #14) ------------------------------------------
@@ -1165,6 +1187,8 @@ class TaxiGame extends FlameGame
     } else {
       overlays.add('shiftWrecked');
     }
+    // The wreck sting lands with the impact, panel or no panel (issue #4).
+    audio?.playLevelFailedSound();
   }
 
   /// Crash juice (issue #7): a hot spark burst at the contact point,
@@ -1182,6 +1206,9 @@ class TaxiGame extends FlameGame
       duration: ImpactFx.crashShakeDuration,
     );
     hitStop.trigger();
+    // The impact sound rides the same beat as the shake and the freeze
+    // (issue #4).
+    audio?.playCrashSound();
   }
 
   /// Records a low-speed glancing scrape: no life is lost, the player was
@@ -1203,6 +1230,8 @@ class TaxiGame extends FlameGame
       ImpactFx.scrapeShakeMagnitude,
       duration: ImpactFx.scrapeShakeDuration,
     );
+    // Sheet-metal scrape sound under the jolt (issue #4).
+    audio?.playScrapeSound();
 
     if (_scrapeMarkerCooldown <= 0) {
       _scrapeMarkerCooldown = 0.4;
@@ -1268,6 +1297,19 @@ class TaxiGame extends FlameGame
     // and every component's movement) instead of each one patching its
     // own dt.
     dt = math.min(dt, maxUpdateDelta);
+
+    // Engine audio (issue #4): humming while the shift is live, idling
+    // under a stopped taxi and rising with forward speed. Re-asserted every
+    // frame — including frozen ones — so a hit-stop or a crash stall quiets
+    // the engine for exactly as long as the world is held. A stopped ticker
+    // (pause menu, backgrounding) calls no update at all; those paths turn
+    // the engine off explicitly in [pauseGame] and [lifecycleStateChange].
+    if (_playerReady) {
+      final speed01 =
+          (-player.velocity.y / player.maxSpeed).clamp(0.0, 1.0);
+      audio?.setEngineRunning(isGameActive);
+      audio?.setEngineIntensity(speed01);
+    }
 
     // Sample the living world (issue #24) before anything moves: the
     // overlay tints from it, traffic lights its headlights by it, and the
@@ -1447,6 +1489,9 @@ class TaxiGame extends FlameGame
 
   void pauseGame() {
     paused = true;
+    // The ticker stops with the pause, so no update frame will quiet the
+    // engine — turn it off here (issue #4).
+    audio?.setEngineRunning(false);
     overlays.add('pauseMenu');
   }
 
@@ -1494,6 +1539,10 @@ class TaxiGame extends FlameGame
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
+        // Audio follows the run out: engine off, music suspended (issue
+        // #4). No update frame runs while the ticker is stopped, so the
+        // engine needs the explicit off.
+        audio?.pauseAll();
         if (_isRunLive && wasRunning) {
           // Freeze through the existing pause machinery, but keep the
           // menu off the street: the freeze is recorded here, and the
@@ -1502,6 +1551,7 @@ class TaxiGame extends FlameGame
           paused = true;
         }
       case AppLifecycleState.resumed:
+        audio?.resumeAll();
         if (_lifecycleAutoPaused) {
           _lifecycleAutoPaused = false;
           // Flame's super call above may have restarted the ticker; hold

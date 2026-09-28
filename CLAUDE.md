@@ -261,15 +261,18 @@ answered in the App Store Connect UI.
   with a script that rewrites newlines turns a 12-line change into a 616-line
   diff. Preserve them (`open(path, newline='')` in Python).
 - **Ship no placeholder UI.** Buttons that show "coming soon" are an App Store
-  Guideline 2.1 rejection trigger. Sound and music toggles exist in
-  `GameStateService` but are deliberately not surfaced, because the app has no
-  audio — a toggle that changes nothing is the same defect. A test in
-  `test/settings_screen_test.dart` asserts they stay absent.
-- **Audio assets were removed.** `AudioService` is a stub. If audio comes back,
-  every file must be re-listed in `assets/licenses/LICENSES.txt` with a
-  confirmed source, and anything attribution-required must be credited on the
-  credits screen. A CC-BY asset obligates attribution on *distribution*, not
-  playback — bundling one without credit is a violation even if it never plays.
+  Guideline 2.1 rejection trigger. The sound and music toggles are surfaced in
+  settings and drive the real audio settings (issue #4); any new toggle must
+  change something the player can perceive or it does not ship.
+- **Audio ships.** `AudioService` plays through `flame_audio` (issue #4).
+  Every bundled audio file is listed in `assets/licenses/LICENSES.txt` with a
+  confirmed source — the Kenney CC0 packs (converted OGG → WAV, since no
+  Apple platform decodes Vorbis) and three files synthesized in-repo by
+  `taxi_game/tool/make_generated_audio.dart` (byte-stable, seeded). Anything
+  attribution-required must be credited in `lib/data/credits.dart`; nothing
+  attribution-required currently ships. The test suite enforces the
+  inventory: every asset under `assets/audio/` must be named in
+  LICENSES.txt (`test/audio_service_test.dart`).
 - **Attribution has one owner:** `lib/data/credits.dart`. The credits screen
   renders it; do not inline credit text in the UI.
 - **Progress is on-device only** (`shared_preferences`). The app makes no
@@ -298,7 +301,7 @@ taxiGame/
     ├── lib/
     │   ├── game/              # Flame components, levels, systems
     │   ├── data/credits.dart  # attribution, single source of truth
-    │   ├── services/          # storage, game state, level loading, audio (stub)
+    │   ├── services/          # storage, game state, level loading, audio
     │   └── ui/screens/        # menu, game, settings, credits
     ├── tool/screenshot_entry.dart   # dev-only, launches into one screen
     ├── fastlane/              # submit lane only; build/upload live in the workflow

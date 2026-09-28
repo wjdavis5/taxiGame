@@ -44,6 +44,21 @@ void main() async {
   await gameStateService.loadSaveData();
 
   final audioService = AudioService();
+  await audioService.initialize();
+  // The save's sound and music settings govern playback from the first
+  // frame (issue #4); the listener below keeps it that way live.
+  await audioService.applySettings(
+    soundEnabled: gameStateService.soundEnabled,
+    musicEnabled: gameStateService.musicEnabled,
+  );
+  // Music runs everywhere — menu and shift alike — whenever the player has
+  // it enabled. Toggling the settings switch flips it through the listener.
+  await audioService.playMusic();
+  gameStateService.addListener(() {
+    audioService.setSoundEnabled(gameStateService.soundEnabled);
+    audioService.setMusicEnabled(gameStateService.musicEnabled);
+  });
+
   final levelLoaderService = LevelLoaderService();
 
   runApp(

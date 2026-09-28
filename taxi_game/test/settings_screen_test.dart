@@ -160,6 +160,12 @@ void main() {
 
   group('about', () {
     testWidgets('credits is reachable from settings', (tester) async {
+      // A tall surface so every about tile is on screen and tappable (the
+      // garage tests use the same trick).
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
       await tester.pumpWidget(wrap(const SettingsScreen()));
       await tester.pump();
 
@@ -172,6 +178,10 @@ void main() {
     testWidgets('records is reachable from settings', (tester) async {
       // The records screen (issue #21) is where personal bests and the
       // achievement set live; the tile must lead to the real screen.
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
       await tester.pumpWidget(wrap(const SettingsScreen()));
       await tester.pump();
 
@@ -185,6 +195,10 @@ void main() {
     testWidgets('shift stats is reachable from settings', (tester) async {
       // The on-device history (issue #17) is only worth having if it can
       // actually be opened: the tile must lead to the real screen.
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
       await tester.pumpWidget(wrap(const SettingsScreen()));
       await tester.pump();
 
@@ -195,15 +209,34 @@ void main() {
       expect(find.textContaining('coming soon'), findsNothing);
     });
 
-    testWidgets('no non-functional audio toggles are shown', (tester) async {
-      // Audio is not implemented, so a sound or music switch would be a control
-      // that changes nothing the player can perceive.
+    testWidgets('the sound and music switches drive the save settings',
+        (tester) async {
+      // Audio is real now (issue #4), so the toggles belong here — wired to
+      // the same settings the running audio service obeys.
       await tester.pumpWidget(wrap(const SettingsScreen()));
       await tester.pump();
 
-      expect(find.byType(Switch), findsNothing);
-      expect(find.textContaining('Sound'), findsNothing);
-      expect(find.textContaining('Music'), findsNothing);
+      SwitchListTile soundToggle =
+          tester.widget(find.byKey(const ValueKey('sound_toggle')));
+      SwitchListTile musicToggle =
+          tester.widget(find.byKey(const ValueKey('music_toggle')));
+      expect(soundToggle.value, isTrue);
+      expect(musicToggle.value, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('sound_toggle')));
+      await tester.pumpAndSettle();
+      expect(gameState.soundEnabled, isFalse,
+          reason: 'the sound switch flips the save setting');
+
+      await tester.tap(find.byKey(const ValueKey('music_toggle')));
+      await tester.pumpAndSettle();
+      expect(gameState.musicEnabled, isFalse,
+          reason: 'the music switch flips the save setting');
+
+      soundToggle = tester.widget(find.byKey(const ValueKey('sound_toggle')));
+      musicToggle = tester.widget(find.byKey(const ValueKey('music_toggle')));
+      expect(soundToggle.value, isFalse);
+      expect(musicToggle.value, isFalse);
     });
 
     testWidgets('renders without overflow on a narrow portrait screen',

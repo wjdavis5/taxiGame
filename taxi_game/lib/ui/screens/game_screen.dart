@@ -3,6 +3,7 @@ import 'package:flame/game.dart';
 import 'package:provider/provider.dart';
 
 import '../../game/taxi_game.dart';
+import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
 import '../../services/level_loader_service.dart';
 import '../widgets/bank_prompt_overlay.dart';
@@ -60,6 +61,7 @@ class _GameScreenState extends State<GameScreen> {
     game = TaxiGame(
       levelLoader: context.read<LevelLoaderService>(),
       gameState: context.read<GameStateService>(),
+      audio: context.read<AudioService>(),
       endlessSeed: widget.endlessSeed,
       isDailyShift: widget.isDailyShift,
       isGhostRace: widget.isGhostRace,
@@ -139,6 +141,7 @@ class _GameScreenState extends State<GameScreen> {
             const SizedBox(height: 30),
             ElevatedButton(
               onPressed: () {
+                game.audio?.playButtonSound();
                 game.resumeGame();
               },
               child: const Text('RESUME'),
@@ -146,6 +149,7 @@ class _GameScreenState extends State<GameScreen> {
             const SizedBox(height: 10),
             ElevatedButton(
               onPressed: () {
+                game.audio?.playButtonSound();
                 Navigator.of(context).pop();
               },
               child: const Text('MAIN MENU'),
@@ -236,11 +240,15 @@ class LevelCompleteOverlay extends StatelessWidget {
             const SizedBox(height: 30),
             handoff
                 ? ElevatedButton(
-                    onPressed: game.startFirstShift,
+                    onPressed: () {
+                      game.audio?.playButtonSound();
+                      game.startFirstShift();
+                    },
                     child: const Text('START SHIFT'),
                   )
                 : ElevatedButton(
                     onPressed: () async {
+                      game.audio?.playButtonSound();
                       await game.startNextLevel();
                     },
                     child: const Text('NEXT LEVEL'),
@@ -248,6 +256,7 @@ class LevelCompleteOverlay extends StatelessWidget {
             const SizedBox(height: 10),
             TextButton(
               onPressed: () {
+                game.audio?.playButtonSound();
                 Navigator.of(context).pop();
               },
               child: const Text(
@@ -308,6 +317,7 @@ class LevelFailedOverlay extends StatelessWidget {
             const SizedBox(height: 30),
             ElevatedButton(
               onPressed: () {
+                game.audio?.playButtonSound();
                 game.restartLevel();
               },
               child: const Text('RETRY'),
@@ -315,6 +325,7 @@ class LevelFailedOverlay extends StatelessWidget {
             const SizedBox(height: 10),
             TextButton(
               onPressed: () {
+                game.audio?.playButtonSound();
                 Navigator.of(context).pop();
               },
               child: const Text(

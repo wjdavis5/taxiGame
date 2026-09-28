@@ -1,8 +1,8 @@
 # Asset Licenses for Cab Hustle
 
 Every file shipped in this app's bundle is listed below with its source and
-license. Audio assets were removed from the bundle (see "Removed assets"), so
-no attribution-required asset currently ships.
+license. Audio ships again as of issue #4; every audio file carries a
+confirmed source, and nothing attribution-required is bundled.
 
 ---
 
@@ -17,25 +17,33 @@ required; a courtesy credit is shown in the app's Credits screen):
   UI Audio       — https://kenney.nl/assets/ui-audio
   Music Jingles  — https://kenney.nl/assets/music-jingles
 
-Sound effects — `assets/audio/sfx/` (original pack filename → shipped as):
-  Impact Sounds/impactMetal_heavy_000.ogg  → crash.ogg    (traffic crash)
-  Impact Sounds/impactMetal_light_001.ogg  → scrape.ogg   (low-speed scrape)
-  Digital Audio/pepSound1.ogg              → pickup.ogg   (passenger boards)
-  Digital Audio/twoTone1.ogg               → dropoff.ogg  (fare delivered)
-  Digital Audio/threeTone1.ogg             → coin.ogg     (coin award)
-  UI Audio/switch2.ogg                     → ui_click.ogg (menu/button press)
+The packs ship OGG Vorbis, which no Apple platform decodes (audioplayers'
+Darwin backend plays through AVFoundation), so each file was converted to
+16-bit PCM WAV — a pure format conversion of the same CC0 audio, no content
+change. Shipped files, `assets/audio/sfx/` (original pack file → shipped as):
+
+  Impact Sounds/impactMetal_heavy_000.ogg  → crash.wav    (traffic crash)
+  Impact Sounds/impactMetal_light_001.ogg  → scrape.wav   (low-speed scrape)
+  Digital Audio/pepSound1.ogg              → pickup.wav   (passenger boards)
+  Digital Audio/twoTone1.ogg               → dropoff.wav  (fare delivered)
+  Digital Audio/threeTone1.ogg             → coin.wav     (coin award)
+  UI Audio/switch2.ogg                     → ui_click.wav (menu/button press)
 
 Moment jingles — `assets/audio/music/`:
-  Music Jingles/Pizzicato jingles/jingles_PIZZI02.ogg → jingle_banked.ogg
-  Music Jingles/8-Bit jingles/jingles_NES05.ogg       → jingle_complete.ogg
-  Music Jingles/Hit jingles/jingles_HIT03.ogg         → jingle_wrecked.ogg
+  Music Jingles/Pizzicato jingles/jingles_PIZZI02.ogg → jingle_banked.wav
+  Music Jingles/8-Bit jingles/jingles_NES05.ogg       → jingle_complete.wav
+  Music Jingles/Hit jingles/jingles_HIT03.ogg         → jingle_wrecked.wav
 
-### Engine loop (self-generated, no third-party rights)
+### Generated audio (self-made in-repo, no third-party rights)
 
-`assets/audio/sfx/engine_loop.wav`, when present, is generated in-repo by
-`tool/make_engine_loop.dart` (procedural synthesis — no sampled third-party
-audio), so it carries no license obligation at all. Regenerate with
-`dart run tool/make_engine_loop.dart` from `taxi_game/`.
+Three files are synthesized by `tool/make_generated_audio.dart` — procedural
+generation, no sampled third-party audio — so they carry no license
+obligation at all. Regenerate with `dart run tool/make_generated_audio.dart`
+from `taxi_game/`; the RNG is seeded and the output is byte-stable.
+
+  assets/audio/sfx/engine_loop.wav    — engine hum loop (volume tracks speed)
+  assets/audio/sfx/brake.wav          — tyre squeal on a deliberate brake
+  assets/audio/music/shift_loop.wav   — the music track, loops under play
 
 ---
 
@@ -102,9 +110,8 @@ Files: `assets/levels/level_001.json` through `level_010.json`
 
 ## Removed assets
 
-The following were removed from the bundle because `AudioService` is a stub —
-no audio is played anywhere in the app, so these shipped as dead weight while
-carrying live license obligations.
+The following were removed from the bundle when `AudioService` was a stub,
+and remain out:
 
   assets/audio/music/menu_music.mp3   — Kevin MacLeod / Incompetech, CC-BY 4.0.
                                         Required attribution; 8.7 MB.
@@ -112,13 +119,9 @@ carrying live license obligations.
   assets/audio/sfx/ui/coin_collect.wav   — provenance never established.
   assets/audio/sfx/ui/level_complete.wav — provenance never established.
 
-The `flame_audio` dependency was removed alongside them; nothing imported it.
-
-If audio is reintroduced, each file must be re-listed above with a confirmed
-source and license before it ships, and any attribution-required asset must be
-credited in the app's Credits screen. A CC-BY asset obligates attribution on
-distribution, not merely on playback — bundling one without credit is a license
-violation even if it never plays.
+Nothing attribution-required ships today: the restored audio (issue #4) is
+all CC0 or generated in-repo, so the credits screen's Kenney entries are
+courtesy only.
 
 ---
 

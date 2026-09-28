@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
 import 'credits_screen.dart';
 import 'records_screen.dart';
@@ -8,10 +9,11 @@ import 'stats_screen.dart';
 
 /// Settings and progress management.
 ///
-/// Every control here does something. Sound and music toggles exist in
-/// [GameStateService] but are deliberately not surfaced: the app ships no audio
-/// yet, so a toggle would be a control that changes nothing the player can
-/// perceive. They belong here once audio is implemented.
+/// Every control here does something. The sound and music switches (issue #4)
+/// drive the save's real audio settings: flipping one notifies listeners, the
+/// composition root in `main.dart` forwards the new flags to the running
+/// [AudioService], and playback changes on the spot — engine and effects stop
+/// or start, the music track stops or restarts.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
@@ -66,6 +68,59 @@ class SettingsScreen extends StatelessWidget {
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
                   children: [
+                    // The audio controls (issue #4): live switches over the
+                    // save's settings, wired to the running audio service by
+                    // the composition root.
+                    const _SectionLabel('Audio'),
+                    Consumer<GameStateService>(
+                      builder: (context, gameState, _) => Card(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        elevation: 0,
+                        child: Column(
+                          children: [
+                            SwitchListTile(
+                              key: const Key('sound_toggle'),
+                              value: gameState.soundEnabled,
+                              onChanged: (_) {
+                                audioOf(context)?.playButtonSound();
+                                gameState.toggleSound();
+                              },
+                              activeThumbColor: Colors.yellow,
+                              title: const Text(
+                                'Sound',
+                                style: TextStyle(
+                                    fontSize: 18, color: Colors.white),
+                              ),
+                              subtitle: const Text(
+                                'Engine, crashes, fares, and pickups',
+                                style: TextStyle(
+                                    fontSize: 13, color: Colors.white70),
+                              ),
+                            ),
+                            SwitchListTile(
+                              key: const Key('music_toggle'),
+                              value: gameState.musicEnabled,
+                              onChanged: (_) {
+                                audioOf(context)?.playButtonSound();
+                                gameState.toggleMusic();
+                              },
+                              activeThumbColor: Colors.yellow,
+                              title: const Text(
+                                'Music',
+                                style: TextStyle(
+                                    fontSize: 18, color: Colors.white),
+                              ),
+                              subtitle: const Text(
+                                'The shift backing track',
+                                style: TextStyle(
+                                    fontSize: 13, color: Colors.white70),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
                     const _SectionLabel('Progress'),
                     Consumer<GameStateService>(
                       builder: (context, gameState, _) => Card(

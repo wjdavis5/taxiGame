@@ -86,13 +86,12 @@ class NearMissRules {
 }
 
 /// The sound and haptic legs of close-call feedback (issue #23): a
-/// medium haptic thump and a short system click — the closest an asset
-/// free game gets to a whoosh. The app ships no audio assets (see
-/// CLAUDE.md: returning audio means re-listing every file in
-/// LICENSES.txt with a confirmed source), so the sound leg rides the
-/// OS-provided system click: nothing to license, nothing to attribute.
-/// It honours the save's existing sound setting, so the flag the app
-/// already stores governs it.
+/// medium haptic thump and a short system click. The game's bundled audio
+/// (issue #4) has no whoosh among its CC0 one-shots, and a mis-chosen
+/// sample would cheapen the flagship moment — so the pass keeps riding the
+/// OS-provided system click: nothing to license, nothing to attribute. It
+/// honours the save's sound setting, the same flag the rest of the game's
+/// effects obey.
 class CloseCallFeedback {
   CloseCallFeedback._();
 

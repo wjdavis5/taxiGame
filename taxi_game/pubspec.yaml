@@ -12,7 +12,10 @@ dependencies:
   
   # Game engine
   flame: ^1.11.0
-  
+
+  # Audio playback (pairs with the resolved flame 1.x line)
+  flame_audio: ^2.11.0
+
   # UI
   flutter_svg: ^2.0.9
   
@@ -31,6 +34,10 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^3.0.0
 
+  # Test-only: lets the audio service tests install a fake audioplayers
+  # platform instead of touching method channels (issue #4).
+  audioplayers_platform_interface: ^7.1.1
+
 flutter:
   uses-material-design: true
   
@@ -41,6 +48,15 @@ flutter:
 
     # UI
     - assets/images/ui/icons/
+
+    # Audio (issue #4) — every file here is listed in
+    # assets/licenses/LICENSES.txt with a confirmed source.
+    - assets/audio/sfx/
+    - assets/audio/music/
+
+    # The license inventory ships in the bundle too, so the test suite can
+    # prove every bundled audio file is covered by it.
+    - assets/licenses/
 
     # Level data
     - assets/levels/

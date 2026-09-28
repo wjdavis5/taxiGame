@@ -19,6 +19,10 @@ class PlayerVehicle extends PositionComponent
   /// so the four catalog axes stay the whole story.
   static const double deceleration = 600.0;
 
+  /// Slowest forward speed (px/s) at which braking is worth a squeal
+  /// (issue #4): dragging down from a crawl is not a braked manoeuvre.
+  static const double brakeSoundMinSpeed = 120.0;
+
   /// How much harder a deliberate brake bites than letting go (issue
   /// #29): a full drag-down applies 1x this on top of the release rate —
   /// twice the deceleration — while easing off the stick coasts at the
@@ -27,6 +31,10 @@ class PlayerVehicle extends PositionComponent
 
   Vector2 velocity = Vector2.zero();
   bool isAccelerating = false;
+
+  /// True while the stick is held in deliberate-brake territory (issue #29);
+  /// the falling edge at speed fires the brake squeal (issue #4).
+  bool _wasBraking = false;
 
   /// Analog throttle from the virtual stick (issue #29): 1 is full
   /// throttle, negative brakes (harder the further the drag), 0 rests.
@@ -184,6 +192,14 @@ class PlayerVehicle extends PositionComponent
       if (velocity.y < 0) {
         velocity.y = math.min(0.0, velocity.y + braking * dt);
       }
+
+      // A deliberate brake biting from speed squeals once, at its falling
+      // edge — holding the brake does not re-fire it (issue #4).
+      final isBraking = throttle < 0;
+      if (isBraking && !_wasBraking && -velocity.y >= brakeSoundMinSpeed) {
+        game.audio?.playBrakeSound();
+      }
+      _wasBraking = isBraking;
     }
 
     // Left/right steering, on whatever grip the street offers.
@@ -213,6 +229,7 @@ class PlayerVehicle extends PositionComponent
     velocity = Vector2.zero();
     isAccelerating = false;
     throttleInput = 0;
+    _wasBraking = false;
     hasPassenger = false;
     steeringInput = 0;
   }

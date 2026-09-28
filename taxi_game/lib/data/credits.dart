@@ -38,12 +38,14 @@ const appCredits = <CreditEntry>[
     title: 'Sound',
     body: 'Sound effects and jingles by Kenney, released into the public '
         'domain under CC0 1.0. Attribution is not required for CC0 — this '
-        'credit is here because the work earned it.',
+        'credit is here because the work earned it. The engine hum, the '
+        'brake squeal, and the music loop were synthesized in-repo and are '
+        'the project\'s own.',
     source: 'kenney.nl',
   ),
   CreditEntry(
     title: 'Built with',
-    body: 'Flutter and the Flame game engine.',
+    body: 'Flutter, the Flame game engine, and flame_audio.',
     source: 'flutter.dev · flame-engine.org',
   ),
   CreditEntry(
