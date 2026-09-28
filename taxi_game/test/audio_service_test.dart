@@ -32,6 +32,21 @@ void main() {
     }
   }
 
+  /// Waits until [condition] holds, failing after 5 s. The engine-loop
+  /// chains are fire-and-forget through real asset loads plus the audio
+  /// session hop issue #39 added to every call, so the number of
+  /// event-loop turns varies with machine load — a fixed drain (settle)
+  /// passed locally but raced on loaded CI runners (run 36451103837).
+  Future<void> until(bool Function() condition) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!condition()) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('timed out waiting for the engine loop to settle');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+  }
+
   group('the license inventory (issue #4)', () {
     test('lists every audio file the bundle ships', () async {
       final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
@@ -145,11 +160,11 @@ void main() {
       final audio = AudioService();
 
       audio.setEngineRunning(true);
-      await settle();
+      await until(() => audio.isEngineLoopActive);
       expect(audio.isEngineLoopActive, isTrue);
 
       audio.setEngineRunning(false);
-      await settle();
+      await until(() => !audio.isEngineLoopActive);
       expect(audio.isEngineLoopActive, isFalse);
     });
 
@@ -158,19 +173,19 @@ void main() {
 
       // A live shift asserts the running want every frame, muted or not.
       audio.setEngineRunning(true);
-      await settle();
+      await until(() => !audio.isEngineLoopActive);
       expect(audio.isEngineLoopActive, isFalse);
 
       // Unmuting through settings must not wait for anything: the shift is
       // live, the want is live, so the engine comes straight back.
       audio.setSoundEnabled(true);
-      await settle();
+      await until(() => audio.isEngineLoopActive);
       expect(audio.isEngineLoopActive, isTrue);
     });
 
     test('survives intensity changes at any moment', () async {
       final audio = AudioService()..setEngineRunning(true);
-      await settle();
+      await until(() => audio.isEngineLoopActive);
       expect(audio.isEngineLoopActive, isTrue);
 
       audio
@@ -178,7 +193,7 @@ void main() {
         ..setEngineIntensity(0.5)
         ..setEngineIntensity(1)
         ..setEngineIntensity(42);
-      await settle();
+      await until(() => audio.isEngineLoopActive);
       expect(audio.isEngineLoopActive, isTrue);
     });
   });
@@ -189,23 +204,23 @@ void main() {
       final audio = AudioService();
       await audio.playMusic();
       audio.setEngineRunning(true);
-      await settle();
+      await until(() => audio.isEngineLoopActive);
       expect(audio.isEngineLoopActive, isTrue);
       expect(audio.isMusicWanted, isTrue);
 
       await audio.pauseAll();
       expect(audio.isMusicWanted, isFalse);
-      await settle();
+      await until(() => !audio.isEngineLoopActive);
       expect(audio.isEngineLoopActive, isFalse);
 
       await audio.resumeAll();
       expect(audio.isMusicWanted, isTrue);
       // The engine comes back only through the running flag — the game's
       // update loop re-asserts it when the app is truly live again.
-      await settle();
+      await until(() => !audio.isEngineLoopActive);
       expect(audio.isEngineLoopActive, isFalse);
       audio.setEngineRunning(true);
-      await settle();
+      await until(() => audio.isEngineLoopActive);
       expect(audio.isEngineLoopActive, isTrue);
     });
   });
