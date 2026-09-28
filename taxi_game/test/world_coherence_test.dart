@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart' show SizedBox;
 import 'package:flutter_test/flutter_test.dart';
@@ -49,6 +51,19 @@ void main() {
         ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink());
+
+  /// Advances game time by [seconds], in clamped frames (issue #36): no
+  /// single frame may consume more than [TaxiGame.maxUpdateDelta], so
+  /// fast-forwarding a shift means many small frames, never one giant
+  /// one — exactly the invariant the live game now runs under.
+  void advanceGameTime(TaxiGame game, double seconds) {
+    var remaining = seconds;
+    while (remaining > 0) {
+      final step = math.min(remaining, TaxiGame.maxUpdateDelta);
+      game.update(step);
+      remaining -= step;
+    }
+  }
 
   Future<TaxiGame> mountGame(TaxiGame game) async {
     game.onGameResize(Vector2(400, 800));
@@ -134,9 +149,7 @@ void main() {
     for (var life = 0; life < 3; life++) {
       if (life > 0) {
         // Run out the previous crash's stall so the next crash counts.
-        for (var i = 0; i < 3; i++) {
-          game.update(1.0);
-        }
+        advanceGameTime(game, TaxiGame.crashStallSeconds + 0.01);
       }
       if (queueStragglers && life == 2) {
         // Jump down the road, then give the loop two ticks: the first
@@ -253,8 +266,8 @@ void main() {
       // between crashes, as the live game does.
       for (var life = 0; life < 2; life++) {
         game.onCrash(_fakeCrashReport());
-        game.update(0.11); // expires the 0.1 s hit-stop
-        game.update(1.2); // runs out the 1.2 s crash stall
+        advanceGameTime(game, 0.11); // expires the 0.1 s hit-stop
+        advanceGameTime(game, 1.2); // runs out the 1.2 s crash stall
       }
 
       // The third crash right on top of a down-road jump: two ticks so

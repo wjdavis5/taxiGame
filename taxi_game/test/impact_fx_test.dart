@@ -21,6 +21,20 @@ import 'package:taxi_game/ui/widgets/hud_overlay.dart';
 
 /// Mounts [game] headlessly (the pattern flame_test uses) so component
 /// `onLoad` hooks run, then returns it.
+
+/// Advances game time by [seconds], in clamped frames (issue #36): no
+/// single frame may consume more than [TaxiGame.maxUpdateDelta], so
+/// fast-forwarding a shift means many small frames, never one giant
+/// one — exactly the invariant the live game now runs under.
+void advanceGameTime(TaxiGame game, double seconds) {
+  var remaining = seconds;
+  while (remaining > 0) {
+    final step = math.min(remaining, TaxiGame.maxUpdateDelta);
+    game.update(step);
+    remaining -= step;
+  }
+}
+
 Future<TaxiGame> mountGame(TaxiGame game) async {
   game.onGameResize(Vector2(400, 800));
   await game.onLoad();
@@ -403,7 +417,7 @@ void main() {
 
       // The overlay waits for the hit-stop...
       expect(game.overlays.activeOverlays, isNot(contains('levelFailed')));
-      game.update(ImpactFx.crashHitStopDuration + 0.01);
+      advanceGameTime(game, ImpactFx.crashHitStopDuration + 0.01);
       expect(game.overlays.activeOverlays, contains('levelFailed'));
 
       // ...and the shake outlives the hit-stop.

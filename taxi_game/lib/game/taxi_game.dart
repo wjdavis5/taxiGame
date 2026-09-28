@@ -186,6 +186,21 @@ class TaxiGame extends FlameGame
   /// hit-stop has played the impact.
   static const double crashStallSeconds = 1.2;
 
+  /// The largest dt any single frame may consume, in seconds (issue #36).
+  ///
+  /// Flame's ticker measures real time, and when the engine's game loop
+  /// is stopped and started around a backgrounding — or its lifecycle
+  /// event is late and the ticker keeps counting through the absence —
+  /// the first frame back can carry the whole absent gap in one dt. That
+  /// one frame would burn fare countdowns by the absent seconds, let the
+  /// bank-or-push window silently resolve to push, and move the taxi far
+  /// enough to tunnel straight through a traffic hitbox. Clamped here at
+  /// the top of [update], no frame advances any dt-driven system by more
+  /// than this; a backgrounded gap is discarded, never simulated. 1/15 s
+  /// sits well above the 60 Hz frame budget, so ordinary judder on a slow
+  /// device is never clipped.
+  static const double maxUpdateDelta = 1 / 15;
+
   /// Score accrued this run or level (issue #12).
   int get score => fareChain.score;
 
@@ -1230,6 +1245,14 @@ class TaxiGame extends FlameGame
 
   @override
   void update(double dt) {
+    // Issue #36: no single frame may consume more than [maxUpdateDelta],
+    // whatever the ticker says — a resume frame carrying the whole
+    // backgrounded gap is truncated, protecting every dt-driven system
+    // below at once (fare countdowns, the bank window, stalls, hit-stops,
+    // and every component's movement) instead of each one patching its
+    // own dt.
+    dt = math.min(dt, maxUpdateDelta);
+
     // Sample the living world (issue #24) before anything moves: the
     // overlay tints from it, traffic lights its headlights by it, and the
     // player car steers by its grip. Runs even while frozen — [runDistance]
@@ -1414,6 +1437,64 @@ class TaxiGame extends FlameGame
   void resumeGame() {
     paused = false;
     overlays.remove('pauseMenu');
+  }
+
+  // --- App lifecycle (issue #36) -------------------------------------------
+
+  /// Set when the app was sent to the background (or covered by a system
+  /// surface) with a live shift on the road: the run was frozen through
+  /// the engine's own pause, without dropping the pause menu over a
+  /// street the player can no longer see. When the app comes back, this
+  /// flag turns the freeze into the ordinary pause menu, so re-entering
+  /// the shift is a deliberate act — the player is never dumped back into
+  /// live traffic by the OS.
+  bool _lifecycleAutoPaused = false;
+
+  /// True while a shift is live enough that backgrounding it must freeze
+  /// the run and demand deliberate re-entry on return: the street is
+  /// moving and the clocks are burning. Deliberately narrow — a crash
+  /// stall or hit-stop has already frozen the world (and only ever
+  /// consumes clamped time, see [maxUpdateDelta]), and an end-of-shift
+  /// panel has nothing live left to protect.
+  bool get _isRunLive => isGameActive;
+
+  /// Flame's hook for app lifecycle changes (`Game.lifecycleStateChange`
+  /// — wired through the game widget's render box observer). Flame's own
+  /// handling stops and restarts the ticker around the absence; keep it,
+  /// then add the run-level freeze and the deliberate re-entry on top.
+  ///
+  /// The order matters: [FlameGame.lifecycleStateChange] pauses the
+  /// engine and, on return, silently restarts it — resuming the shift
+  /// without asking, which is exactly the behaviour this override exists
+  /// to gate. [_lifecycleAutoPaused] is therefore decided from the pause
+  /// state *before* the super call, and re-asserted after it on resume.
+  @override
+  void lifecycleStateChange(AppLifecycleState state) {
+    final wasRunning = !paused;
+    super.lifecycleStateChange(state);
+
+    switch (state) {
+      case AppLifecycleState.inactive: // notification shade, call banner
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        if (_isRunLive && wasRunning) {
+          // Freeze through the existing pause machinery, but keep the
+          // menu off the street: the freeze is recorded here, and the
+          // pause menu waits for the app to come back.
+          _lifecycleAutoPaused = true;
+          paused = true;
+        }
+      case AppLifecycleState.resumed:
+        if (_lifecycleAutoPaused) {
+          _lifecycleAutoPaused = false;
+          // Flame's super call above may have restarted the ticker; hold
+          // the freeze and put the existing pause menu up, so the player
+          // walks back in through [resumeGame].
+          paused = true;
+          overlays.add('pauseMenu');
+        }
+    }
   }
 
   @override

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flame/game.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,6 +10,20 @@ import 'package:taxi_game/services/storage_service.dart';
 
 /// Mounts [game] headlessly (the pattern flame_test uses) so component
 /// `onLoad` hooks run, then returns it.
+
+/// Advances game time by [seconds], in clamped frames (issue #36): no
+/// single frame may consume more than [TaxiGame.maxUpdateDelta], so
+/// fast-forwarding a shift means many small frames, never one giant
+/// one — exactly the invariant the live game now runs under.
+void advanceGameTime(TaxiGame game, double seconds) {
+  var remaining = seconds;
+  while (remaining > 0) {
+    final step = math.min(remaining, TaxiGame.maxUpdateDelta);
+    game.update(step);
+    remaining -= step;
+  }
+}
+
 Future<TaxiGame> mountGame(TaxiGame game) async {
   game.onGameResize(Vector2(400, 800));
   await game.onLoad();
@@ -95,7 +111,7 @@ void main() {
 
       player.startAccelerating();
       player.setSteering(-1);
-      game.update(0.5);
+      advanceGameTime(game, 0.5);
 
       player.reset();
 

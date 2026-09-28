@@ -49,6 +49,19 @@ void main() {
   /// `update` mutate the tree mid-iteration. With it, mid-update adds are
   /// queued and applied at the next tick start — the same behaviour the
   /// shipped game has.
+  /// Advances game time by [seconds], in clamped frames (issue #36): no
+  /// single frame may consume more than [TaxiGame.maxUpdateDelta], so
+  /// fast-forwarding a shift means many small frames, never one giant
+  /// one — exactly the invariant the live game now runs under.
+  void advanceGameTime(TaxiGame game, double seconds) {
+    var remaining = seconds;
+    while (remaining > 0) {
+      final step = math.min(remaining, TaxiGame.maxUpdateDelta);
+      game.update(step);
+      remaining -= step;
+    }
+  }
+
   Future<TaxiGame> mountGame(TaxiGame game) async {
     game.onGameResize(Vector2(400, 800));
     await game.onLoad();
@@ -301,10 +314,7 @@ void main() {
 
       // Sit on the road until the meter dies: relocation bought back the
       // fare, never the clock — the chain already prices the miss in time.
-      final ticks = (FareChain.maxFareSeconds + 2).ceil();
-      for (var i = 0; i < ticks; i++) {
-        game.update(1.0);
-      }
+      advanceGameTime(game, FareChain.maxFareSeconds + 2);
       expect(game.fareChain.multiplier, 1, reason: 'the meter broke the chain');
 
       final relocated = game.course!.relocatedDropoff(fare.index);
@@ -429,10 +439,7 @@ void main() {
       game.update(1 / 60);
       expect(game.player.hasPassenger, isTrue);
 
-      final ticks = (FareChain.maxFareSeconds + 2).ceil();
-      for (var i = 0; i < ticks; i++) {
-        game.update(1.0);
-      }
+      advanceGameTime(game, FareChain.maxFareSeconds + 2);
       expect(game.fareChain.multiplier, 1,
           reason: 'expiry resets the multiplier the moment it happens');
 
@@ -834,9 +841,8 @@ void main() {
       expect(game.worldShift, WorldOrigin.period);
       for (var life = 0; life < 3; life++) {
         game.onCrash();
-        for (var i = 0; i < 3; i++) {
-          game.update(1.0); // run out the crash stall between lives
-        }
+        // Run out the crash stall between lives.
+        advanceGameTime(game, TaxiGame.crashStallSeconds + 0.01);
       }
       await drain();
 

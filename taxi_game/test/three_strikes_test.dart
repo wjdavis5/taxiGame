@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,6 +37,19 @@ void main() {
   /// Mounts [game] headlessly so component `onLoad` hooks run (the
   /// endless-run test pattern; [Game.mount] is what GameWidget calls in
   /// production).
+  /// Advances game time by [seconds], in clamped frames (issue #36): no
+  /// single frame may consume more than [TaxiGame.maxUpdateDelta], so
+  /// fast-forwarding a shift means many small frames, never one giant
+  /// one — exactly the invariant the live game now runs under.
+  void advanceGameTime(TaxiGame game, double seconds) {
+    var remaining = seconds;
+    while (remaining > 0) {
+      final step = math.min(remaining, TaxiGame.maxUpdateDelta);
+      game.update(step);
+      remaining -= step;
+    }
+  }
+
   Future<TaxiGame> mountGame(TaxiGame game) async {
     game.onGameResize(Vector2(400, 800));
     await game.onLoad();
@@ -94,8 +109,8 @@ void main() {
   /// burns off first (issue #7), then the stall (issue #14) elapses and
   /// the shift resumes.
   void playOutStall(TaxiGame game) {
-    game.update(ImpactFx.crashHitStopDuration + 0.01);
-    game.update(TaxiGame.crashStallSeconds + 0.01);
+    advanceGameTime(game, ImpactFx.crashHitStopDuration + 0.01);
+    advanceGameTime(game, TaxiGame.crashStallSeconds + 0.01);
   }
 
   /// An oncoming bus driving down-screen at exactly [speed] px/s, so the
@@ -277,7 +292,7 @@ void main() {
       // The wreck panel waits out the crash hit-stop (issue #7), like
       // the level-fail panel always has.
       expect(game.overlays.isActive('shiftWrecked'), isFalse);
-      game.update(ImpactFx.crashHitStopDuration + 0.01);
+      advanceGameTime(game, ImpactFx.crashHitStopDuration + 0.01);
       expect(game.overlays.isActive('shiftWrecked'), isTrue);
       expect(game.overlays.isActive('levelFailed'), isFalse,
           reason: 'endless shifts never show the level-fail panel');
@@ -315,7 +330,7 @@ void main() {
       game.onCrash();
       playOutStall(game);
       game.onCrash();
-      game.update(ImpactFx.crashHitStopDuration + 0.01);
+      advanceGameTime(game, ImpactFx.crashHitStopDuration + 0.01);
       expect(game.overlays.isActive('shiftWrecked'), isTrue);
 
       game.onCrash();
@@ -388,7 +403,7 @@ void main() {
               'crash fails the level');
       expect(game.lives.remaining, LivesTracker.maxLives);
 
-      game.update(ImpactFx.crashHitStopDuration + 0.01);
+      advanceGameTime(game, ImpactFx.crashHitStopDuration + 0.01);
       expect(game.overlays.isActive('levelFailed'), isTrue);
       expect(game.overlays.isActive('shiftWrecked'), isFalse);
     });

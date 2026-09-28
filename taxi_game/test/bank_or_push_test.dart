@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,6 +32,19 @@ void main() {
   /// Mounts [game] headlessly so component `onLoad` hooks run (the
   /// endless-run test pattern; [Game.mount] is what GameWidget calls in
   /// production).
+  /// Advances game time by [seconds], in clamped frames (issue #36): no
+  /// single frame may consume more than [TaxiGame.maxUpdateDelta], so
+  /// fast-forwarding a shift means many small frames, never one giant
+  /// one — exactly the invariant the live game now runs under.
+  void advanceGameTime(TaxiGame game, double seconds) {
+    var remaining = seconds;
+    while (remaining > 0) {
+      final step = math.min(remaining, TaxiGame.maxUpdateDelta);
+      game.update(step);
+      remaining -= step;
+    }
+  }
+
   Future<TaxiGame> mountGame(TaxiGame game) async {
     game.onGameResize(Vector2(400, 800));
     await game.onLoad();
@@ -130,9 +145,7 @@ void main() {
       expect(game.fareChain.multiplier, 2, reason: 'the delivery stepped it');
 
       // Six seconds of game time across a five-second window.
-      for (var i = 0; i < 6; i++) {
-        game.update(1.0);
-      }
+      advanceGameTime(game, 6);
 
       expect(game.bankPrompt.isActive, isFalse);
       expect(game.overlays.isActive('bankOrPush'), isFalse);
@@ -205,7 +218,7 @@ void main() {
           reason: 'the score survives the crash, still at risk');
 
       // And once the stall plays out, the shift resumes with all of it.
-      game.update(TaxiGame.crashStallSeconds + 0.01);
+      advanceGameTime(game, TaxiGame.crashStallSeconds + 0.01);
       expect(game.isGameActive, isTrue);
       expect(game.overlays.activeOverlays, isEmpty,
           reason: 'no end-of-shift panel for a survivable crash');

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -31,6 +33,19 @@ void main() {
   /// Mounts [game] headlessly so component `onLoad` hooks run (the
   /// endless-run test pattern; [Game.mount] is what GameWidget calls in
   /// production).
+  /// Advances game time by [seconds], in clamped frames (issue #36): no
+  /// single frame may consume more than [TaxiGame.maxUpdateDelta], so
+  /// fast-forwarding a shift means many small frames, never one giant
+  /// one — exactly the invariant the live game now runs under.
+  void advanceGameTime(TaxiGame game, double seconds) {
+    var remaining = seconds;
+    while (remaining > 0) {
+      final step = math.min(remaining, TaxiGame.maxUpdateDelta);
+      game.update(step);
+      remaining -= step;
+    }
+  }
+
   Future<TaxiGame> mountGame(TaxiGame game) async {
     game.onGameResize(Vector2(400, 800));
     await game.onLoad();
@@ -81,8 +96,8 @@ void main() {
   /// Plays out the aftermath of a survivable crash: the crash hit-stop
   /// burns off first, then the stall elapses and the shift resumes.
   void playOutStall(TaxiGame game) {
-    game.update(ImpactFx.crashHitStopDuration + 0.01);
-    game.update(TaxiGame.crashStallSeconds + 0.01);
+    advanceGameTime(game, ImpactFx.crashHitStopDuration + 0.01);
+    advanceGameTime(game, TaxiGame.crashStallSeconds + 0.01);
   }
 
   group('a banked shift is recorded', () {
