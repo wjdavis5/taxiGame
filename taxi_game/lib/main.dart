@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -45,16 +47,24 @@ void main() async {
   await gameStateService.loadSaveData();
 
   final audioService = AudioService();
-  await audioService.initialize();
-  // The save's sound and music settings govern playback from the first
-  // frame (issue #4); the listener below keeps it that way live.
-  await audioService.applySettings(
-    soundEnabled: gameStateService.soundEnabled,
-    musicEnabled: gameStateService.musicEnabled,
-  );
-  // Music runs everywhere — menu and shift alike — whenever the player has
-  // it enabled. Toggling the settings switch flips it through the listener.
-  await audioService.playMusic();
+  // Candidate A of issue #40 + launch hygiene: never block the first
+  // frame on audio I/O. Every await here is fenced inside AudioService,
+  // but a platform call that HANGS (rather than throws) on a real device
+  // would hold this pre-runApp chain hostage — a blank launch the iOS
+  // watchdog eventually kills. runApp first; audio catches up a few
+  // frames later, imperceptibly.
+  unawaited(audioService.initialize().then((_) async {
+    // The save's sound and music settings govern playback from the first
+    // frame (issue #4); the listener below keeps it that way live.
+    await audioService.applySettings(
+      soundEnabled: gameStateService.soundEnabled,
+      musicEnabled: gameStateService.musicEnabled,
+    );
+    // Music runs everywhere — menu and shift alike — whenever the player
+    // has it enabled. Toggling the settings switch flips it through the
+    // listener.
+    await audioService.playMusic();
+  }));
   // Haptics (issue #5): the save's vibration setting governs the buzz from
   // the first frame, and the listener below keeps the running service's
   // gate live — the same forwarding the audio flags ride.
