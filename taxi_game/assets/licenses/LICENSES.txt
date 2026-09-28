@@ -6,6 +6,39 @@ no attribution-required asset currently ships.
 
 ---
 
+## Audio Assets
+
+### Sound effects and jingles (Kenney.nl, CC0)
+
+Source packs (all by Kenney Vleugels, all CC0 1.0 Universal — attribution not
+required; a courtesy credit is shown in the app's Credits screen):
+  Impact Sounds  — https://kenney.nl/assets/impact-sounds
+  Digital Audio  — https://kenney.nl/assets/digital-audio
+  UI Audio       — https://kenney.nl/assets/ui-audio
+  Music Jingles  — https://kenney.nl/assets/music-jingles
+
+Sound effects — `assets/audio/sfx/` (original pack filename → shipped as):
+  Impact Sounds/impactMetal_heavy_000.ogg  → crash.ogg    (traffic crash)
+  Impact Sounds/impactMetal_light_001.ogg  → scrape.ogg   (low-speed scrape)
+  Digital Audio/pepSound1.ogg              → pickup.ogg   (passenger boards)
+  Digital Audio/twoTone1.ogg               → dropoff.ogg  (fare delivered)
+  Digital Audio/threeTone1.ogg             → coin.ogg     (coin award)
+  UI Audio/switch2.ogg                     → ui_click.ogg (menu/button press)
+
+Moment jingles — `assets/audio/music/`:
+  Music Jingles/Pizzicato jingles/jingles_PIZZI02.ogg → jingle_banked.ogg
+  Music Jingles/8-Bit jingles/jingles_NES05.ogg       → jingle_complete.ogg
+  Music Jingles/Hit jingles/jingles_HIT03.ogg         → jingle_wrecked.ogg
+
+### Engine loop (self-generated, no third-party rights)
+
+`assets/audio/sfx/engine_loop.wav`, when present, is generated in-repo by
+`tool/make_engine_loop.dart` (procedural synthesis — no sampled third-party
+audio), so it carries no license obligation at all. Regenerate with
+`dart run tool/make_engine_loop.dart` from `taxi_game/`.
+
+---
+
 ## Visual Assets
 
 ### Vehicle sprites and UI icons (Kenney.nl)

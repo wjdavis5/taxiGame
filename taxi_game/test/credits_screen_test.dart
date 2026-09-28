@@ -32,13 +32,15 @@ void main() {
   }
 
   group('credits content', () {
-    testWidgets('renders the Kenney artwork attribution', (tester) async {
+    testWidgets('renders the Kenney artwork and sound attributions',
+        (tester) async {
       await tester.pumpWidget(const MaterialApp(home: CreditsScreen()));
       await tester.pump();
 
-      expect(find.textContaining('Kenney'), findsOneWidget);
-      expect(find.textContaining('CC0'), findsOneWidget);
-      expect(find.text('kenney.nl'), findsOneWidget);
+      // One courtesy credit per Kenney bundle family: artwork and sound.
+      expect(find.textContaining('Kenney'), findsNWidgets(2));
+      expect(find.textContaining('CC0'), findsNWidgets(2));
+      expect(find.text('kenney.nl'), findsNWidgets(2));
     });
 
     testWidgets('renders a block for every credit entry', (tester) async {
