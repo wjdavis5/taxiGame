@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -14,29 +16,38 @@ import 'package:taxi_game/ui/screens/records_screen.dart';
 import 'package:taxi_game/ui/screens/settings_screen.dart';
 import 'package:taxi_game/ui/screens/stats_screen.dart';
 
+import 'helpers/fake_audio_platform.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late GameStateService gameState;
   late StorageService storage;
   late HapticsService haptics;
+  late AudioService audio;
 
   setUp(() async {
+    installFakeAudioPlatform();
     SharedPreferences.setMockInitialValues({});
     storage = StorageService();
     await storage.init();
     gameState = GameStateService(storage);
     haptics = HapticsService();
-    // Mirror main()'s live forwarding (issue #5): the save setting drives
-    // the running service's gate on every notify, exactly as the
+    audio = AudioService();
+    // Mirror main()'s live forwarding (issues #4 and #5): each save setting
+    // drives the running service's gate on every notify, exactly as the
     // composition root does in production.
-    gameState.addListener(() => haptics.setEnabled(gameState.vibrationEnabled));
+    gameState.addListener(() {
+      audio.setSoundEnabled(gameState.soundEnabled);
+      audio.setMusicEnabled(gameState.musicEnabled);
+      haptics.setEnabled(gameState.vibrationEnabled);
+    });
   });
 
   Widget wrap(Widget child) => MultiProvider(
         providers: [
           ChangeNotifierProvider<GameStateService>.value(value: gameState),
-          Provider<AudioService>.value(value: AudioService()),
+          Provider<AudioService>.value(value: audio),
           Provider<HapticsService>.value(value: haptics),
           Provider<StorageService>.value(value: storage),
         ],
@@ -217,6 +228,96 @@ void main() {
     });
   });
 
+  group('audio (issue #10)', () {
+    testWidgets('the sound and music switches drive the save settings',
+        (tester) async {
+      // Audio is real now (issue #4), so the toggles belong here — wired to
+      // the same settings the running audio service obeys.
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      await tester.pump();
+
+      SwitchListTile soundToggle =
+          tester.widget(find.byKey(const ValueKey('sound_toggle')));
+      SwitchListTile musicToggle =
+          tester.widget(find.byKey(const ValueKey('music_toggle')));
+      expect(soundToggle.value, isTrue);
+      expect(musicToggle.value, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('sound_toggle')));
+      await tester.pumpAndSettle();
+      expect(gameState.soundEnabled, isFalse,
+          reason: 'the sound switch flips the save setting');
+
+      await tester.tap(find.byKey(const ValueKey('music_toggle')));
+      await tester.pumpAndSettle();
+      expect(gameState.musicEnabled, isFalse,
+          reason: 'the music switch flips the save setting');
+
+      soundToggle = tester.widget(find.byKey(const ValueKey('sound_toggle')));
+      musicToggle = tester.widget(find.byKey(const ValueKey('music_toggle')));
+      expect(soundToggle.value, isFalse);
+      expect(musicToggle.value, isFalse);
+
+      // And the save remembers: the flips persist like every other setting.
+      final persisted = await storage.loadSaveData();
+      expect(persisted?.settings.soundEnabled, isFalse);
+      expect(persisted?.settings.musicEnabled, isFalse);
+    });
+
+    testWidgets('the switches reach the running audio service, live',
+        (tester) async {
+      // The save setting is bookkeeping; what makes the switch functional
+      // is the composition root forwarding it into the running service on
+      // every notify (mirrored in this harness above). A flip must move the
+      // audible gates on the spot — the observable surface is the same one
+      // audio_service_test.dart reads.
+      //
+      // playMusic is not awaited: its platform chain hops through real IO
+      // turns that the fake-async widget zone never pumps (the plain-test
+      // suite can await it; see audio_service_test.dart's settle()). The
+      // *want* is set synchronously before the first platform call, which
+      // is everything asserted below.
+      unawaited(audio.playMusic());
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      await tester.pump();
+      expect(audio.isMusicWanted, isTrue,
+          reason: 'music enabled plays everywhere, menu included');
+
+      // Turning sound off: the switch's own click is the last sound the
+      // gate lets through.
+      await tester.tap(find.byKey(const ValueKey('sound_toggle')));
+      await tester.pumpAndSettle();
+      expect(audio.attemptedPlays, {'button_click': 1},
+          reason: 'the disabling tap itself clicks, then the gate closes');
+
+      audio.playSound('crash');
+      expect(audio.attemptedPlays, {'button_click': 1},
+          reason: 'a muted service attempts nothing');
+
+      // Turning music off stops the wanted track with the switch.
+      await tester.tap(find.byKey(const ValueKey('music_toggle')));
+      await tester.pumpAndSettle();
+      expect(audio.isMusicWanted, isFalse,
+          reason: 'the shift backing track stops when music is switched off');
+      expect(audio.attemptedPlays, {'button_click': 1},
+          reason: 'the music tap clicks into an already-silent service');
+
+      // Both switches back up: the gates reopen.
+      await tester.tap(find.byKey(const ValueKey('sound_toggle')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('music_toggle')));
+      await tester.pumpAndSettle();
+      audio.playSound('crash');
+      expect(audio.attemptedPlays['crash'], 1,
+          reason: 'sound enabled again reaches for the player');
+      // Clicks: the sound-off tap (gate open) and the music-on tap (gate
+      // open again); the two taps made while muted stayed silent.
+      expect(audio.attemptedPlays['button_click'], 2);
+      expect(audio.isMusicWanted, isTrue,
+          reason: 'the wanted track comes back when music is switched on');
+    });
+  });
+
   group('about', () {
     testWidgets('credits is reachable from settings', (tester) async {
       // A tall surface so every about tile is on screen and tappable (the
@@ -266,36 +367,6 @@ void main() {
 
       expect(find.byType(StatsScreen), findsOneWidget);
       expect(find.textContaining('coming soon'), findsNothing);
-    });
-
-    testWidgets('the sound and music switches drive the save settings',
-        (tester) async {
-      // Audio is real now (issue #4), so the toggles belong here — wired to
-      // the same settings the running audio service obeys.
-      await tester.pumpWidget(wrap(const SettingsScreen()));
-      await tester.pump();
-
-      SwitchListTile soundToggle =
-          tester.widget(find.byKey(const ValueKey('sound_toggle')));
-      SwitchListTile musicToggle =
-          tester.widget(find.byKey(const ValueKey('music_toggle')));
-      expect(soundToggle.value, isTrue);
-      expect(musicToggle.value, isTrue);
-
-      await tester.tap(find.byKey(const ValueKey('sound_toggle')));
-      await tester.pumpAndSettle();
-      expect(gameState.soundEnabled, isFalse,
-          reason: 'the sound switch flips the save setting');
-
-      await tester.tap(find.byKey(const ValueKey('music_toggle')));
-      await tester.pumpAndSettle();
-      expect(gameState.musicEnabled, isFalse,
-          reason: 'the music switch flips the save setting');
-
-      soundToggle = tester.widget(find.byKey(const ValueKey('sound_toggle')));
-      musicToggle = tester.widget(find.byKey(const ValueKey('music_toggle')));
-      expect(soundToggle.value, isFalse);
-      expect(musicToggle.value, isFalse);
     });
 
     testWidgets('renders without overflow on a narrow portrait screen',
