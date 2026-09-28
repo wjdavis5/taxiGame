@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
+import 'package:taxi_game/services/haptics_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/credits_screen.dart';
 import 'package:taxi_game/ui/screens/garage_screen.dart';
@@ -18,18 +19,25 @@ void main() {
 
   late GameStateService gameState;
   late StorageService storage;
+  late HapticsService haptics;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     storage = StorageService();
     await storage.init();
     gameState = GameStateService(storage);
+    haptics = HapticsService();
+    // Mirror main()'s live forwarding (issue #5): the save setting drives
+    // the running service's gate on every notify, exactly as the
+    // composition root does in production.
+    gameState.addListener(() => haptics.setEnabled(gameState.vibrationEnabled));
   });
 
   Widget wrap(Widget child) => MultiProvider(
         providers: [
           ChangeNotifierProvider<GameStateService>.value(value: gameState),
           Provider<AudioService>.value(value: AudioService()),
+          Provider<HapticsService>.value(value: haptics),
           Provider<StorageService>.value(value: storage),
         ],
         child: MaterialApp(home: child),
@@ -155,6 +163,57 @@ void main() {
 
       expect(find.textContaining('0 coins'), findsOneWidget);
       expect(find.textContaining('75 coins'), findsNothing);
+    });
+  });
+
+  group('vibration (issue #5)', () {
+    testWidgets('the vibration switch drives the save setting',
+        (tester) async {
+      // The save always carried vibrationEnabled; the switch that moves it
+      // belongs here next to its audio siblings.
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      await tester.pump();
+
+      SwitchListTile vibrationToggle =
+          tester.widget(find.byKey(const ValueKey('vibration_toggle')));
+      expect(vibrationToggle.value, isTrue,
+          reason: 'a fresh save vibrates by default');
+
+      await tester.tap(find.byKey(const ValueKey('vibration_toggle')));
+      await tester.pumpAndSettle();
+      expect(gameState.vibrationEnabled, isFalse,
+          reason: 'the vibration switch flips the save setting');
+
+      vibrationToggle =
+          tester.widget(find.byKey(const ValueKey('vibration_toggle')));
+      expect(vibrationToggle.value, isFalse);
+
+      await tester.tap(find.byKey(const ValueKey('vibration_toggle')));
+      await tester.pumpAndSettle();
+      expect(gameState.vibrationEnabled, isTrue);
+    });
+
+    testWidgets('enabling buzzes its own confirmation; disabling is silent',
+        (tester) async {
+      // The switch fires its button tick *after* the flip, so the very
+      // tap that turns vibration on can be felt — and the tap that turns
+      // it off stays quiet. That ordering is the toggle's behaviour proof.
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      await tester.pump();
+
+      // Default is on; first tap turns vibration off.
+      await tester.tap(find.byKey(const ValueKey('vibration_toggle')));
+      await tester.pumpAndSettle();
+      expect(gameState.vibrationEnabled, isFalse);
+      expect(haptics.attemptedBuzzes, isEmpty,
+          reason: 'turning vibration off fires no buzz');
+
+      // Second tap turns it back on through its own gate.
+      await tester.tap(find.byKey(const ValueKey('vibration_toggle')));
+      await tester.pumpAndSettle();
+      expect(gameState.vibrationEnabled, isTrue);
+      expect(haptics.attemptedBuzzes['button_light'], 1,
+          reason: 'enabling confirms itself in the hand');
     });
   });
 

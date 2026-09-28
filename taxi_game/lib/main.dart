@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'services/game_state_service.dart';
 import 'services/audio_service.dart';
+import 'services/haptics_service.dart';
 import 'services/storage_service.dart';
 import 'services/level_loader_service.dart';
 import 'ui/screens/main_menu_screen.dart';
@@ -54,9 +55,16 @@ void main() async {
   // Music runs everywhere — menu and shift alike — whenever the player has
   // it enabled. Toggling the settings switch flips it through the listener.
   await audioService.playMusic();
+  // Haptics (issue #5): the save's vibration setting governs the buzz from
+  // the first frame, and the listener below keeps the running service's
+  // gate live — the same forwarding the audio flags ride.
+  final hapticsService = HapticsService()
+    ..setEnabled(gameStateService.vibrationEnabled);
+
   gameStateService.addListener(() {
     audioService.setSoundEnabled(gameStateService.soundEnabled);
     audioService.setMusicEnabled(gameStateService.musicEnabled);
+    hapticsService.setEnabled(gameStateService.vibrationEnabled);
   });
 
   final levelLoaderService = LevelLoaderService();
@@ -66,6 +74,7 @@ void main() async {
       providers: [
         ChangeNotifierProvider.value(value: gameStateService),
         Provider.value(value: audioService),
+        Provider.value(value: hapticsService),
         Provider.value(value: storageService),
         Provider.value(value: levelLoaderService),
       ],

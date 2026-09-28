@@ -43,6 +43,7 @@ import 'systems/impact_fx.dart';
 import 'systems/world_origin.dart';
 import '../services/audio_service.dart';
 import '../services/game_state_service.dart';
+import '../services/haptics_service.dart';
 import '../services/level_loader_service.dart';
 
 /// Main game class that manages the entire game loop and components
@@ -52,6 +53,7 @@ class TaxiGame extends FlameGame
     required this.levelLoader,
     required this.gameState,
     this.audio,
+    this.haptics,
     this.endlessSeed,
     this.isDailyShift = false,
     this.isGhostRace = false,
@@ -66,6 +68,13 @@ class TaxiGame extends FlameGame
   /// game without any audio graph. Every call site is a null-aware poke —
   /// the game never depends on sound existing.
   final AudioService? audio;
+
+  /// The haptics service (issue #5); null in the headless tests, which run
+  /// the game without any platform channel. Every call site is a null-aware
+  /// poke — the game never depends on the phone being able to buzz. The
+  /// enabled-gate itself lives in the service, synced from the save's
+  /// vibration setting by the composition root.
+  final HapticsService? haptics;
 
   /// When non-null the game was constructed to run an endless procedural
   /// run (issue #11) instead of a hand-made level: recycled road chunks,
@@ -749,8 +758,10 @@ class TaxiGame extends FlameGame
       position: passenger.pickupLocation,
       colors: ImpactFxPalettes.pickup,
     ));
-    // ...and the boarding chirp (issue #4).
+    // ...and the boarding chirp (issue #4) under the boarding thud
+    // (issue #5).
     audio?.playPickupSound();
+    haptics?.pickup();
   }
 
   void _onPassengerDropoff(PassengerData passenger) {
@@ -777,8 +788,10 @@ class TaxiGame extends FlameGame
       ));
     }
 
-    // The two-tone delivery chime (issue #4).
+    // The two-tone delivery chime (issue #4) over the delivery thud
+    // (issue #5).
     audio?.playDropoffSound();
+    haptics?.dropoff();
 
     if (passengersDelivered >= passengers.length) {
       _completeLevel();
@@ -817,8 +830,10 @@ class TaxiGame extends FlameGame
     gameState.addCoins(passenger.reward);
     _runCoinsEarned += passenger.reward;
 
-    // The two-tone delivery chime (issue #4).
+    // The two-tone delivery chime (issue #4) over the delivery thud
+    // (issue #5).
     audio?.playDropoffSound();
+    haptics?.dropoff();
 
     // Every completed dropoff asks the question (issue #13): bank the
     // score and end the shift, or push on at an increased multiplier. The
@@ -1031,8 +1046,10 @@ class TaxiGame extends FlameGame
         delay: 0.05 * i,
       ));
     }
-    // Coins ring and the completion jingle plays (issue #4).
+    // Coins ring (issue #4) and tick in the hand (issue #5), and the
+    // completion jingle plays (issue #4).
     audio?.playCoinSound();
+    haptics?.coinAward();
     audio?.playLevelCompleteSound();
 
     // Award coins and unlock the next level. A bank pays the chain score
@@ -1207,8 +1224,9 @@ class TaxiGame extends FlameGame
     );
     hitStop.trigger();
     // The impact sound rides the same beat as the shake and the freeze
-    // (issue #4).
+    // (issue #4), and the heavy buzz lands in the same instant (issue #5).
     audio?.playCrashSound();
+    haptics?.crash();
   }
 
   /// Records a low-speed glancing scrape: no life is lost, the player was

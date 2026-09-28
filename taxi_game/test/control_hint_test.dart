@@ -10,6 +10,7 @@ import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
+import 'package:taxi_game/services/haptics_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/game_screen.dart';
@@ -59,6 +60,7 @@ void main() {
         providers: [
           ChangeNotifierProvider<GameStateService>.value(value: gameState),
           Provider<AudioService>.value(value: AudioService()),
+          Provider<HapticsService>.value(value: HapticsService()),
           Provider<LevelLoaderService>.value(value: LevelLoaderService()),
         ],
         child: const MaterialApp(home: GameScreen(endlessSeed: 42)),
@@ -89,6 +91,7 @@ void main() {
         providers: [
           ChangeNotifierProvider<GameStateService>.value(value: service),
           Provider<AudioService>.value(value: AudioService()),
+          Provider<HapticsService>.value(value: HapticsService()),
           Provider<LevelLoaderService>.value(value: LevelLoaderService()),
         ],
         child: MaterialApp(

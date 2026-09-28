@@ -63,6 +63,10 @@ class GameStateService extends ChangeNotifier {
   bool get soundEnabled => _saveData.settings.soundEnabled;
   bool get musicEnabled => _saveData.settings.musicEnabled;
 
+  /// Whether haptic feedback fires (issue #5). The save always carried the
+  /// flag; the game has only read it since the haptics service was wired.
+  bool get vibrationEnabled => _saveData.settings.vibrationEnabled;
+
   /// The best score an endless shift has ever ended with (issue #15).
   int get endlessBestScore => _saveData.endlessBestScore;
 
@@ -391,6 +395,17 @@ class GameStateService extends ChangeNotifier {
   /// Toggle music
   void toggleMusic() {
     _saveData.settings.musicEnabled = !_saveData.settings.musicEnabled;
+    notifyListeners();
+    save();
+  }
+
+  /// Toggle vibration (issue #5). Notifies synchronously, so the
+  /// composition root's listener flips the running haptics service's gate
+  /// before the toggle's caller continues — an enabling tap can buzz its
+  /// own confirmation, a disabling one goes out silently.
+  void toggleVibration() {
+    _saveData.settings.vibrationEnabled =
+        !_saveData.settings.vibrationEnabled;
     notifyListeners();
     save();
   }

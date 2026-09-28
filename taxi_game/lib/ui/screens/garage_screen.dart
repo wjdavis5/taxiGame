@@ -5,6 +5,7 @@ import '../../data/vehicle_catalog.dart';
 import '../../game/vehicle_sprites.dart';
 import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
+import '../../services/haptics_service.dart';
 
 /// The garage: browse, buy, and equip vehicles.
 ///
@@ -238,6 +239,7 @@ class _VehicleCard extends StatelessWidget {
         key: Key('garage_select_${vehicle.id}'),
         onPressed: () {
           audioOf(context)?.playButtonSound();
+          hapticsOf(context)?.buttonPress();
           gameState.selectVehicle(vehicle.id);
         },
         style: ElevatedButton.styleFrom(
@@ -282,6 +284,7 @@ class _VehicleCard extends StatelessWidget {
   /// the new car earned is announced here, where the purchase happened.
   void _purchase(BuildContext context) {
     audioOf(context)?.playButtonSound();
+    hapticsOf(context)?.buttonPress();
     final bought = gameState.unlockVehicle(vehicle.id, vehicle.price);
     if (bought) {
       // New wheels go straight into service so the purchase shows up in

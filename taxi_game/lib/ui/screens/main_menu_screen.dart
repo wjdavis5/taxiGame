@@ -4,6 +4,7 @@ import '../../game/systems/daily_shift.dart';
 import '../../game/taxi_game.dart';
 import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
+import '../../services/haptics_service.dart';
 import 'credits_screen.dart';
 import 'daily_screen.dart';
 import 'game_screen.dart';
@@ -151,6 +152,7 @@ class MainMenuScreen extends StatelessWidget {
                             key: const ValueKey('daily_history_button'),
                             onPressed: () {
                               audioOf(context)?.playButtonSound();
+                              hapticsOf(context)?.buttonPress();
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
@@ -356,9 +358,11 @@ class _MenuButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return ElevatedButton.icon(
       key: buttonKey,
-      // Every menu press clicks (issue #4), then does its job.
+      // Every menu press clicks (issue #4) and ticks (issue #5), then
+      // does its job.
       onPressed: () {
         audioOf(context)?.playButtonSound();
+        hapticsOf(context)?.buttonPress();
         onPressed();
       },
       icon: Icon(icon, size: primary ? 34 : 32),

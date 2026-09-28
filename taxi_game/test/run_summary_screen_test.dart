@@ -12,6 +12,7 @@ import 'package:taxi_game/models/achievements.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
+import 'package:taxi_game/services/haptics_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/game_screen.dart';
@@ -80,6 +81,7 @@ void main() {
         providers: [
           ChangeNotifierProvider<GameStateService>.value(value: gameState),
           Provider<AudioService>.value(value: AudioService()),
+          Provider<HapticsService>.value(value: HapticsService()),
           Provider<LevelLoaderService>.value(value: LevelLoaderService()),
         ],
         child: MaterialApp(

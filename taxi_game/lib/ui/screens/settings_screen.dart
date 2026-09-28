@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
+import '../../services/haptics_service.dart';
 import 'credits_screen.dart';
 import 'records_screen.dart';
 import 'stats_screen.dart';
@@ -13,7 +14,9 @@ import 'stats_screen.dart';
 /// drive the save's real audio settings: flipping one notifies listeners, the
 /// composition root in `main.dart` forwards the new flags to the running
 /// [AudioService], and playback changes on the spot — engine and effects stop
-/// or start, the music track stops or restarts.
+/// or start, the music track stops or restarts. The vibration switch
+/// (issue #5) rides the same wiring into the running [HapticsService], so
+/// impacts buzz or go silent on the spot too.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
@@ -117,6 +120,39 @@ class SettingsScreen extends StatelessWidget {
                               ),
                             ),
                           ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    // The haptics control (issue #5): the save has always
+                    // carried `vibrationEnabled`; this is the switch that
+                    // finally drives it, live, like the audio toggles above.
+                    const _SectionLabel('Haptics'),
+                    Consumer<GameStateService>(
+                      builder: (context, gameState, _) => Card(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        elevation: 0,
+                        child: SwitchListTile(
+                          key: const Key('vibration_toggle'),
+                          value: gameState.vibrationEnabled,
+                          onChanged: (_) {
+                            audioOf(context)?.playButtonSound();
+                            gameState.toggleVibration();
+                            // Fired after the flip (the toggle notifies
+                            // synchronously, so the running service's gate
+                            // is already moved): enabling the setting buzzes
+                            // its own confirmation; disabling goes silent.
+                            hapticsOf(context)?.buttonPress();
+                          },
+                          activeThumbColor: Colors.yellow,
+                          title: const Text(
+                            'Vibration',
+                            style: TextStyle(fontSize: 18, color: Colors.white),
+                          ),
+                          subtitle: const Text(
+                            'A buzz on crashes, fares, coins, and buttons',
+                            style: TextStyle(fontSize: 13, color: Colors.white70),
+                          ),
                         ),
                       ),
                     ),
