@@ -1,6 +1,8 @@
 import 'dart:async' show unawaited;
 
 import 'package:flame_audio/flame_audio.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 
@@ -54,6 +56,39 @@ class AudioService {
     'banked': 0.75,
   };
 
+  /// The iOS audio session context (issue #39): category `.ambient`.
+  ///
+  /// audioplayers_darwin's default session is `.playback` with no mixing
+  /// options (AudioContext.swift, `AudioContext.init`), so on launch the game
+  /// stops whatever the player was listening to and plays over the
+  /// Ring/Silent switch. `.ambient` is the casual-game convention: it mixes
+  /// with other apps' audio — music, podcasts — and is silenced by the
+  /// Ring/Silent switch. The in-app sound and music toggles remain the
+  /// explicit per-feature control on top of that.
+  ///
+  /// Why no explicit `.mixWithOthers` option, although it mixes: on iOS
+  /// `.ambient` mixes with other audio *by definition* — the option exists
+  /// for `.playback` — and the locked audioplayers_platform_interface
+  /// asserts `mixWithOthers` is only legal with `playback`, `playAndRecord`
+  /// or `multiRoute`, so setting it here would throw in debug builds.
+  ///
+  /// Off iOS this is null and everything below becomes a no-op: Android
+  /// mixes by default and must keep doing exactly what it does today.
+  static final AudioContext _ambientContext = AudioContext(
+    iOS: AudioContextIOS(category: AVAudioSessionCategory.ambient),
+  );
+
+  /// The context to hand every platform call, or null off iOS — which makes
+  /// flame_audio apply its own default, preserving non-iOS behavior.
+  ///
+  /// This must ride *every* play call, not just startup: flame_audio
+  /// re-applies its own context (iOS `.playback` + `.mixWithOthers`) on each
+  /// play when none is given, and on iOS even a player-level context sets
+  /// the *global* session — one unguarded play would flip the session back
+  /// to ignoring the Ring/Silent switch.
+  AudioContext? get _platformContext =>
+      defaultTargetPlatform == TargetPlatform.iOS ? _ambientContext : null;
+
   bool _soundEnabled = true;
   bool _musicEnabled = true;
 
@@ -80,14 +115,29 @@ class AudioService {
   final Map<String, int> attemptedPlays = <String, int>{};
 
   /// Initializes the BGM lifecycle handler (auto pause/resume around app
-  /// backgrounding) and warms the sound cache. Safe to call twice; safe when
-  /// no plugin exists (tests) — everything below swallows its failures.
+  /// backgrounding), claims the iOS audio session (issue #39), and warms the
+  /// sound cache. Safe to call twice; safe when no plugin exists (tests) —
+  /// everything below swallows its failures.
   Future<void> initialize() async {
+    await _applyIosAudioContext();
     try {
-      await FlameAudio.bgm.initialize();
+      await FlameAudio.bgm.initialize(audioContext: _platformContext);
     } catch (_) {}
     try {
       await FlameAudio.audioCache.loadAll(soundFiles.values.toList());
+    } catch (_) {}
+  }
+
+  /// Applies the ambient session (issue #39) on iOS before any player
+  /// exists, replacing the plugin's launch-time `.playback` default. Off iOS
+  /// this is a no-op — Android mixes by default and gets no counterpart. A
+  /// failure is swallowed: a session that will not configure must never
+  /// crash or block startup.
+  Future<void> _applyIosAudioContext() async {
+    final context = _platformContext;
+    if (context == null) return;
+    try {
+      await AudioPlayer.global.setAudioContext(context);
     } catch (_) {}
   }
 
@@ -114,6 +164,7 @@ class AudioService {
         await FlameAudio.play(
           file,
           volume: volume ?? _defaultVolumes[soundName] ?? 1.0,
+          audioContext: _platformContext,
         );
       } catch (_) {}
     }());
@@ -180,7 +231,11 @@ class AudioService {
       unawaited(() async {
         AudioPlayer? player;
         try {
-          player = await FlameAudio.loop(engineLoop, volume: _engineVolume);
+          player = await FlameAudio.loop(
+            engineLoop,
+            volume: _engineVolume,
+            audioContext: _platformContext,
+          );
         } catch (_) {
           return;
         }

@@ -1,3 +1,7 @@
+import 'package:audioplayers_platform_interface/audioplayers_platform_interface.dart'
+    show AVAudioSessionCategory;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/services.dart' show AssetManifest, rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/services/audio_service.dart';
@@ -13,7 +17,10 @@ import 'helpers/fake_audio_platform.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(installFakeAudioPlatform);
+  late FakeAudioPlatform fake;
+  setUp(() {
+    fake = installFakeAudioPlatform();
+  });
 
 
   /// Lets the fire-and-forget platform chains finish. They hop through real
@@ -200,6 +207,80 @@ void main() {
       audio.setEngineRunning(true);
       await settle();
       expect(audio.isEngineLoopActive, isTrue);
+    });
+  });
+
+  group('the iOS audio session (issue #39)', () {
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    test('initialize configures an ambient session on iOS', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+
+      await AudioService().initialize();
+
+      expect(fake.global.contexts, hasLength(1),
+          reason: 'the session is claimed exactly once, at startup');
+      final context = fake.global.contexts.single;
+      expect(context.iOS.category, AVAudioSessionCategory.ambient,
+          reason: 'ambient mixes with whatever the player was listening to '
+              'and obeys the Ring/Silent switch');
+      expect(context.iOS.options, isEmpty,
+          reason: 'ambient mixes by definition — an explicit mixWithOthers '
+              'is illegal on this category in audioplayers and would throw '
+              'in debug builds');
+    });
+
+    test('playback re-asserts ambient, never flame_audio playback default',
+        () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      final audio = AudioService();
+
+      audio.playCoinSound();
+      audio.setEngineRunning(true);
+      await settle();
+      await audio.dispose();
+
+      expect(fake.player.audioContexts, isNotEmpty);
+      expect(
+        fake.player.audioContexts.map((c) => c.iOS.category),
+        everyElement(AVAudioSessionCategory.ambient),
+        reason: 'flame_audio re-applies a .playback context on every play '
+            'when none is given, and on iOS even player-level contexts set '
+            'the global session — one unguarded play would silence the '
+            'Ring/Silent switch for the rest of the run',
+      );
+    });
+
+    test('off iOS the session is left entirely alone', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final audio = AudioService();
+
+      await audio.initialize();
+      audio.playCoinSound();
+      await settle();
+      await audio.dispose();
+
+      expect(fake.global.contexts, isEmpty,
+          reason: 'Android mixes by default — no session counterpart');
+      expect(fake.player.audioContexts, isNotEmpty);
+      expect(
+        fake.player.audioContexts.map((c) => c.iOS.category),
+        everyElement(AVAudioSessionCategory.playback),
+        reason: 'off iOS the service passes no context, so flame_audio\'s '
+            'own default stays in force — exactly as shipped before #39',
+      );
+    });
+
+    test('a context failure neither crashes nor blocks initialize', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      fake.global.failSetGlobalAudioContext = true;
+
+      // Completing at all is the assertion: the failure is swallowed and
+      // the rest of startup (BGM init, cache warm) runs.
+      await AudioService().initialize();
+      expect(fake.global.contexts, isEmpty);
     });
   });
 
