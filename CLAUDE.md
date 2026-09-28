@@ -301,8 +301,9 @@ taxiGame/
     ├── lib/
     │   ├── game/              # Flame components, levels, systems
     │   ├── data/credits.dart  # attribution, single source of truth
-    │   ├── services/          # storage, game state, level loading, audio
-    │   └── ui/screens/        # menu, game, settings, credits
+    │   ├── services/          # storage, game state, audio, haptics, share
+    │   └── ui/screens/        # menu, game, daily, garage, records, stats,
+    │                          #   settings, credits
     ├── tool/screenshot_entry.dart   # dev-only, launches into one screen
     ├── fastlane/              # submit lane only; build/upload live in the workflow
     └── ios/
