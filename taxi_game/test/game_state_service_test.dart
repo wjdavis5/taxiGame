@@ -25,6 +25,8 @@ void main() {
     expect(gameStateService.selectedVehicle, 'taxi_yellow');
     expect(gameStateService.soundEnabled, isTrue);
     expect(gameStateService.musicEnabled, isTrue);
+    // A first-time player still gets the stick-control hint (issue #37).
+    expect(gameStateService.controlHintDismissed, isFalse);
   });
 
   test('addCoins updates balance', () {

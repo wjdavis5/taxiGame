@@ -6,6 +6,7 @@ import '../../game/taxi_game.dart';
 import '../../services/game_state_service.dart';
 import '../../services/level_loader_service.dart';
 import '../widgets/bank_prompt_overlay.dart';
+import '../widgets/control_hint_overlay.dart';
 import '../widgets/hud_overlay.dart';
 import '../widgets/run_summary_panel.dart';
 
@@ -40,9 +41,22 @@ class GameScreen extends StatefulWidget {
 class _GameScreenState extends State<GameScreen> {
   late final TaxiGame game;
 
+  /// True when this session's save has never dismissed the stick-control
+  /// hint (issue #37): the first game start — level, endless, daily,
+  /// ghost race — then renders the hint until a thumb lands on the stick
+  /// ([TaxiGame.onStickEngaged]). A save that has already dismissed it —
+  /// every save older than this feature among them — never sees it
+  /// again. Decided here rather than inside the game so the hint rides
+  /// the [GameWidget]'s own `initialActiveOverlays`: Flame requires a
+  /// builder to be registered before its overlay can be added, and the
+  /// registry is exactly what this screen owns.
+  late final bool showControlHint;
+
   @override
   void initState() {
     super.initState();
+    showControlHint =
+        !context.read<GameStateService>().controlHintDismissed;
     game = TaxiGame(
       levelLoader: context.read<LevelLoaderService>(),
       gameState: context.read<GameStateService>(),
@@ -62,6 +76,11 @@ class _GameScreenState extends State<GameScreen> {
             game: game,
             overlayBuilderMap: {
               'hud': (context, TaxiGame game) => HudOverlay(game: game),
+              // The one-time stick-control hint (issue #37): active from
+              // the first frame when [showControlHint], removed by the
+              // first real stick touch.
+              'controlHint': (context, TaxiGame game) =>
+                  const ControlHintOverlay(),
               'pauseMenu': (context, TaxiGame game) => _buildPauseMenu(context),
               'levelComplete': (context, TaxiGame game) =>
                   LevelCompleteOverlay(game: game),
@@ -85,7 +104,12 @@ class _GameScreenState extends State<GameScreen> {
                     summary: game.lastRunSummary!,
                   ),
             },
-            initialActiveOverlays: const ['hud'],
+            // The hint rides the initial overlays so Flame registers its
+            // builder before it is ever added (issue #37).
+            initialActiveOverlays: [
+              'hud',
+              if (showControlHint) 'controlHint',
+            ],
           ),
         ],
       ),

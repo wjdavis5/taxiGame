@@ -134,6 +134,10 @@ class VirtualStick extends PositionComponent
       _origin = event.canvasPosition.clone();
       _knobOffset = Vector2.zero();
       _apply(StickInput.zero);
+      // A thumb that lands here has found the stick — the first real
+      // input the control hint (issue #37) was waiting for, a tap on the
+      // hint included, since the hint sits inside this same region.
+      game.onStickEngaged();
     }
   }
 

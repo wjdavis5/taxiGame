@@ -22,6 +22,12 @@ class SaveData {
   /// The best score any endless shift has ever ended with, banked or
   /// forfeited (issue #15). Compared against at every shift end.
   int endlessBestScore;
+
+  /// True once the one-time stick-control hint (issue #37) has been
+  /// dismissed — by the thumb landing on the stick, never by time or by
+  /// a session ending — so the game must never render it again. Only a
+  /// fresh save (or an explicit reset) leaves it false.
+  bool controlHintDismissed;
   Settings settings;
 
   SaveData({
@@ -32,6 +38,7 @@ class SaveData {
     required this.selectedVehicle,
     required this.achievements,
     this.endlessBestScore = 0,
+    this.controlHintDismissed = false,
     PersonalBests? personalBests,
     required this.settings,
   }) : personalBests = personalBests ?? PersonalBests();
@@ -68,6 +75,14 @@ class SaveData {
           ? PersonalBests()
           : PersonalBests.fromJson(
               json['personalBests'] as Map<String, dynamic>),
+      // Saves written before issue #37 have no hint flag at all — and a
+      // save that exists at all means its player has already driven.
+      // A missing key therefore reads as dismissed: the stick hint is
+      // for players a first game start can still teach, and a seasoned
+      // save is never shown it. Fresh saves carry the key with false,
+      // which round-trips below.
+      controlHintDismissed:
+          (json['controlHintDismissed'] as bool?) ?? true,
       settings: Settings.fromJson(json['settings'] as Map<String, dynamic>),
     );
   }
@@ -82,6 +97,7 @@ class SaveData {
       'selectedVehicle': selectedVehicle,
       'achievements': achievements,
       'endlessBestScore': endlessBestScore,
+      'controlHintDismissed': controlHintDismissed,
       'personalBests': personalBests.toJson(),
       'settings': settings.toJson(),
     };

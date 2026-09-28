@@ -394,9 +394,30 @@ class GameStateService extends ChangeNotifier {
     notifyListeners();
     save();
   }
-  
+
+  /// True once the one-time stick-control hint (issue #37) has been
+  /// dismissed for this save. The game screen reads this to decide
+  /// whether a first game start still needs teaching.
+  bool get controlHintDismissed => _saveData.controlHintDismissed;
+
+  /// Dismisses the one-time stick-control hint (issue #37) and persists
+  /// the dismissal immediately, so the flag is on disk before the next
+  /// session renders its first frame — the hint can then never return
+  /// for this save. Idempotent: a save that already dismissed it saves
+  /// nothing and notifies nobody.
+  void dismissControlHint() {
+    if (_saveData.controlHintDismissed) return;
+    _saveData.controlHintDismissed = true;
+    notifyListeners();
+    save();
+  }
+
   /// Reset all progress (for testing)
   void resetProgress() {
+    // The fresh save also un-dismisses the stick-control hint (issue
+    // #37): a wiped save is a first-time player again, and the next
+    // game start teaches the stick once more — the same convention as
+    // the run history below.
     _saveData = SaveData.createDefault();
     // The shift history is progress too (issue #17): a reset wipes it with
     // everything else, so the stats screen never shows numbers from a run

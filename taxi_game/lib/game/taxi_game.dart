@@ -371,6 +371,22 @@ class TaxiGame extends FlameGame
   /// Exposed for tests and the keyboard guard.
   VirtualStick? get virtualStick => _virtualStick;
 
+  /// The stick just received its first real touch this save (issue #37):
+  /// the thumb landed in the lower half exactly where the hint said it
+  /// would, so the hint has done its job — take it down and record the
+  /// dismissal for good. Called on every accepted stick engagement, but
+  /// the save write happens only once: [GameStateService
+  /// .dismissControlHint] is idempotent and removing a non-active
+  /// overlay is a no-op.
+  ///
+  /// The hint itself is offered by the game screen (issue #37 puts it on
+  /// the first game start of an undismissed save); the game only ever
+  /// stands it down.
+  void onStickEngaged() {
+    overlays.remove('controlHint');
+    gameState.dismissControlHint();
+  }
+
   @override
   Color backgroundColor() => const Color(0xFF1A1A1A); // Letterbox outside the viewport
 
