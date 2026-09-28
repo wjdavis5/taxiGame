@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 
 import '../taxi_game.dart';
+import 'fare_glyph.dart';
 import 'player_vehicle.dart';
 import '../../models/passenger_data.dart';
 
@@ -106,27 +107,27 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
       ..strokeWidth = 3;
     canvas.drawCircle(Offset.zero, radius, borderPaint);
 
-    // Draw flag icon
-    _drawFlagIcon(canvas, color);
+    // Draw the fare kind's glyph at the dropoff's lower weight (issue #35).
+    _drawKindGlyph(canvas, _isActive ? Colors.white : Colors.grey.shade400);
 
     canvas.restore();
   }
 
-  void _drawFlagIcon(Canvas canvas, Color color) {
-    final iconPaint = Paint()
-      ..color = _isActive ? Colors.white : Colors.grey.shade400
-      ..style = PaintingStyle.fill;
-
-    // Flag pole
-    canvas.drawRect(const Rect.fromLTWH(-1, -10, 2, 20), iconPaint);
-
-    // Flag
-    final flagPath = Path()
-      ..moveTo(0, -10)
-      ..lineTo(12, -5)
-      ..lineTo(0, 0)
-      ..close();
-    canvas.drawPath(flagPath, iconPaint);
+  /// The same glyph the pickup marker wears (issue #35), stroked rather
+  /// than filled: the lighter weight so a fare's destination and its
+  /// departure read apart even in greyscale, and the shape still says
+  /// which kind of fare the meter is running toward.
+  void _drawKindGlyph(Canvas canvas, Color inkColor) {
+    paintFareGlyph(
+      canvas,
+      passenger.fareType,
+      ink: Paint()
+        ..color = inkColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round,
+    );
   }
 
   @override

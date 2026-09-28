@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 
 import '../taxi_game.dart';
+import 'fare_glyph.dart';
 import 'player_vehicle.dart';
-import '../../models/fare_type.dart';
 import '../../models/passenger_data.dart';
 
 /// Visual marker for passenger pickup location
@@ -78,7 +78,9 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
 
     // The marker wears the fare kind's colour (issue #25): gold for a
     // VIP, purple for a long-haul, orange for an awkward crossing, and
-    // the classic green for the everyday ride.
+    // the classic green for the everyday ride. Colour is secondary
+    // emphasis now (issue #35): the glyph below is what sorts the kinds
+    // when hue cannot.
     final color = passenger.fareType.markerColor;
 
     // Skip CircleComponent's default paint and draw centered on the
@@ -105,45 +107,29 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
       ..strokeWidth = 3;
     canvas.drawCircle(Offset.zero, radius, borderPaint);
 
-    // Draw passenger icon (simple person shape)
-    _drawPassengerIcon(canvas);
+    // Draw the fare kind's glyph (issue #35).
+    _drawKindGlyph(canvas);
 
     canvas.restore();
   }
 
-  void _drawPassengerIcon(Canvas canvas) {
-    final iconPaint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.fill;
-
-    // Head
-    canvas.drawCircle(const Offset(0, -5), 6, iconPaint);
-
-    // Body
-    final bodyPath = Path()
-      ..moveTo(0, 2)
-      ..lineTo(-8, 15)
-      ..lineTo(-4, 15)
-      ..lineTo(0, 8)
-      ..lineTo(4, 15)
-      ..lineTo(8, 15)
-      ..close();
-    canvas.drawPath(bodyPath, iconPaint);
-
-    // A crown marks the VIP (issue #25) — the highest-paying fare on the
-    // street should be readable at a glance, not just by colour.
-    if (passenger.fareType == FareType.vip) {
-      final crownPath = Path()
-        ..moveTo(-8, -9)
-        ..lineTo(-8, -19)
-        ..lineTo(-4, -14)
-        ..lineTo(0, -21)
-        ..lineTo(4, -14)
-        ..lineTo(8, -19)
-        ..lineTo(8, -9)
-        ..close();
-      canvas.drawPath(crownPath, iconPaint);
-    }
+  /// The kind glyph (issue #35): a ring for the everyday ride, a crown in
+  /// a ring for the VIP, a double chevron up for the long-haul, crossed
+  /// arrows for the awkward crossing. Solid white over a dark rim, so the
+  /// four kinds sort in greyscale against any of the marker fills.
+  void _drawKindGlyph(Canvas canvas) {
+    paintFareGlyph(
+      canvas,
+      passenger.fareType,
+      ink: Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.fill,
+      rim: Paint()
+        ..color = Colors.black.withValues(alpha: 0.85)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3
+        ..strokeJoin = StrokeJoin.round,
+    );
   }
 
   @override
