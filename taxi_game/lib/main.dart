@@ -1,11 +1,13 @@
 import 'dart:async' show unawaited;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'services/game_state_service.dart';
 import 'services/audio_service.dart';
+import 'services/diagnostics.dart';
 import 'services/haptics_service.dart';
 import 'services/storage_service.dart';
 import 'services/level_loader_service.dart';
@@ -38,13 +40,26 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await lockOrientation();
-  
+
+  // Telemetry begins before anything can go wrong: the previous
+  // session's tail is on disk, and from here every debugPrint, framework
+  // error, and uncaught exception lands in the ring buffer (and back on
+  // disk), so a hard kill on a device still leaves the last moments
+  // readable on the next launch. Local only — see Diagnostics.
+  await Diagnostics.instance.load();
+  Diagnostics.instance.installGlobalHooks();
+  Diagnostics.instance.log('[app] start '
+      'mode=${kReleaseMode ? 'release' : 'debug'} '
+      'platform=${defaultTargetPlatform.name}');
+
   // Initialize services
   final storageService = StorageService();
   await storageService.init();
 
   final gameStateService = GameStateService(storageService);
   await gameStateService.loadSaveData();
+  Diagnostics.instance.log('[save] loaded level='
+      '${gameStateService.currentLevel}');
 
   final audioService = AudioService();
   // Candidate A of issue #40 + launch hygiene: never block the first
@@ -54,6 +69,7 @@ void main() async {
   // watchdog eventually kills. runApp first; audio catches up a few
   // frames later, imperceptibly.
   unawaited(audioService.initialize().then((_) async {
+    Diagnostics.instance.log('[audio] initialized');
     // The save's sound and music settings govern playback from the first
     // frame (issue #4); the listener below keeps it that way live.
     await audioService.applySettings(
@@ -64,6 +80,9 @@ void main() async {
     // has it enabled. Toggling the settings switch flips it through the
     // listener.
     await audioService.playMusic();
+    Diagnostics.instance.log('[audio] music started');
+  }).catchError((Object error, StackTrace stack) {
+    Diagnostics.instance.logError('audio_init', error, stack);
   }));
   // Haptics (issue #5): the save's vibration setting governs the buzz from
   // the first frame, and the listener below keeps the running service's

@@ -325,3 +325,15 @@ jobs:
           path: ${{ env.PROJECT_PATH }}/build/ios/ipa/*.ipa
           if-no-files-found: warn
           retention-days: 14
+
+      # Debug symbols for crash-log symbolication: a device .ips names
+      # addresses, not functions, until it is paired with the exact
+      # build's dSYM. Same retention as the IPA it belongs beside.
+      - name: Upload the dSYMs as a build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-dsyms-${{ steps.version.outputs.marketing }}-${{ steps.version.outputs.build }}
+          path: ${{ env.PROJECT_PATH }}/build/ios/archive/**/*.dSYM
+          if-no-files-found: warn
+          retention-days: 14

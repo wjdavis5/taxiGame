@@ -18,11 +18,14 @@ import UIKit
         name: "cab_hustle/share",
         binaryMessenger: controller.binaryMessenger)
       channel.setMethodCallHandler { [weak self] call, result in
-        guard call.method == "shareScoreCard" else {
+        switch call.method {
+        case "shareScoreCard":
+          self?.handleShareScoreCard(call, result: result)
+        case "shareText":
+          self?.handleShareText(call, result: result)
+        default:
           result(FlutterMethodNotImplemented)
-          return
         }
-        self?.handleShareScoreCard(call, result: result)
       }
     }
 
@@ -107,6 +110,49 @@ import UIKit
         code: "stage_failed",
         message: "Could not stage the score card: \(error.localizedDescription)",
         details: nil))
+    }
+  }
+
+  /// Shares plain text — the diagnostics export. The same rules as the
+  /// score card: a UIActivityViewController the user drives themselves,
+  /// no file staging needed because there is no file.
+  private func handleShareText(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    guard
+      let args = call.arguments as? [String: Any],
+      let text = args["text"] as? String
+    else {
+      result(FlutterError(
+        code: "bad_arguments",
+        message: "shareText needs a String under 'text'",
+        details: nil))
+      return
+    }
+
+    DispatchQueue.main.async { [weak self] in
+      guard let this = self, let root = this.window?.rootViewController else {
+        result(FlutterError(
+          code: "not_ready",
+          message: "No root view controller to present the share sheet from",
+          details: nil))
+        return
+      }
+      let sheet = UIActivityViewController(
+        activityItems: [text], applicationActivities: nil)
+      sheet.completionWithItemsHandler = { _, _, _, _ in
+        DispatchQueue.main.async { result(nil) }
+      }
+      if let popover = sheet.popoverPresentationController, let view = root.view {
+        popover.sourceView = view
+        popover.sourceRect = CGRect(
+          x: view.bounds.midX, y: view.bounds.maxY - 80, width: 1, height: 1)
+        popover.permittedArrowDirections = []
+      }
+      var top = root
+      while let presented = top.presentedViewController { top = presented }
+      top.present(sheet, animated: true)
     }
   }
 

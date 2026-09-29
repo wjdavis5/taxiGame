@@ -249,10 +249,22 @@ class TaxiGame extends FlameGame
   final List<double> _lifeLossDistancesPx = <double>[];
 
   /// Seconds the current shift has been actively driven (issue #17):
-  /// world-update time while the run is live. Crash hit-stops and stalls
+  /// world-update time while the run is live. Crash hit-stop and stalls
   /// freeze the world and this clock with it, so the recorded duration
   /// measures driving, not dead time.
   double _runDrivenSeconds = 0;
+
+  /// Wall-clock time the current run has been live (both modes), for the
+  /// diagnostics heartbeat's timestamp.
+  double _liveRunSeconds = 0;
+
+  /// Interval accumulator for the diagnostics heartbeat: one line of
+  /// where the run stands every [heartbeatInterval] of live play, so a
+  /// hard kill on a device leaves a trail of "how far it got" behind it.
+  double _heartbeatSeconds = 0;
+
+  /// How often the heartbeat logs, in seconds of live play.
+  static const double heartbeatInterval = 5.0;
 
   List<PassengerData> passengers = [];
   int passengersDelivered = 0;
@@ -517,6 +529,10 @@ class TaxiGame extends FlameGame
     // applied, world y and true distance the same thing again.
     environment = RunEnvironment(seed: seed);
     course = EndlessCourse(seed: seed, environment: environment);
+    debugPrint('[run] endless start seed=$seed daily=$isDailyShift '
+        'ghost=$isGhostRace');
+    _liveRunSeconds = 0;
+    _heartbeatSeconds = 0;
     _worldShift = 0;
     _rebaseCount = 0;
     // The endless road has no end (issue #11): whatever level street was
@@ -617,6 +633,9 @@ class TaxiGame extends FlameGame
 
     currentLevel = await levelLoader.loadLevel(levelNumber);
     currentLevelName = currentLevel.name;
+    debugPrint('[run] level start $levelNumber \'${currentLevel.name}\'');
+    _liveRunSeconds = 0;
+    _heartbeatSeconds = 0;
 
     // A level run has no endless systems. Clear any a previous run left
     // behind: [isEndless] is what routes crashes, banking, and the HUD,
@@ -872,6 +891,7 @@ class TaxiGame extends FlameGame
       gameState.markBankPromptSeen();
       _bankPrimerActive = true;
       paused = true;
+      debugPrint('[bank] primer: first-ever offer froze traffic');
       // No update frame runs while paused, so the engine needs the
       // explicit off — the same line [pauseGame] uses.
       audio?.setEngineRunning(false);
@@ -1433,6 +1453,19 @@ class TaxiGame extends FlameGame
     if (isGameActive) {
       fareChain.update(dt);
 
+      // The diagnostics heartbeat: one line of where the run stands per
+      // heartbeatInterval of live play — the trail a hard kill cuts off.
+      _liveRunSeconds += dt;
+      _heartbeatSeconds += dt;
+      if (_heartbeatSeconds >= heartbeatInterval) {
+        _heartbeatSeconds = 0;
+        debugPrint('[shift] t=${_liveRunSeconds.round()}s '
+            'dist=${(runDistance / RunSummary.pixelsPerMetre).round()}m '
+            'speed=${(-player.velocity.y).round()}px/s '
+            'score=${fareChain.score} '
+            '${isEndless ? 'lives=${lives.remaining}' : 'level=$currentLevelNumber'}');
+      }
+
       // The stats clock (issue #17) runs with the same one: only time the
       // shift is actually live counts as driven.
       if (isEndless) {
@@ -1610,6 +1643,7 @@ class TaxiGame extends FlameGame
   /// state *before* the super call, and re-asserted after it on resume.
   @override
   void lifecycleStateChange(AppLifecycleState state) {
+    debugPrint('[lifecycle] ${state.name} paused=$paused');
     final wasRunning = !paused;
     super.lifecycleStateChange(state);
 

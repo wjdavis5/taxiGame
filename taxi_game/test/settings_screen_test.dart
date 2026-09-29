@@ -1,6 +1,7 @@
 import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -315,6 +316,47 @@ void main() {
       expect(audio.attemptedPlays['button_click'], 2);
       expect(audio.isMusicWanted, isTrue,
           reason: 'the wanted track comes back when music is switched on');
+    });
+  });
+
+  group('diagnostics', () {
+    testWidgets('the section offers share and clear', (tester) async {
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      // The settings list is lazy: drag the section into the tree before
+      // anything can be found in it.
+      final button = find.byKey(const Key('share_diagnostics_button'));
+      await tester.dragUntilVisible(
+          button, find.byType(Scrollable).first, const Offset(0, -200));
+      expect(button, findsOneWidget);
+      expect(find.byKey(const Key('clear_diagnostics_button')), findsOneWidget);
+    });
+
+    testWidgets('a failing share explains itself instead of dying '
+        'silently', (tester) async {
+      // An un-mocked void channel call resolves silently on modern
+      // Flutter, so force the real failure shape: a handler that errors,
+      // like a native side with no sheet to present.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(const MethodChannel('cab_hustle/share'),
+              (call) async {
+        throw PlatformException(code: 'not_ready');
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+                const MethodChannel('cab_hustle/share'), null);
+      });
+
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      final button = find.byKey(const Key('share_diagnostics_button'));
+      await tester.dragUntilVisible(
+          button, find.byType(Scrollable).first, const Offset(0, -200));
+      await tester.tap(button);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Could not open the share sheet.'), findsOneWidget,
+          reason: 'the diagnostics button never dies silently');
     });
   });
 

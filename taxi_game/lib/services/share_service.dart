@@ -30,4 +30,11 @@ class ShareService {
       'text': text,
     });
   }
+
+  /// Presents the share sheet for plain [text] — the diagnostics export
+  /// rides this. Same rules as the score card: the user drives the sheet,
+  /// nothing is transmitted anywhere by the app itself.
+  Future<void> shareText(String text) {
+    return channel.invokeMethod<void>('shareText', {'text': text});
+  }
 }

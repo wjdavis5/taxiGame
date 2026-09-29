@@ -2,7 +2,7 @@ import 'dart:async' show unawaited;
 
 import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform;
+    show TargetPlatform, defaultTargetPlatform, debugPrint;
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 
@@ -248,11 +248,13 @@ class AudioService {
           return;
         }
         _enginePlayer = player;
+        debugPrint('[audio] engine loop started');
       }());
     } else {
       final player = _enginePlayer;
       _enginePlayer = null;
       if (player != null) {
+        debugPrint('[audio] engine loop stopped');
         unawaited(() async {
           try {
             await player.stop();

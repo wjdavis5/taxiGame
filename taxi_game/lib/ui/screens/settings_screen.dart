@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/audio_service.dart';
+import '../../services/diagnostics.dart';
 import '../../services/game_state_service.dart';
 import '../../services/haptics_service.dart';
+import '../../services/share_service.dart';
 import 'credits_screen.dart';
 import 'records_screen.dart';
 import 'stats_screen.dart';
@@ -202,6 +204,75 @@ class SettingsScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 24),
+                    // On-device telemetry (the crash-diagnosis kind): a
+                    // local log of the last minutes of play, shareable by
+                    // hand through the OS sheet — the zero-network promise
+                    // holds, and so does the privacy policy.
+                    const _SectionLabel('Diagnostics'),
+                    Card(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      elevation: 0,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'A local log of the last few minutes of '
+                              'play, kept for crash reports. Nothing '
+                              'leaves this device until you share it '
+                              'yourself.',
+                              style: TextStyle(
+                                  fontSize: 13, color: Colors.white70),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                key: const Key('share_diagnostics_button'),
+                                icon: const Icon(Icons.ios_share),
+                                label: const Text('SHARE DIAGNOSTICS'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.yellow,
+                                  foregroundColor: Colors.black,
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
+                                ),
+                                onPressed: () => _shareDiagnostics(context),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              width: double.infinity,
+                              child: TextButton(
+                                key: const Key('clear_diagnostics_button'),
+                                onPressed: () async {
+                                  audioOf(context)?.playButtonSound();
+                                  hapticsOf(context)?.buttonPress();
+                                  await Diagnostics.instance.clear();
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Diagnostics cleared.'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                },
+                                child: const Text(
+                                  'CLEAR',
+                                  style:
+                                      TextStyle(color: Colors.white70),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
                     const _SectionLabel('About'),
                     // The records screen (issue #21): personal bests and
                     // achievements. A reading screen, like the stats one
@@ -280,6 +351,27 @@ class SettingsScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// Hands the diagnostics tail to the OS share sheet — the same
+  /// user-driven channel the score card uses, so the zero-network claim
+  /// is untouched. A missing native handler (non-iOS) explains itself
+  /// instead of dying silently.
+  Future<void> _shareDiagnostics(BuildContext context) async {
+    audioOf(context)?.playButtonSound();
+    hapticsOf(context)?.buttonPress();
+    try {
+      await const ShareService()
+          .shareText(Diagnostics.instance.export());
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open the share sheet.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   /// Resetting wipes the save, so it asks first.
