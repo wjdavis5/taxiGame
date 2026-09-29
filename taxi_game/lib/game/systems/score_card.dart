@@ -24,6 +24,7 @@ class ScoreCardData {
     required this.isDailyShift,
     required this.isGhostRace,
     required this.isPersonalBest,
+    required this.rankTitle,
   });
 
   /// Assembles the card for a shift that just ended. [seed] is the run's
@@ -58,7 +59,31 @@ class ScoreCardData {
       isDailyShift: isDailyShift,
       isGhostRace: isGhostRace,
       isPersonalBest: summary.isPersonalBest,
+      rankTitle: rankTitleFor(
+        score: summary.score,
+        outcome: summary.outcome,
+        bestChain: summary.bestChain,
+      ),
     );
+  }
+
+  /// The shareable rank a run earned, in the audience's own register — a
+  /// kid does not share "1,240 pts", they share "I got TRAFFIC MENACE,
+  /// beat that". Score bands name the tier; a wreck at a high chain
+  /// overrides with the heartbreak title, because losing an ×8 chain is
+  /// the most shareable thing this game produces.
+  static String rankTitleFor({
+    required int score,
+    required ShiftOutcome outcome,
+    required int bestChain,
+  }) {
+    if (outcome == ShiftOutcome.wrecked && bestChain >= 8) {
+      return 'SO CLOSE IT HURTS';
+    }
+    if (score >= 5000) return 'GIG-LEGEND';
+    if (score >= 2000) return 'TRAFFIC MENACE';
+    if (score >= 500) return 'CERTIFIED HUSTLER';
+    return 'RADIO ROOKIE';
   }
 
   /// What the run was: the day's shared course, a race against the
@@ -93,6 +118,11 @@ class ScoreCardData {
   /// True when the run beat the personal best — the card earns its badge.
   final bool isPersonalBest;
 
+  /// The shareable rank the run earned ('TRAFFIC MENACE', 'RADIO
+  /// ROOKIE') — the line a group chat actually reads. Derived by
+  /// [rankTitleFor] from numbers the summary already carries.
+  final String rankTitle;
+
   /// '×N', as the summary panel shows it.
   String get chainLabel => '\u00d7$bestChain';
 
@@ -101,14 +131,14 @@ class ScoreCardData {
 
   /// The plain-text line handed to the share sheet beside the image:
   /// every number the issue asks the card to carry, readable without
-  /// opening the image.
+  /// opening the image — led by the rank, the hook.
   String get shareText {
     final course = isDailyShift
         ? 'Daily Shift $dateKey, seed $seed'
         : isGhostRace
             ? 'ghost race on the $dateKey course, seed $seed'
             : '$dateKey, seed $seed';
-    return 'CAB HUSTLE — $title: $score pts\n'
+    return 'CAB HUSTLE — $title: $score pts \u00b7 $rankTitle\n'
         'Best chain $chainLabel \u00b7 $distanceLabel\n'
         '$course';
   }

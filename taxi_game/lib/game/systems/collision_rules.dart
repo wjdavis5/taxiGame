@@ -55,6 +55,27 @@ class CrashReport {
   final Vector2 trafficPosition;
   final Vector2 contactPoint;
 
+  /// The one-line, player-facing version of the contact: what was hit and
+  /// how hard, in words. The overlays show this; [explanation] stays the
+  /// telemetry version for logs — a kid on the CRASH! screen needs "you
+  /// hit the bus flat out", not px/s and world coordinates.
+  String get headline {
+    // Player top speed is 150 px/s (see CollisionRules above), so the
+    // words sit on that scale: flat out, merely fast, or barely moving.
+    final speedWord = playerSpeed >= 130
+        ? 'flat out'
+        : playerSpeed >= 70
+            ? 'at speed'
+            : '';
+    final how = speedWord.isEmpty ? '' : ' $speedWord';
+    switch (severity) {
+      case ContactSeverity.crash:
+        return 'You hit the $vehicleKind$how.';
+      case ContactSeverity.scrape:
+        return 'You scraped the $vehicleKind — slower now, nothing lost.';
+    }
+  }
+
   /// One-line, self-contained explanation of the contact.
   String get explanation {
     final axis = closingSpeedAlongImpact.toStringAsFixed(1);

@@ -301,7 +301,9 @@ void main() {
       expect(find.text('BANK ${fare0.reward}'), findsOneWidget);
       expect(find.text('PUSH ON \u00d73'), findsOneWidget,
           reason: 'the push button shows the multiplier it buys');
-      expect(find.text('SCORE ${fare0.reward}'), findsOneWidget);
+      expect(find.text('AT RISK ${fare0.reward}'), findsOneWidget,
+          reason: 'the header names the currency: the score is at risk, '
+              'not yet the wallet\'s');
       expect(find.byKey(const ValueKey('bank_prompt_bar')), findsOneWidget,
           reason: 'the window shows itself running out');
     });
@@ -346,6 +348,87 @@ void main() {
       expect(gameState.totalCoins, coinsBefore + fare0.reward + fare0.reward);
       expect(game.isGameActive, isFalse);
       expect(game.overlays.isActive('shiftBanked'), isTrue);
+    });
+  });
+
+  group("the primer: the first offer a save ever sees", () {
+    test('stops traffic for the first offer and releases it on the answer',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      expect(game.paused, isFalse, reason: 'sanity: the shift starts live');
+
+      deliverFare(game, game.course!.fare(0));
+
+      expect(game.bankPrompt.isActive, isTrue);
+      expect(game.paused, isTrue,
+          reason: 'the first-ever choice is read, not reacted to');
+      expect(gameState.bankPromptSeen, isTrue,
+          reason: 'the primer is once per save, and it is already spent');
+
+      game.pushOn();
+      expect(game.paused, isFalse, reason: 'the answer releases the freeze');
+      expect(game.fareChain.multiplier, 3);
+    });
+
+    test('an offer to a save that has already seen one rides live traffic',
+        () async {
+      gameState.markBankPromptSeen();
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      deliverFare(game, game.course!.fare(0));
+
+      expect(game.bankPrompt.isActive, isTrue);
+      expect(game.paused, isFalse,
+          reason: 'only the first-ever offer stops the world');
+    });
+
+    test('the pause button stands down while the primer holds the freeze',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      deliverFare(game, game.course!.fare(0));
+
+      game.pauseGame();
+      expect(game.overlays.isActive('pauseMenu'), isFalse,
+          reason: 'the primer already owns the freeze; no menu stacks on it');
+
+      game.resumeGame();
+      expect(game.paused, isTrue,
+          reason: 'a stray resume cannot unfreeze the primer');
+
+      game.bankShift();
+      expect(game.paused, isFalse,
+          reason: 'the choice itself is still the way out');
+    });
+  });
+
+  group('banking out of the pause menu', () {
+    test('pays the at-risk score out and ends the shift with its summary',
+        () async {
+      final coinsBefore = gameState.totalCoins;
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      game.fareChain.score = 240;
+
+      game.bankFromPause();
+
+      expect(game.lastBankedScore, 240);
+      expect(gameState.totalCoins, coinsBefore + 240);
+      expect(game.overlays.isActive('shiftBanked'), isTrue,
+          reason: 'quitting through the bank earns the summary, not silence');
+      expect(game.isGameActive, isFalse);
+    });
+
+    test('is a no-op without a score to protect', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      game.bankFromPause();
+
+      expect(game.overlays.isActive('shiftBanked'), isFalse);
+      expect(game.lastBankedScore, isNull);
     });
   });
 }

@@ -97,7 +97,7 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                           ),
                         ),
                         Text(
-                          'SCORE ${chain.score}',
+                          'AT RISK ${chain.score}',
                           style: const TextStyle(
                             color: Colors.amber,
                             fontSize: 15,
@@ -111,6 +111,8 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                     // The stake, in one line: banking is the only way to
                     // keep it. In the tutorial ladder (issue #16) the run
                     // being settled is a level; in a shift, the shift.
+                    // The biggest sentence on the panel on purpose — it
+                    // is the choice being priced.
                     Text(
                       widget.game.isEndless
                           ? 'Bank ends the shift and keeps it — a crash '
@@ -118,7 +120,7 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                           : 'Bank ends the level and keeps it — a crash '
                               'loses it.',
                       style: const TextStyle(
-                          color: Colors.white70, fontSize: 11),
+                          color: Colors.white, fontSize: 13),
                     ),
                     const SizedBox(height: 8),
                     // The window closing: pushes itself toward a default.

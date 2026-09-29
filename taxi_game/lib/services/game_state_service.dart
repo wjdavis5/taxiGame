@@ -427,6 +427,21 @@ class GameStateService extends ChangeNotifier {
     save();
   }
 
+  /// True once this save has been offered a bank-or-push choice at least
+  /// once. The first offer on a save stops traffic for the decision (the
+  /// primer); the game reads this to decide whether an offer is a first.
+  bool get bankPromptSeen => _saveData.bankPromptSeen;
+
+  /// Marks the save as having seen the bank-or-push choice, and persists
+  /// it immediately — the primer is once per save, ever. Idempotent,
+  /// like [dismissControlHint].
+  void markBankPromptSeen() {
+    if (_saveData.bankPromptSeen) return;
+    _saveData.bankPromptSeen = true;
+    notifyListeners();
+    save();
+  }
+
   /// Reset all progress (for testing)
   void resetProgress() {
     // The fresh save also un-dismisses the stick-control hint (issue

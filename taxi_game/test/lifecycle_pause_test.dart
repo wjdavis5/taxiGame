@@ -51,6 +51,11 @@ void main() {
     await storage.init();
     gameState = GameStateService(storage);
     await gameState.loadSaveData();
+    // These tests stage a bank window over a LIVE run — mark the primer
+    // spent up front, or the first-ever offer would hold its teaching
+    // freeze through the backgrounding and change what "was running"
+    // means below.
+    gameState.markBankPromptSeen();
   });
 
   /// Mounts [game] headlessly so component `onLoad` hooks run (the

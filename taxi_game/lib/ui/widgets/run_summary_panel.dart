@@ -112,7 +112,7 @@ class RunSummaryPanel extends StatelessWidget {
               else ...[
                 // What ended it: the third crash, named like every other.
                 Text(
-                  game.lastImpact?.explanation ??
+                  game.lastImpact?.headline ??
                       'Three crashes — the shift is over.',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
@@ -127,6 +127,17 @@ class RunSummaryPanel extends StatelessWidget {
                     fontSize: 20,
                     color: Colors.yellow,
                     fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                // The recovery lesson in the failure it answers: banking
+                // is the escape the third crash just cost the player.
+                const Text(
+                  'Tip: banking at a dropoff keeps your coins safe.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white70,
                   ),
                 ),
               ],

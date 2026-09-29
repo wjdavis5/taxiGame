@@ -168,6 +168,9 @@ void main() {
       expect(find.byKey(const ValueKey('ghost_badge')), findsOneWidget);
       expect(find.textContaining(RegExp(r'^GHOST [+-]?\d+ m$')),
           findsOneWidget);
+      expect(find.text('AT RISK 0'), findsOneWidget,
+          reason: 'an endless run labels its score with what it is: '
+              'forfeit-able until banked, unlike the wallet beside it');
       expect(game.ghostGapMetres!, lessThan(0),
           reason: 'the ghost is down the road; the player is behind');
 

@@ -39,15 +39,14 @@ class HudOverlay extends StatelessWidget {
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: game.isEndless
+                          // The rung's authored name ('First Ride',
+                          // 'Bank It') rides the number: the ladder's
+                          // flavor is content, not dead JSON. Polled like
+                          // the distance badge because the name lands
+                          // with the async level load, after this bar's
+                          // first build.
                           ? _EndlessDistanceBadge(game: game)
-                          : Text(
-                              'Level ${game.currentLevelNumber}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                          : _LevelNameBadge(game: game),
                     );
                   },
                 ),
@@ -123,32 +122,60 @@ class HudOverlay extends StatelessWidget {
             // waiting ahead, and the decline that makes it a choice.
             _FareOfferBar(game: game),
 
+            // The lower screen belongs to the thumb: no instruction bar
+            // down here (the one-time control hint owns teaching, and a
+            // permanent pill would sit exactly where the stick's ring
+            // rises and contradict what the hint taught).
             const Spacer(),
-            
-            // Bottom instruction
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 12,
-              ),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(25),
-              ),
-              child: const Text(
-                'HOLD OR ↑ TO DRIVE • ←→ STEER',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ),
-            
             const SizedBox(height: 20),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The ladder rung's number and authored name (issue: the ten level
+/// names are content, not dead JSON). Polls on the same short timer as
+/// the distance badge — the name arrives with the async level load.
+class _LevelNameBadge extends StatefulWidget {
+  const _LevelNameBadge({required this.game});
+
+  final TaxiGame game;
+
+  @override
+  State<_LevelNameBadge> createState() => _LevelNameBadgeState();
+}
+
+class _LevelNameBadgeState extends State<_LevelNameBadge> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.game.currentLevelName;
+    final label = (name == null || name.isEmpty)
+        ? 'Level ${widget.game.currentLevelNumber}'
+        : 'Level ${widget.game.currentLevelNumber} \u00b7 $name';
+    return Text(
+      label.toUpperCase(),
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 18,
+        fontWeight: FontWeight.bold,
       ),
     );
   }
@@ -243,14 +270,19 @@ class _ScoringBarState extends State<_ScoringBar> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        // Run score and lives, left. The lives badge is endless-only:
-        // the tutorial ladder has no failure budget to show, and a
-        // badge that never moves is noise.
+        // Run score and lives, left. The score is labelled by what it is:
+        // at-risk chain score in an endless shift (it is forfeited by a
+        // wreck and only kept by a bank), plain score in the tutorial
+        // ladder, which settles at completion. The lives badge is
+        // endless-only: the tutorial ladder has no failure budget to
+        // show, and a badge that never moves is noise.
         Row(
           children: [
             _HudPill(
               child: Text(
-                'SCORE ${chain.score}',
+                widget.game.isEndless
+                    ? 'AT RISK ${chain.score}'
+                    : 'SCORE ${chain.score}',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 16,
@@ -313,7 +345,9 @@ class _HudPill extends StatelessWidget {
 /// The shift's remaining lives (issue #14): a heart per life, full red
 /// while held and hollowed out as crashes spend them. Always visible in
 /// an endless shift — the whole point of a failure budget is knowing how
-/// much of it is left.
+/// much of it is left. Keyed on the count so each spend re-pops the
+/// badge: the pulse is the badge's half of the crash feedback (the world
+/// pop is the other half).
 class _LivesBadge extends StatelessWidget {
   const _LivesBadge({super.key, required this.remaining});
 
@@ -322,18 +356,26 @@ class _LivesBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _HudPill(
-      child: Row(
-        children: [
-          for (var i = 0; i < LivesTracker.maxLives; i++) ...[
-            if (i > 0) const SizedBox(width: 3),
-            Icon(
-              i < remaining ? Icons.favorite : Icons.favorite_border,
-              color: i < remaining ? Colors.red : Colors.white24,
-              size: 16,
-            ),
+    return TweenAnimationBuilder<double>(
+      key: ValueKey('lives-pulse-$remaining'),
+      tween: Tween(begin: 1.4, end: 1.0),
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+      builder: (context, scale, child) =>
+          Transform.scale(scale: scale, child: child),
+      child: _HudPill(
+        child: Row(
+          children: [
+            for (var i = 0; i < LivesTracker.maxLives; i++) ...[
+              if (i > 0) const SizedBox(width: 3),
+              Icon(
+                i < remaining ? Icons.favorite : Icons.favorite_border,
+                color: i < remaining ? Colors.red : Colors.white24,
+                size: 16,
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -505,6 +547,10 @@ class _FareOfferBarState extends State<_FareOfferBar> {
   @override
   Widget build(BuildContext context) {
     if (!widget.game.isEndless) return const SizedBox.shrink();
+    // The bank-or-push panel draws in this same band (issue #13): stand
+    // the offer down while the choice is up, so the prompt never covers
+    // the SKIP the player might still want once it resolves.
+    if (widget.game.bankPrompt.isActive) return const SizedBox.shrink();
     final offer = widget.game.currentFareOffer;
     if (offer == null) return const SizedBox.shrink();
 
@@ -531,13 +577,15 @@ class _FareOfferBarState extends State<_FareOfferBar> {
                 ),
                 const SizedBox(width: 4),
                 // The decline: removes the waiting fare from the street —
-                // no pay, no penalty. The whole decision is here.
+                // no pay, no penalty. The whole decision is here. Sized
+                // to the platform's minimum touch target: the decline is
+                // the point of the offer bar, not fine print.
                 TextButton(
                   key: const ValueKey('decline_fare_button'),
                   style: TextButton.styleFrom(
                     visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(0, 32),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(44, 44),
                   ),
                   onPressed: () => widget.game.declineCurrentOffer(),
                   child: const Text(

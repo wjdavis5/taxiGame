@@ -121,6 +121,11 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   Widget _buildPauseMenu(BuildContext context) {
+    // The at-risk stake (issue #5): quitting an endless run forfeits the
+    // unbanked score silently, so the menu names the number — and offers
+    // the bank as the exit that keeps it. A level or a scoreless run has
+    // nothing at stake, and the menu stays the plain two buttons.
+    final atRisk = game.isEndless ? game.score : 0;
     return Center(
       child: Container(
         padding: const EdgeInsets.all(20),
@@ -140,6 +145,17 @@ class _GameScreenState extends State<GameScreen> {
                 color: Colors.white,
               ),
             ),
+            if (atRisk > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                '$atRisk coins at risk',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.amber,
+                ),
+              ),
+            ],
             const SizedBox(height: 30),
             ElevatedButton(
               onPressed: () {
@@ -147,17 +163,53 @@ class _GameScreenState extends State<GameScreen> {
                 game.haptics?.buttonPress();
                 game.resumeGame();
               },
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 40, vertical: 12),
+              ),
               child: const Text('RESUME'),
             ),
+            if (atRisk > 0) ...[
+              const SizedBox(height: 10),
+              ElevatedButton(
+                key: const ValueKey('pause_bank_button'),
+                onPressed: () {
+                  game.audio?.playButtonSound();
+                  game.haptics?.buttonPress();
+                  game.bankFromPause();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.yellow,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 30, vertical: 12),
+                ),
+                child: Text(
+                  'BANK $atRisk & QUIT',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
-            ElevatedButton(
+            TextButton(
+              key: const ValueKey('pause_quit_button'),
               onPressed: () {
                 game.audio?.playButtonSound();
                 game.haptics?.buttonPress();
                 Navigator.of(context).pop();
               },
-              child: const Text('MAIN MENU'),
+              child: Text(
+                atRisk > 0 ? 'QUIT — $atRisk LOST' : 'MAIN MENU',
+                style: const TextStyle(color: Colors.white),
+              ),
             ),
+            // The daily's one attempt survives an abandoned run, and the
+            // player quitting mid-daily deserves to know that.
+            if (game.isDailyShift)
+              const Text(
+                "Today's daily attempt is saved.",
+                style: TextStyle(fontSize: 12, color: Colors.white70),
+              ),
           ],
         ),
       ),
@@ -206,6 +258,19 @@ class LevelCompleteOverlay extends StatelessWidget {
                 color: Colors.white,
               ),
             ),
+            // The rung's authored name ('First Ride', 'Bank It') — the
+            // ladder's flavor, finally on screen where it was written
+            // for.
+            if (!handoff && game.currentLevelName != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Level ${game.currentLevelNumber} — ${game.currentLevelName}',
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: Colors.white70,
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
             // The payout line (issue #34): a banked level was paid the
             // chain score at the dropoff — the flat reward was forfeited
@@ -314,7 +379,7 @@ class LevelFailedOverlay extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Text(
-              game.lastImpact?.explanation ?? 'You collided with traffic.',
+              game.lastImpact?.headline ?? 'You collided with traffic.',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 14,

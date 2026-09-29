@@ -72,6 +72,19 @@ class ScoreCardRenderer {
       letterSpacing: 8,
     );
 
+    // The shareable rank ('TRAFFIC MENACE') — the line a group chat
+    // reads first, in the brand accent so it outranks the title above
+    // it and trails the score below.
+    _drawCentered(
+      canvas,
+      card.rankTitle,
+      at: const ui.Offset(cardWidth / 2, 330),
+      size: 40,
+      color: _accent,
+      weight: ui.FontWeight.w900,
+      letterSpacing: 6,
+    );
+
     // The number being shared.
     _drawCentered(
       canvas,

@@ -102,6 +102,9 @@ void main() {
     expect(find.text('SHIFT BANKED'), findsOneWidget);
     expect(find.text('+240 Coins'), findsOneWidget,
         reason: 'the banked payout is the headline');
+    expect(find.text('Tip: banking at a dropoff keeps your coins safe.'),
+        findsNothing,
+        reason: 'the tip is the wreck\'s lesson, not the bank\'s');
     expect(find.text('Score'), findsOneWidget);
     expect(find.text('240'), findsOneWidget);
     expect(find.text('Best chain'), findsOneWidget);
@@ -127,6 +130,9 @@ void main() {
     expect(find.text('Three crashes — the shift is over.'),
         findsOneWidget, reason: 'the crash is explained, not swallowed');
     expect(find.text('Forfeited: 90 coins'), findsOneWidget);
+    expect(find.text('Tip: banking at a dropoff keeps your coins safe.'),
+        findsOneWidget,
+        reason: 'the failure teaches its own escape');
     expect(find.text('62 m'), findsOneWidget);
     expect(find.text('Coins earned'), findsOneWidget);
     expect(find.text('40'), findsOneWidget,

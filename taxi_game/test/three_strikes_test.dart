@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/life_lost_pop.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/systems/collision_rules.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
@@ -136,6 +137,62 @@ void main() {
         trafficPosition: Vector2(200, 40),
         contactPoint: Vector2(199.5, 70),
       );
+
+  group('the crash feedback names the spent life', () {
+    test('a survivable crash pops -1 LIFE over the frozen taxi', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      game.onCrash(busCrash());
+      // The pop rides the freeze: hit-stop and stall first, then the
+      // settled drain mounts it (Flame queues world adds for the next
+      // full update, which the frozen frames never run).
+      playOutStall(game);
+      await tickAndSettle(game);
+
+      final pops = game.descendants().whereType<LifeLostPop>().toList();
+      expect(pops, hasLength(1),
+          reason: 'the stall alone is not an explanation — the cost is');
+      expect(pops.single.text, contains('-1 LIFE'));
+      expect(pops.single.text, contains('2 LEFT'),
+          reason: 'the pop says how much of the budget survives');
+    });
+
+    test('the third crash adds no pop of its own — the panel speaks',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      game.onCrash();
+      playOutStall(game);
+      await tickAndSettle(game);
+      game.onCrash();
+      playOutStall(game);
+      await tickAndSettle(game);
+      game.onCrash(busCrash());
+
+      expect(
+        game.descendants().whereType<LifeLostPop>(),
+        hasLength(2),
+        reason: 'the first two crashes each popped; the wreck panel is '
+            'the third crash\'s explanation',
+      );
+    });
+
+    test('the pop rises away once the world resumes', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      game.onCrash(busCrash());
+      playOutStall(game);
+      await tickAndSettle(game);
+      expect(game.descendants().whereType<LifeLostPop>(), isNotEmpty);
+
+      advanceGameTime(game, LifeLostPop.lifetime + 0.1);
+      expect(game.descendants().whereType<LifeLostPop>(), isEmpty,
+          reason: 'like every award pop, it removes itself');
+    });
+  });
 
   group('LivesTracker', () {
     test('a shift starts with a full budget of three', () {

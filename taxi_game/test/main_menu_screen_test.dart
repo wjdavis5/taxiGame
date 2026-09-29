@@ -85,8 +85,9 @@ void main() {
     expect(find.text('ENDLESS SHIFT'), findsOneWidget);
   });
 
-  testWidgets('endless shift is the first button on the menu — the '
-      'primary mode, not a secondary one (issue #15)', (tester) async {
+  testWidgets('on a fresh save the ladder leads — the designed on-ramp '
+      'is the headline action, and the one-attempt daily stands back',
+      (tester) async {
     final storageService = StorageService();
     await storageService.init();
     final gameStateService = GameStateService(storageService);
@@ -94,22 +95,61 @@ void main() {
     await tester.pumpWidget(buildMenu(gameStateService, storageService));
     await tester.pump();
 
+    final playButton = find.byKey(const Key('play_button'));
+    final endlessButton = find.byKey(const ValueKey('endless_button'));
+    final dailyButton = find.byKey(const ValueKey('daily_button'));
+    expect(find.text('START DRIVING'), findsOneWidget,
+        reason: 'the first-run label names the on-ramp');
+    expect(
+      tester.getRect(playButton).top,
+      lessThan(tester.getRect(endlessButton).top),
+      reason: 'a first-timer is led to the ladder, not the daily gamble',
+    );
+    expect(
+      tester.getRect(endlessButton).top,
+      lessThan(tester.getRect(dailyButton).top),
+      reason: 'the daily — one attempt a day — comes last for a first-timer',
+    );
+
+    // And the on-ramp is styled as the headline: the yellow signature
+    // colour, while the mode buttons step back in white.
+    final playColor =
+        tester.widget<ElevatedButton>(playButton).style?.backgroundColor;
+    final endlessColor =
+        tester.widget<ElevatedButton>(endlessButton).style?.backgroundColor;
+    expect(playColor, isNot(endlessColor),
+        reason: 'only the on-ramp is styled like the headline');
+  });
+
+  testWidgets('a finished save keeps the retained order: daily first, '
+      'endless the headline beneath it (issues #15, #19)', (tester) async {
+    final storageService = StorageService();
+    await storageService.init();
+    final gameStateService = GameStateService(storageService);
+    // Climb the whole ladder: the save now sits past the last rung.
+    for (var level = 1; level <= 10; level++) {
+      gameStateService.completeLevel(level, 0);
+    }
+    expect(gameStateService.tutorialComplete, isTrue);
+
+    await tester.pumpWidget(buildMenu(gameStateService, storageService));
+    await tester.pump();
+
+    final dailyButton = find.byKey(const ValueKey('daily_button'));
     final endlessButton = find.byKey(const ValueKey('endless_button'));
     final playButton = find.byKey(const Key('play_button'));
+    expect(
+      tester.getRect(dailyButton).top,
+      lessThan(tester.getRect(endlessButton).top),
+      reason: "today's shared course leads a retained player's menu",
+    );
     expect(
       tester.getRect(endlessButton).top,
       lessThan(tester.getRect(playButton).top),
       reason: 'endless sits above the career ladder',
     );
-
-    // And it is styled as the primary action: the yellow signature
-    // colour, while the ladder button steps back in white.
-    final endlessColor =
-        tester.widget<ElevatedButton>(endlessButton).style?.backgroundColor;
-    final playColor =
-        tester.widget<ElevatedButton>(playButton).style?.backgroundColor;
-    expect(endlessColor, isNot(playColor),
-        reason: 'the headline mode is styled like one');
+    expect(find.text('PLAY'), findsOneWidget,
+        reason: 'the finished save keeps the plain PLAY label');
   });
 
   testWidgets('the personal best shows under the endless button once a '
@@ -173,11 +213,14 @@ void main() {
       expect(find.textContaining('ONE SHIFT'), findsOneWidget);
     });
 
-    testWidgets('the daily is the first button on the menu — the day\'s '
-        'ritual comes before the open-ended mode', (tester) async {
+    testWidgets('the daily leads the menu once the ladder is finished',
+        (tester) async {
       final storageService = StorageService();
       await storageService.init();
       final gameStateService = GameStateService(storageService);
+      for (var level = 1; level <= 10; level++) {
+        gameStateService.completeLevel(level, 0);
+      }
 
       await tester.pumpWidget(buildMenu(gameStateService, storageService));
       await tester.pump();
@@ -191,15 +234,15 @@ void main() {
       );
     });
 
-    testWidgets('once today\'s daily has ended, the button shows the day '
-        'is done instead of offering a replay', (tester) async {
+    testWidgets('once today\'s daily has ended, the button names the '
+        'destination it opens instead of offering a replay', (tester) async {
       final storageService = StorageService();
       await storageService.init();
       final gameStateService = GameStateService(storageService);
 
       await tester.pumpWidget(buildMenu(gameStateService, storageService));
       await tester.pump();
-      expect(find.text('DAILY COMPLETE'), findsNothing);
+      expect(find.text("TODAY'S RESULT"), findsNothing);
 
       await gameStateService.recordDailyResult(DailyResult(
         dateKey: DailyShift.todayKey,
@@ -209,7 +252,7 @@ void main() {
       ));
       await tester.pump();
 
-      expect(find.text('DAILY COMPLETE'), findsOneWidget);
+      expect(find.text("TODAY'S RESULT"), findsOneWidget);
       expect(find.text('DAILY SHIFT'), findsNothing);
       expect(find.textContaining('340 PTS'), findsOneWidget,
           reason: 'the day\'s score stays on the menu until midnight');

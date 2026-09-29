@@ -70,12 +70,13 @@ class MainMenuScreen extends StatelessWidget {
                       return Column(
                         children: [
                           _buildStatRow(
-                            Icons.star,
-                            // Past the last rung the ladder is finished
-                            // (issue #16): PLAY hands off to Endless, and
-                            // the stat stops promising an eleventh level.
+                            // A school cap, not a star: stars read as
+                            // ratings, and this number is the ladder
+                            // rung. The wording matches the completion
+                            // panel's 'TUTORIAL COMPLETE!'.
+                            Icons.school,
                             gameState.tutorialComplete
-                                ? 'TUTORIAL DONE'
+                                ? 'TUTORIAL COMPLETE'
                                 : 'Level ${gameState.currentLevel}',
                           ),
                           const SizedBox(height: 10),
@@ -90,150 +91,43 @@ class MainMenuScreen extends StatelessWidget {
 
                   const SizedBox(height: 60),
 
-                  // The Date-seeded Daily Shift (issue #19): one shared
-                  // course a day, derived from the date — computed, never
-                  // fetched, so the game stays fully offline. One attempt:
-                  // once today's shift has ended, the button becomes the
-                  // way back to the day's result instead of a replay.
+                  // The play modes, ordered by who is holding the phone
+                  // (first-run hierarchy): a save still on the ladder
+                  // leads with the ladder — the designed on-ramp that
+                  // teaches pickups, timers, chains, and banking — with
+                  // Endless and the one-attempt-a-day Daily standing
+                  // back in white until the tutorial is done. A finished
+                  // save keeps the retained player's order (issue #19
+                  // put the day's ritual on top; issue #15 made Endless
+                  // the headline beneath it).
                   Consumer<GameStateService>(
                     builder: (context, gameState, child) {
-                      final result = gameState.todayDailyResult;
+                      final firstRun = !gameState.tutorialComplete;
                       return Column(
                         children: [
-                          _MenuButton(
-                            buttonKey: const ValueKey('daily_button'),
-                            icon: result == null
-                                ? Icons.event
-                                : Icons.emoji_events,
-                            label: result == null
-                                ? 'DAILY SHIFT'
-                                : 'DAILY COMPLETE',
-                            primary: true,
-                            onPressed: () {
-                              if (result == null) {
-                                // The day's course: the seed derived from
-                                // today's date (issue #19's shared course,
-                                // riding issue #11's endless shift).
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => GameScreen(
-                                      endlessSeed: DailyShift.seedForDateKey(
-                                          DailyShift.todayKey),
-                                      isDailyShift: true,
-                                    ),
-                                  ),
-                                );
-                              } else {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        const DailyScreen(),
-                                  ),
-                                );
-                              }
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            result == null
-                                ? '${DailyShift.todayKey} \u00b7 ONE SHIFT, '
-                                    'SAME FOR EVERYONE'
-                                : '${result.score} PTS \u00b7 DONE FOR TODAY',
-                            key: const ValueKey('daily_status'),
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                          TextButton(
-                            key: const ValueKey('daily_history_button'),
-                            onPressed: () {
-                              audioOf(context)?.playButtonSound();
-                              hapticsOf(context)?.buttonPress();
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const DailyScreen(),
-                                ),
-                              );
-                            },
-                            child: const Text(
-                              'DAILY HISTORY',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white70,
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // Endless shift is the headline mode (issue #15): the
-                  // top shift button, in the primary style, with the score
-                  // to beat right beneath it. (Issue #19 later added the
-                  // day's Daily above it — the one course that is shared,
-                  // where this one is the player's own.) A procedurally
-                  // generated run (issue #11) — each shift gets a fresh
-                  // seed, and the seed fully determines the course.
-                  Consumer<GameStateService>(
-                    builder: (context, gameState, child) {
-                      return Column(
-                        children: [
-                          _MenuButton(
-                            buttonKey: const ValueKey('endless_button'),
-                            icon: Icons.all_inclusive,
-                            label: 'ENDLESS SHIFT',
-                            primary: true,
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => GameScreen(
-                                    endlessSeed: TaxiGame.freshSeed(),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                          if (gameState.endlessBestScore > 0) ...[
-                            const SizedBox(height: 10),
-                            Text(
-                              'BEST ${gameState.endlessBestScore}',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
+                          if (firstRun) ...[
+                            // The designed on-ramp, as the headline:
+                            // the ladder teaches pickups, timers,
+                            // chains, and banking (levels 9–10) before
+                            // the game ever risks anything on the
+                            // player.
+                            _buildLadderButton(context, primary: true),
+                            const SizedBox(height: 20),
+                            _buildEndlessBlock(context, gameState,
+                                primary: false),
+                            const SizedBox(height: 20),
+                            _buildDailyBlock(context, gameState,
+                                primary: false),
+                          ] else ...[
+                            _buildDailyBlock(context, gameState,
+                                primary: true),
+                            const SizedBox(height: 20),
+                            _buildEndlessBlock(context, gameState,
+                                primary: true),
+                            const SizedBox(height: 20),
+                            _buildLadderButton(context, primary: false),
                           ],
                         ],
-                      );
-                    },
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // The hand-made career ladder (issue #11's predecessor):
-                  // one crash fails the level, and completion unlocks the
-                  // next.
-                  _MenuButton(
-                    buttonKey: const Key('play_button'),
-                    icon: Icons.play_arrow,
-                    label: 'PLAY',
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const GameScreen(),
-                        ),
                       );
                     },
                   ),
@@ -314,6 +208,158 @@ class MainMenuScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  /// The hand-made career ladder button (issue #11's predecessor): one
+  /// crash fails the level, and completion unlocks the next. While the
+  /// ladder is unfinished this is the menu's headline action and its
+  /// label says what it is for; a finished save keeps it as the plain
+  /// PLAY it has always been (the handoff to Endless).
+  Widget _buildLadderButton(
+    BuildContext context, {
+    required bool primary,
+  }) {
+    return _MenuButton(
+      buttonKey: const Key('play_button'),
+      icon: Icons.play_arrow,
+      label: primary ? 'START DRIVING' : 'PLAY',
+      primary: primary,
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const GameScreen(),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Endless shift (issue #15): the headline mode for a retained player,
+  /// one step back for a first-timer the ladder should reach first. A
+  /// procedurally generated run (issue #11) — each shift gets a fresh
+  /// seed, and the seed fully determines the course — with the score to
+  /// beat right beneath it.
+  Widget _buildEndlessBlock(
+    BuildContext context,
+    GameStateService gameState, {
+    required bool primary,
+  }) {
+    return Column(
+      children: [
+        _MenuButton(
+          buttonKey: const ValueKey('endless_button'),
+          icon: Icons.all_inclusive,
+          label: 'ENDLESS SHIFT',
+          primary: primary,
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => GameScreen(
+                  endlessSeed: TaxiGame.freshSeed(),
+                ),
+              ),
+            );
+          },
+        ),
+        if (gameState.endlessBestScore > 0) ...[
+          const SizedBox(height: 10),
+          Text(
+            'BEST ${gameState.endlessBestScore}',
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// The Date-seeded Daily Shift block (issue #19): one shared course a
+  /// day, derived from the date — computed, never fetched, so the game
+  /// stays fully offline. One attempt: once today's shift has ended, the
+  /// button becomes the way back to the day's result instead of a replay
+  /// — labelled as the destination it opens, not the state it is in. The
+  /// history link exists only while today is unplayed; once the button
+  /// itself opens the result screen, a second path to it is clutter.
+  Widget _buildDailyBlock(
+    BuildContext context,
+    GameStateService gameState, {
+    required bool primary,
+  }) {
+    final result = gameState.todayDailyResult;
+    return Column(
+      children: [
+        _MenuButton(
+          buttonKey: const ValueKey('daily_button'),
+          icon: result == null ? Icons.event : Icons.emoji_events,
+          label: result == null ? 'DAILY SHIFT' : "TODAY'S RESULT",
+          primary: primary,
+          onPressed: () {
+            if (result == null) {
+              // The day's course: the seed derived from today's date
+              // (issue #19's shared course, riding issue #11's endless
+              // shift).
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => GameScreen(
+                    endlessSeed:
+                        DailyShift.seedForDateKey(DailyShift.todayKey),
+                    isDailyShift: true,
+                  ),
+                ),
+              );
+            } else {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const DailyScreen(),
+                ),
+              );
+            }
+          },
+        ),
+        const SizedBox(height: 10),
+        Text(
+          result == null
+              ? '${DailyShift.todayKey} \u00b7 ONE SHIFT, '
+                  'SAME FOR EVERYONE'
+              : '${result.score} PTS \u00b7 DONE FOR TODAY',
+          key: const ValueKey('daily_status'),
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        if (result == null)
+          TextButton(
+            key: const ValueKey('daily_history_button'),
+            onPressed: () {
+              audioOf(context)?.playButtonSound();
+              hapticsOf(context)?.buttonPress();
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const DailyScreen(),
+                ),
+              );
+            },
+            child: const Text(
+              'DAILY HISTORY',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.white70,
+              ),
+            ),
+          ),
+      ],
     );
   }
 

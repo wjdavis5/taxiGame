@@ -24,10 +24,19 @@ class SaveData {
   int endlessBestScore;
 
   /// True once the one-time stick-control hint (issue #37) has been
-  /// dismissed — by the thumb landing on the stick, never by time or by
-  /// a session ending — so the game must never render it again. Only a
+  /// dismissed — by the thumb landing on the stick, never by time or by a
+  /// session ending — so the game must never render it again. Only a
   /// fresh save (or an explicit reset) leaves it false.
   bool controlHintDismissed;
+
+  /// True once the save has been offered a bank-or-push choice at least
+  /// once. The **first** offer on a save stops traffic for the decision
+  /// (the primer): the choice is the game's core gamble, and it deserves
+  /// one calm, readable introduction before it starts arriving mid-drive
+  /// on a five-second clock. Every later offer rides live traffic, as
+  /// designed. Same convention as [controlHintDismissed]: only a fresh
+  /// save (or an explicit reset) leaves it false.
+  bool bankPromptSeen;
   Settings settings;
 
   SaveData({
@@ -39,6 +48,7 @@ class SaveData {
     required this.achievements,
     this.endlessBestScore = 0,
     this.controlHintDismissed = false,
+    this.bankPromptSeen = false,
     PersonalBests? personalBests,
     required this.settings,
   }) : personalBests = personalBests ?? PersonalBests();
@@ -83,6 +93,11 @@ class SaveData {
       // which round-trips below.
       controlHintDismissed:
           (json['controlHintDismissed'] as bool?) ?? true,
+      // Saves written before the primer existed have already been
+      // offered the choice — a missing key reads as seen, exactly like
+      // the control-hint flag above it. Fresh saves carry the key with
+      // false, which round-trips below.
+      bankPromptSeen: (json['bankPromptSeen'] as bool?) ?? true,
       settings: Settings.fromJson(json['settings'] as Map<String, dynamic>),
     );
   }
@@ -98,6 +113,7 @@ class SaveData {
       'achievements': achievements,
       'endlessBestScore': endlessBestScore,
       'controlHintDismissed': controlHintDismissed,
+      'bankPromptSeen': bankPromptSeen,
       'personalBests': personalBests.toJson(),
       'settings': settings.toJson(),
     };

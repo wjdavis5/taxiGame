@@ -19,6 +19,7 @@ void main() {
     isDailyShift: true,
     isGhostRace: false,
     isPersonalBest: true,
+    rankTitle: 'CERTIFIED HUSTLER',
   );
 
   /// PNG bytes: 8-byte signature, then the IHDR chunk, whose payload
@@ -53,6 +54,7 @@ void main() {
         isDailyShift: false,
         isGhostRace: false,
         isPersonalBest: false,
+        rankTitle: 'RADIO ROOKIE',
       ),
     );
 

@@ -122,4 +122,55 @@ void main() {
     expect(cardFor(banked).isPersonalBest, isTrue);
     expect(cardFor(wrecked).isPersonalBest, isFalse);
   });
+
+  group('the shareable rank title', () {
+    test('the score bands name the tier', () {
+      expect(
+          ScoreCardData.rankTitleFor(
+              score: 0, outcome: ShiftOutcome.banked, bestChain: 1),
+          'RADIO ROOKIE');
+      expect(
+          ScoreCardData.rankTitleFor(
+              score: 499, outcome: ShiftOutcome.banked, bestChain: 1),
+          'RADIO ROOKIE');
+      expect(
+          ScoreCardData.rankTitleFor(
+              score: 500, outcome: ShiftOutcome.banked, bestChain: 1),
+          'CERTIFIED HUSTLER');
+      expect(
+          ScoreCardData.rankTitleFor(
+              score: 2000, outcome: ShiftOutcome.banked, bestChain: 2),
+          'TRAFFIC MENACE');
+      expect(
+          ScoreCardData.rankTitleFor(
+              score: 5000, outcome: ShiftOutcome.banked, bestChain: 2),
+          'GIG-LEGEND');
+    });
+
+    test('a wreck at a high chain earns the heartbreak title', () {
+      expect(
+        ScoreCardData.rankTitleFor(
+            score: 90, outcome: ShiftOutcome.wrecked, bestChain: 8),
+        'SO CLOSE IT HURTS',
+        reason: 'losing an \u00d78 chain is the most shareable thing here',
+      );
+      // A low-chain wreck is just a bad day: the score band rules it.
+      expect(
+        ScoreCardData.rankTitleFor(
+            score: 90, outcome: ShiftOutcome.wrecked, bestChain: 3),
+        'RADIO ROOKIE',
+      );
+    });
+
+    test('the rank leads the plain-text line and rides the card', () {
+      final card = cardFor(banked);
+
+      expect(card.rankTitle, 'CERTIFIED HUSTLER');
+      expect(card.shareText, contains('1234 pts \u00b7 CERTIFIED HUSTLER'));
+      expect(
+        cardFor(wrecked).shareText,
+        contains('90 pts \u00b7 RADIO ROOKIE'),
+      );
+    });
+  });
 }

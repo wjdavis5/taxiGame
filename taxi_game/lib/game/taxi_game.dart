@@ -20,6 +20,7 @@ import 'components/scrape_marker.dart';
 import 'components/burst_particles.dart';
 import 'components/close_call_pop.dart';
 import 'components/coin_pop.dart';
+import 'components/life_lost_pop.dart';
 import 'components/speed_lines.dart';
 import 'components/virtual_stick.dart';
 import 'levels/level.dart';
@@ -272,6 +273,13 @@ class TaxiGame extends FlameGame
   bool isGameActive = false;
   int currentLevelNumber = 1;
 
+  /// The loaded ladder level's authored name ('First Ride', 'Bank It'),
+  /// or null in endless mode and before a level loads — the ten names
+  /// are the ladder's flavor, and the HUD and completion panel surface
+  /// them. A plain nullable field, not `currentLevel.name`: `currentLevel`
+  /// is late and the HUD reads before the world exists.
+  String? currentLevelName;
+
   /// Whether a level follows the one on screen (issue #16). Set at every
   /// [loadLevel]; false past the last rung of the tutorial ladder, which
   /// is how the completion panel knows to offer the Endless handoff
@@ -515,6 +523,8 @@ class TaxiGame extends FlameGame
     // here before — the tutorial handoff (#16) drives this path — owed
     // its clamp to the level road's finish, and that finish is gone.
     levelRoadTopY = null;
+    // And no ladder name either: the shift is not a level.
+    currentLevelName = null;
     passengers.clear();
     passengersDelivered = 0;
     fareChain.reset();
@@ -593,7 +603,6 @@ class TaxiGame extends FlameGame
     isGameActive = false;
     currentLevelNumber = levelNumber;
     lastImpact = null;
-
     // Clear any impact juice left over from the previous level (issue
     // #7). The lives budget resets with it: a level has no failure
     // budget — its first crash still fails it — but the counter must
@@ -607,6 +616,7 @@ class TaxiGame extends FlameGame
     _applyShake(0); // restores the viewport position, dropping any shake
 
     currentLevel = await levelLoader.loadLevel(levelNumber);
+    currentLevelName = currentLevel.name;
 
     // A level run has no endless systems. Clear any a previous run left
     // behind: [isEndless] is what routes crashes, banking, and the HUD,
@@ -843,18 +853,55 @@ class TaxiGame extends FlameGame
 
   // --- Bank or push (issue #13) -------------------------------------------
 
+  /// True while the first-ever bank-or-push offer on this hold traffic
+  /// stopped for the decision (the primer). The choice is the game's
+  /// core gamble, and it gets one calm introduction per save — after
+  /// that every offer rides live traffic on the five-second clock, as
+  /// designed. Released by every path that resolves or supersedes the
+  /// prompt ([_dismissBankPrompt]).
+  bool _bankPrimerActive = false;
+
   /// Puts the bank-or-push choice on screen after an endless dropoff.
   void _offerBankOrPush() {
     bankPrompt.offer();
+    // The primer: the first offer a save ever sees stops the world, so
+    // the choice can be read instead of reacted to. The ladder's banking
+    // lessons (issue #16) run frozen the same way — this is the same
+    // mercy for a player who never climbed it.
+    if (!gameState.bankPromptSeen) {
+      gameState.markBankPromptSeen();
+      _bankPrimerActive = true;
+      paused = true;
+      // No update frame runs while paused, so the engine needs the
+      // explicit off — the same line [pauseGame] uses.
+      audio?.setEngineRunning(false);
+    }
     overlays.add('bankOrPush');
   }
 
   /// The choice is gone: resolved, superseded by a crash, or left behind
   /// by a restart. Only ever tears down — consequences are applied by the
-  /// caller that resolved the prompt.
+  /// caller that resolved the prompt. Also the one place the primer
+  /// releases its freeze: every resolution path (bank, push, crash,
+  /// completion, restart) comes through here.
   void _dismissBankPrompt() {
     bankPrompt.dismiss();
     overlays.remove('bankOrPush');
+    if (_bankPrimerActive) {
+      _bankPrimerActive = false;
+      paused = false;
+    }
+  }
+
+  /// The pause menu's BANK & QUIT (issue #5): pays the at-risk score out
+  /// through the ordinary bank path and hands the shift its earned
+  /// summary — quitting is no longer the one way out that silently
+  /// deletes the run. A no-op without a live score to protect.
+  void bankFromPause() {
+    if (!isEndless || fareChain.score <= 0) return;
+    overlays.remove('pauseMenu');
+    paused = false;
+    _endShiftAsBanked();
   }
 
   /// Bank: the accumulated score becomes permanent — paid into the wallet
@@ -1168,6 +1215,15 @@ class TaxiGame extends FlameGame
     if (lives.isExhausted) {
       _endShiftAsWrecked();
     } else {
+      // Name the cost where it was paid (issue #14's feedback gap): the
+      // world is about to hold still for [crashStallSeconds], and the
+      // pop rides that freeze — the impact lands, "-1 LIFE · N LEFT"
+      // hangs over the frozen taxi, and it rises away as the shift
+      // resumes.
+      world.add(LifeLostPop(
+        position: player.position + Vector2(0, -70),
+        livesLeft: lives.remaining,
+      ));
       _stallAfterCrash();
     }
   }
@@ -1506,6 +1562,10 @@ class TaxiGame extends FlameGame
   }
 
   void pauseGame() {
+    // The primer already holds the world still (issue #4): a pause menu
+    // stacked on it could only fight the prompt for the release, so the
+    // HUD's pause button stands down until the choice resolves.
+    if (_bankPrimerActive) return;
     paused = true;
     // The ticker stops with the pause, so no update frame will quiet the
     // engine — turn it off here (issue #4).
@@ -1514,6 +1574,7 @@ class TaxiGame extends FlameGame
   }
 
   void resumeGame() {
+    if (_bankPrimerActive) return;
     paused = false;
     overlays.remove('pauseMenu');
   }

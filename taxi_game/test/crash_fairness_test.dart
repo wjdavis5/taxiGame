@@ -314,7 +314,8 @@ void main() {
           contactPoint: Vector2(199.5, 70),
         );
 
-    testWidgets('names the vehicle and the closing speed', (tester) async {
+    testWidgets('names the vehicle and the speed in words a player reads',
+        (tester) async {
       final game = freshGame()..lastImpact = busCrash();
 
       await tester.pumpWidget(
@@ -322,12 +323,11 @@ void main() {
       );
 
       expect(find.text('CRASH!'), findsOneWidget);
-      // The explanation names what was hit and how fast, so the crash can
-      // be reconstructed from the screen alone.
-      expect(find.textContaining('bus'), findsWidgets);
-      expect(find.textContaining('210.0'), findsOneWidget);
-      expect(find.textContaining('150.0'), findsOneWidget);
-      expect(find.textContaining('60.0'), findsOneWidget);
+      // The headline names what was hit and how hard, in words: the
+      // telemetry belongs to the debug log, not the CRASH! panel.
+      expect(find.text('You hit the bus flat out.'), findsOneWidget);
+      expect(find.textContaining('px/s'), findsNothing,
+          reason: 'no debug vocabulary on a player-facing panel');
     });
 
     testWidgets('without telemetry it still states the collision plainly',

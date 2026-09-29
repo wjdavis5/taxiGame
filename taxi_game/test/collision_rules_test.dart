@@ -176,8 +176,7 @@ void main() {
     });
   });
 
-  group('buildReport / explanation', () {
-    test('a crash report records and explains the full contact', () {
+  group('buildReport / explanation', () {    test('a crash report records and explains the full contact', () {
       final report = CollisionRules.buildReport(
         severity: ContactSeverity.crash,
         vehicleKind: 'bus',
@@ -228,6 +227,67 @@ void main() {
           (CollisionRules.scrapeSpeedKeep * 100).toStringAsFixed(0),
         ),
       );
+    });
+  });
+
+  group('buildReport / headline — the player-facing one-liner', () {
+    test('a flat-out crash says so, in words, with the vehicle', () {
+      final report = CollisionRules.buildReport(
+        severity: ContactSeverity.crash,
+        vehicleKind: 'bus',
+        playerVelocity: Vector2(0, -150),
+        playerPosition: Vector2(200, 100),
+        trafficVelocity: Vector2(0, 60),
+        trafficPosition: Vector2(200, 40),
+        contactPoint: Vector2(198.3, 70.2),
+      );
+
+      expect(report.headline, 'You hit the bus flat out.');
+    });
+
+    test('a slower crash drops the speed word rather than lying', () {
+      final report = CollisionRules.buildReport(
+        severity: ContactSeverity.crash,
+        vehicleKind: 'sedan',
+        playerVelocity: Vector2(0, -60),
+        playerPosition: Vector2(200, 100),
+        trafficVelocity: Vector2(0, 60),
+        trafficPosition: Vector2(200, 40),
+        contactPoint: Vector2(200, 70),
+      );
+
+      expect(report.headline, 'You hit the sedan.');
+    });
+
+    test('a scrape headline names the vehicle and the mercy', () {
+      final report = CollisionRules.buildReport(
+        severity: ContactSeverity.scrape,
+        vehicleKind: 'sedan',
+        playerVelocity: Vector2(0, -40),
+        playerPosition: Vector2(200, 100),
+        trafficVelocity: Vector2.zero(),
+        trafficPosition: Vector2(200, 80),
+        contactPoint: Vector2(200, 78),
+      );
+
+      expect(report.headline, contains('scraped the sedan'));
+      expect(report.headline, contains('nothing lost'));
+    });
+
+    test('the headline never leaks the telemetry vocabulary', () {
+      final report = CollisionRules.buildReport(
+        severity: ContactSeverity.crash,
+        vehicleKind: 'truck',
+        playerVelocity: Vector2(0, -150),
+        playerPosition: Vector2(200, 100),
+        trafficVelocity: Vector2(0, 60),
+        trafficPosition: Vector2(200, 40),
+        contactPoint: Vector2(199.5, 70),
+      );
+
+      expect(report.headline, isNot(contains('px/s')));
+      expect(report.headline, isNot(contains('axis')));
+      expect(report.headline, isNot(contains('(')));
     });
   });
 }
