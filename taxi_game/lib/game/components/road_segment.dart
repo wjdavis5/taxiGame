@@ -15,6 +15,25 @@ import '../systems/world_origin.dart';
 /// draws the width the road really has there — tapers, lane counts, cross
 /// streets, and the wet sheen of passing rain.
 class RoadSegment extends PositionComponent {
+  /// The render layer of the street itself (issue #40): below everything
+  /// that exists *on* it.
+  ///
+  /// Flame paints siblings in priority order — smaller first — and keeps
+  /// equal priorities in add order, and nothing in this game used to set
+  /// a priority. The endless street is recycled *during* the run
+  /// (issue #11): [RoadChunkManager](../systems/road_chunk_manager.dart)
+  /// adds every chunk from inside a tick, so at the default priority of 0
+  /// each chunk mounted after the setup-added taxi, ghost, traffic, and
+  /// fare zones — and its opaque asphalt painted straight over them. On
+  /// device that read as "the cab no longer shows up at all" (issue #40):
+  /// the player and every traffic car rendered underneath the street.
+  /// Level mode escaped only because its one segment happens to be added
+  /// before the player. A negative layer pins the street to the bottom of
+  /// the world no matter when its pieces are added; the cones ride with
+  /// their chunk, which keeps kerb-side furniture under traffic — the
+  /// same relative order the classic level street always had.
+  static const int roadLayerPriority = -100;
+
   final double length;
   final int lanes;
 
@@ -45,7 +64,7 @@ class RoadSegment extends PositionComponent {
     this.environment,
     double? topDistance,
   })  : _topDistance = topDistance,
-        super(position: position);
+        super(position: position, priority: roadLayerPriority);
 
   @override
   Future<void> onLoad() async {
