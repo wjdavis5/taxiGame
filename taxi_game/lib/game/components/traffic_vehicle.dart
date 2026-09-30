@@ -42,13 +42,17 @@ class TrafficVehicle extends PositionComponent
   bool contactedPlayer = false;
 
   /// Whether this vehicle's centre was ahead of the taxi's (smaller y)
-  /// at their **first touch**, frozen there and then by
-  /// [PlayerVehicle.onCollisionStart] (issue #74). The pace cap paces a
-  /// car the taxi rides behind, and where the touch *happened* — not
-  /// where the bodies have drifted since — is what decides that: a
-  /// rear-ender that slides through a stopped cab and ends up
-  /// nominally ahead must never start pacing it.
-  bool aheadAtFirstContact = false;
+  /// at the start of their **current contact episode**, re-decided at
+  /// every touch by [PlayerVehicle.onCollisionStart] (issues #74 and
+  /// #80). The pace cap paces a car the taxi rides behind, and where
+  /// the touch *happened* — not where the bodies have drifted within
+  /// the episode — is what decides that: a rear-ender that slides
+  /// through a stopped cab must never start pacing it mid-grind. The
+  /// decision is per episode, not per lifetime: the day the order
+  /// genuinely swaps — the car falls back and rear-ends the taxi, or
+  /// the taxi catches a past rear-ender — the next touch is judged on
+  /// the geometry it starts from.
+  bool aheadAtContactStart = false;
 
   /// True once this vehicle has been judged for a close call at the pass
   /// (issue #23) — judged exactly once, however the ruling went, so no

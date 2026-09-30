@@ -464,11 +464,21 @@ class GameStateService extends ChangeNotifier {
 
   /// Reset all progress (for testing)
   void resetProgress() {
+    // Settings are preference, not progress (issue #83): the whole
+    // Settings block — the three toggles and both volumes — rides over
+    // to the fresh save, not just the booleans a bug report names. A
+    // reset that restored the defaults would flip sound, music, and
+    // vibration back on under a player who had turned them off, and the
+    // notifyListeners below would then hand `true` to the composition
+    // root's audio listener — starting the menu music mid-dialog-
+    // dismissal. Captured before the swap, applied via the cascade
+    // because `createDefault` takes no settings override.
+    final keptSettings = _saveData.settings;
     // The fresh save also un-dismisses the stick-control hint (issue
     // #37): a wiped save is a first-time player again, and the next
     // game start teaches the stick once more — the same convention as
     // the run history below.
-    _saveData = SaveData.createDefault();
+    _saveData = SaveData.createDefault()..settings = keptSettings;
     // The shift history is progress too (issue #17): a reset wipes it with
     // everything else, so the stats screen never shows numbers from a run
     // of a save that no longer exists.
