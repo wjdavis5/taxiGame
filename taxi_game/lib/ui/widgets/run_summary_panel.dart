@@ -1,10 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../game/systems/daily_shift.dart';
 import '../../game/systems/run_summary.dart';
 import '../../game/taxi_game.dart';
-import '../screens/game_screen.dart';
 import 'share_score_button.dart';
 
 /// The end-of-shift run summary (issue #15): what the shift earned, what
@@ -285,16 +283,16 @@ class RunSummaryPanel extends StatelessWidget {
                 ElevatedButton.icon(
                   key: const ValueKey('race_ghost_button'),
                   onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => GameScreen(
-                          endlessSeed:
-                              DailyShift.seedForDateKey(DailyShift.todayKey),
-                          isGhostRace: true,
-                        ),
-                      ),
-                    );
+                    // In place, never stacked (issue #73): the button
+                    // used to push a second GameScreen over this
+                    // finished one, and the hidden game kept ticking —
+                    // its per-frame engine-off fought the live race
+                    // through the shared AudioService, and every MAIN
+                    // MENU pop landed on an older summary. The restart
+                    // tears this panel down and puts the race on the
+                    // one route the shift already owns, exactly as
+                    // DRIVE AGAIN does.
+                    game.raceGhost();
                   },
                   icon: const Icon(Icons.flash_on),
                   label: const Text(

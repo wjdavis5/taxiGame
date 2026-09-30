@@ -136,6 +136,12 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
 
     if (!_isActive || _isCompleted) return;
 
+    // A settled run delivers nothing (issue #71): the world keeps
+    // ticking under the end-of-run panel, and a cab coasting on its
+    // last velocity must not roll in and complete a fare the ending
+    // already forfeited.
+    if (game.isShiftOver) return;
+
     // Check if player entered the zone with passenger
     if (other is PlayerVehicle && passenger.isPickedUp) {
       _dropoffPassenger();

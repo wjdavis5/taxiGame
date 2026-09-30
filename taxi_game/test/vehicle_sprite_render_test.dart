@@ -253,6 +253,52 @@ void main() {
       expect(car.angle, 0);
       expect(spriteOf(car).sprite, isNotNull);
     });
+
+    test('a spawner-shaped path still flips oncoming traffic to face the '
+        'player (issue #72)', () async {
+      final game = await mountGame(TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+      ));
+
+      // Exactly what TrafficSpawner._createStraightPath builds: the
+      // list starts with the spawn point itself, and the waypoints run
+      // off in the travel direction. The first waypoint sits on top of
+      // the vehicle, so the initial velocity is zero — and the flip,
+      // when it was judged from that velocity, never fired: every
+      // spawned oncoming car drove down the road facing up it,
+      // tail-first.
+      TrafficVehicle spawnerVehicle(Vector2 spawn,
+          {required bool oncoming, required double speed}) {
+        final step = oncoming ? 500.0 : -3000.0;
+        return TrafficVehicle(
+          position: Vector2(spawn.x, spawn.y),
+          vehicleType: TrafficVehicleType.sedan,
+          baseSpeed: speed,
+          path: [
+            spawn,
+            for (var i = 1; i <= 3; i++)
+              Vector2(spawn.x, spawn.y + step * i),
+          ],
+        );
+      }
+
+      final oncoming =
+          spawnerVehicle(Vector2(150, -500), oncoming: true, speed: 120);
+      game.world.add(oncoming);
+      await settleSprite(oncoming, game);
+      expect(oncoming.angle, math.pi,
+          reason: 'an oncoming car faces the player it drives toward, '
+              'however its path is shaped');
+
+      final sameDirection =
+          spawnerVehicle(Vector2(250, -500), oncoming: false, speed: 60);
+      game.world.add(sameDirection);
+      await settleSprite(sameDirection, game);
+      expect(sameDirection.angle, 0,
+          reason: 'the same path shape heading up-screen keeps facing '
+              'up-screen');
+    });
   });
 
   group('Shipped sprite art', () {

@@ -41,6 +41,15 @@ class TrafficVehicle extends PositionComponent
   /// already happened and named itself.
   bool contactedPlayer = false;
 
+  /// Whether this vehicle's centre was ahead of the taxi's (smaller y)
+  /// at their **first touch**, frozen there and then by
+  /// [PlayerVehicle.onCollisionStart] (issue #74). The pace cap paces a
+  /// car the taxi rides behind, and where the touch *happened* — not
+  /// where the bodies have drifted since — is what decides that: a
+  /// rear-ender that slides through a stopped cab and ends up
+  /// nominally ahead must never start pacing it.
+  bool aheadAtFirstContact = false;
+
   /// True once this vehicle has been judged for a close call at the pass
   /// (issue #23) — judged exactly once, however the ruling went, so no
   /// vehicle can pay twice.
@@ -114,8 +123,14 @@ class TrafficVehicle extends PositionComponent
     }
 
     // The sprite is drawn facing up; oncoming vehicles (moving down the
-    // screen) face the player.
-    if (velocity.y > 0) {
+    // screen) face the player. The flip is decided by the path's
+    // direction of travel ([_travelsDownScreen]), never by the velocity
+    // this frame: the spawner's straight paths begin at the spawn point
+    // itself, so the first waypoint contributes a zero offset and the
+    // initial velocity is zero (issue #72) — judging by it left every
+    // spawned oncoming car tail-first, facing up-screen while it drove
+    // down the road.
+    if (_travelsDownScreen()) {
       angle = pi;
     }
 
@@ -209,6 +224,23 @@ class TrafficVehicle extends PositionComponent
       return;
     }
     velocity = offset.normalized() * speed;
+  }
+
+  /// Whether this vehicle's path carries it down the screen (toward
+  /// positive y) — the oncoming direction, whose cars render flipped to
+  /// face the player. Derived from the first waypoint whose offset from
+  /// the current position clears the same epsilon
+  /// [_updateVelocityTowardsWaypoint] guards with, so a path that
+  /// begins on top of the vehicle — the spawner's straight paths do
+  /// (issue #72) — still flips: the zero-offset waypoint is skipped,
+  /// not mistaken for "no direction at all".
+  bool _travelsDownScreen() {
+    for (final waypoint in path) {
+      final offset = waypoint - position;
+      if (offset.length < 0.001) continue;
+      return offset.normalized().y > 0;
+    }
+    return false;
   }
 
   /// Telegraphing (issue #6): warn while the player is on course to hit

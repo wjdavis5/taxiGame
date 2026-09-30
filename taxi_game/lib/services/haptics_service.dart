@@ -53,6 +53,12 @@ class HapticsService {
   /// A fare paid: the twin of [pickup].
   void dropoff() => _fire('dropoff_medium', HapticFeedback.mediumImpact);
 
+  /// A close call cleared (issue #23): a medium thump confirming the
+  /// shave in the hand. Routed through the gate like every other buzz
+  /// (issue #75) — the pass detection used to call `HapticFeedback`
+  /// directly, which buzzed with vibration turned off.
+  void closeCall() => _fire('close_call_medium', HapticFeedback.mediumImpact);
+
   /// A coin award (the level-completion payout): a light tick.
   void coinAward() => _fire('coin_light', HapticFeedback.lightImpact);
 

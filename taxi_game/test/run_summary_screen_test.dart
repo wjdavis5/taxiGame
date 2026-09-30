@@ -1,3 +1,4 @@
+import 'package:flame/game.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,6 +18,26 @@ import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/game_screen.dart';
 import 'package:taxi_game/ui/widgets/run_summary_panel.dart';
+
+/// An [AudioService] that counts the engine calls reaching it (issue
+/// #73): the finished game's per-frame engine-off assertions were half
+/// the bug, and the guard is proven by counting exactly those.
+class _EngineCountingAudio extends AudioService {
+  int runningCalls = 0;
+  int intensityCalls = 0;
+
+  @override
+  void setEngineRunning(bool running) {
+    runningCalls++;
+    super.setEngineRunning(running);
+  }
+
+  @override
+  void setEngineIntensity(double intensity) {
+    intensityCalls++;
+    super.setEngineIntensity(intensity);
+  }
+}
 
 /// The end-of-shift run summary panel (issue #15): the six numbers every
 /// shift ends with, the personal-best callout, and a DRIVE AGAIN path
@@ -416,18 +437,174 @@ void main() {
       expect(find.byKey(const ValueKey('race_ghost_button')), findsNothing);
     });
 
-    testWidgets('tapping the button opens a ghost race of today\'s course',
-        (tester) async {
+    testWidgets('tapping the button starts the ghost race in place — no '
+        'second game stacked (issue #73)', (tester) async {
       await plantGhostForToday();
-      await showPanel(tester, dailyGame(), bankedSummary);
+      final game = dailyGame();
+      await showPanel(tester, game, bankedSummary);
 
       await tester.tap(find.byKey(const ValueKey('race_ghost_button')));
-      // Two pumps: start the push transition, then run it out — the
-      // panel must never pumpAndSettle over a live game.
+      await tester.pump();
+
+      // The race replaced this summary on the same route — the way
+      // DRIVE AGAIN always restarted the shift. The old button pushed a
+      // whole second GameScreen over the finished game; none appears.
+      expect(find.byType(GameScreen), findsNothing,
+          reason: 'the restart is in place, never a stacked route');
+      expect(game.isGhostRace, isTrue);
+      expect(game.isDailyShift, isFalse,
+          reason: 'the scoring attempt was spent by the settled shift');
+      expect(game.isGameActive, isTrue,
+          reason: 'the race is live immediately');
+      expect(game.overlays.activeOverlays, isEmpty,
+          reason: 'the summary panel stood down with the tap');
+      expect(game.lastRunSummary, isNull,
+          reason: 'the settled shift is cleared');
+      expect(game.runSeed, DailyShift.seedForDateKey(DailyShift.todayKey),
+          reason: "the race rides today's course, the one the ghost "
+              'recorded its trace on');
+    });
+
+    testWidgets('RACE YOUR GHOST over a real GameScreen: one MAIN MENU '
+        'tap comes home (issue #73)', (tester) async {
+      await plantGhostForToday();
+
+      // The menu route the daily shift is pushed over — a marker
+      // screen, so the test can name exactly where MAIN MENU lands.
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<GameStateService>.value(value: gameState),
+            Provider<AudioService>.value(value: AudioService()),
+            Provider<HapticsService>.value(value: HapticsService()),
+            Provider<LevelLoaderService>.value(value: LevelLoaderService()),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              key: ValueKey('issue73_home'),
+              body: Center(child: Text('HOME')),
+            ),
+          ),
+        ),
+      );
+
+      // Push today's daily shift the way the menu does — the one route
+      // the old button used to stack its second game on top of.
+      final home = tester.element(find.text('HOME'));
+      Navigator.push(
+        home,
+        MaterialPageRoute(
+          builder: (context) => GameScreen(
+            endlessSeed: DailyShift.seedForDateKey(DailyShift.todayKey),
+            isDailyShift: true,
+          ),
+        ),
+      );
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
 
-      expect(find.byType(GameScreen), findsOneWidget);
+      // The daily shift goes live (the control-hint harness's wait:
+      // real sprite I/O needs real async time; the panel must never
+      // pumpAndSettle over a live game).
+      final game = tester
+          .widget<GameWidget<TaxiGame>>(find.byType(GameWidget<TaxiGame>))
+          .game!;
+      await tester.runAsync(() async {
+        for (var i = 0;
+            i < 300 && !(game.isGameActive && game.player.isLoaded);
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(game.isGameActive, isTrue);
+
+      // Settle the shift through its public seams: a score, then the
+      // pause menu's bank.
+      game.fareChain.awardNearMiss();
+      game.bankFromPause();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('run_summary_panel')), findsOneWidget,
+          reason: 'the daily\'s summary owns the screen');
+
+      // The race restarts in place: still exactly one game screen on
+      // the stack, now a live ghost race of today's course.
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('race_ghost_button')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('race_ghost_button')));
+      await tester.pump();
+
+      expect(find.byType(GameScreen), findsOneWidget,
+          reason: 'the finished game was reused, not covered');
+      expect(game.isGhostRace, isTrue);
+      expect(game.isGameActive, isTrue);
+      expect(game.overlays.activeOverlays, isNot(contains('shiftBanked')));
+
+      // Settle the ghost race the same way...
+      game.fareChain.awardNearMiss();
+      game.bankFromPause();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('run_summary_panel')), findsOneWidget);
+
+      // ...and one MAIN MENU tap comes home. Stacked, the pop would
+      // have landed on the daily's old summary instead of the menu.
+      await tester.ensureVisible(find.text('MAIN MENU'));
+      await tester.pump();
+      await tester.tap(find.text('MAIN MENU'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(find.text('HOME'), findsOneWidget,
+          reason: 'one tap, one route popped: the menu');
+      expect(find.byType(GameScreen), findsNothing);
+      expect(find.byKey(const ValueKey('run_summary_panel')), findsNothing,
+          reason: 'no older summary was left underneath');
+    });
+  });
+
+  group('the shift-over game goes quiet (issue #73)', () {
+    test('update() asserts nothing at the engine once the shift settles',
+        () async {
+      final audio = _EngineCountingAudio();
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        audio: audio,
+        endlessSeed: 9,
+      )
+        ..overlays.addEntry(
+            'shiftBanked', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry(
+            'shiftWrecked', (_, __) => const SizedBox.shrink());
+
+      // The endless-run mount: chunks arm their world in onMount, so a
+      // bare onLoad would leave the road unmanaged.
+      game.onGameResize(Vector2(400, 800));
+      await game.onLoad();
+      // ignore: invalid_use_of_internal_member
+      game.mount();
+      await game.ready();
+
+      // Settle the shift the way a real one does: a score, then the
+      // pause menu's bank.
+      game.fareChain.awardNearMiss();
+      game.bankFromPause();
+      expect(game.isShiftOver, isTrue, reason: 'precondition: settled');
+
+      // The frames the summary sits through — under the old code each
+      // one re-asserted engine-off through the shared AudioService,
+      // fighting any live game driven over it.
+      audio.runningCalls = 0;
+      audio.intensityCalls = 0;
+      for (var i = 0; i < 10; i++) {
+        game.update(1 / 60);
+      }
+
+      expect(audio.runningCalls, 0,
+          reason: 'a settled shift has no engine claim to assert');
+      expect(audio.intensityCalls, 0);
     });
   });
 }
