@@ -3,8 +3,11 @@ import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/systems/collision_rules.dart';
 import 'package:taxi_game/game/taxi_game.dart';
+import 'package:taxi_game/game/vehicle_sprites.dart';
+import 'package:taxi_game/models/traffic_pattern.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/haptics_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
@@ -96,6 +99,54 @@ void main() {
         contactPoint: Vector2(200, 100),
       );
 
+  /// Puts the vehicle sprites in the game's image cache so traffic
+  /// `onLoad`s complete after a single microtask hop (the determinism
+  /// trick near_miss_test.dart uses for its live-run passes).
+  Future<void> preloadSprites(TaxiGame game) async {
+    await game.images
+        .load(VehicleSprites.playerSpritePath(gameState.selectedVehicle));
+    for (final type in TrafficVehicleType.values) {
+      await game.images.load(VehicleSprites.trafficSpritePath(type));
+    }
+  }
+
+  /// A sedan parked in the player's path: zero speed, straight path, so
+  /// the test controls the pass geometry exactly.
+  TrafficVehicle parkedSedan(Vector2 position) => TrafficVehicle(
+        position: position.clone(),
+        vehicleType: TrafficVehicleType.sedan,
+        baseSpeed: 0,
+        path: [position.clone(), Vector2(position.x, position.y + 3000)],
+      );
+
+  /// Puts the taxi at [x], 0 and holds it at full throttle.
+  Future<void> driveUp(TaxiGame game, {double x = 200}) async {
+    game.player.position = Vector2(x, 0);
+    game.player.isAccelerating = true;
+    game.player.velocity = Vector2(0, -game.player.maxSpeed);
+    game.update(1 / 60);
+    await drain();
+    game.update(1 / 60); // applies the queue the first tick built
+    await drain();
+  }
+
+  /// Drives the taxi past a sedan parked at [sedanX], -40 — a pass with
+  /// 10 px of daylight at full speed, i.e. a close call that rules in —
+  /// and settles, so the pass reports and the feedback mounts.
+  Future<void> passParkedSedan(TaxiGame game, {double sedanX = 150}) async {
+    await driveUp(game);
+    game.world.add(parkedSedan(Vector2(sedanX, -40)));
+    await drain();
+
+    var frames = 0;
+    while (game.player.position.y > -45 && frames < 120) {
+      game.update(1 / 60);
+      frames++;
+    }
+    game.update(1 / 60); // components added mid-update mount next tick
+    await drain();
+  }
+
   test('an endless crash buzzes heavy once', () async {
     final game = await mountGame(endlessGame());
 
@@ -175,5 +226,37 @@ void main() {
 
     expect(haptics.attemptedBuzzes, isEmpty,
         reason: 'the save vibration setting gates the game wiring too');
+  });
+
+  test('a close call does not buzz with vibration off (issue #75)', () async {
+    // The bug: the close-call thump called HapticFeedback directly,
+    // bypassing the service's enabled-gate, so a player who turned
+    // Vibration off still felt every shave.
+    haptics.setEnabled(false);
+    final game = await mountGame(endlessGame());
+    await preloadSprites(game);
+
+    await passParkedSedan(game);
+
+    // The pass genuinely ruled in — the empty buzz record below is the
+    // gate holding, not a pass that never happened.
+    expect(game.fareChain.nearMisses, 1,
+        reason: 'the tight pass scored, so its feedback path ran');
+    expect(haptics.attemptedBuzzes, isEmpty,
+        reason: 'the close-call thump rides the vibration gate like '
+            'every other buzz (issue #75)');
+  });
+
+  test('a close call buzzes medium with vibration on', () async {
+    final game = await mountGame(endlessGame());
+    await preloadSprites(game);
+
+    await passParkedSedan(game);
+
+    expect(game.fareChain.nearMisses, 1);
+    expect(haptics.attemptedBuzzes, {
+      'close_call_medium': 1,
+    }, reason: 'the shave confirms itself in the hand, and nothing else '
+        'on the clean pass buzzes');
   });
 }

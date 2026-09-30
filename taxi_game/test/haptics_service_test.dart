@@ -40,6 +40,7 @@ void main() {
       haptics.crash();
       haptics.pickup();
       haptics.dropoff();
+      haptics.closeCall();
       haptics.coinAward();
       haptics.buttonPress();
       await tester.pump();
@@ -48,6 +49,7 @@ void main() {
         'HapticFeedbackType.heavyImpact', // crash
         'HapticFeedbackType.mediumImpact', // pickup
         'HapticFeedbackType.mediumImpact', // dropoff
+        'HapticFeedbackType.mediumImpact', // close call
         'HapticFeedbackType.lightImpact', // coin award
         'HapticFeedbackType.lightImpact', // button press
       ]);
@@ -58,6 +60,7 @@ void main() {
       haptics.crash();
       haptics.pickup();
       haptics.dropoff();
+      haptics.closeCall();
       haptics.coinAward();
       haptics.buttonPress();
 
@@ -65,6 +68,7 @@ void main() {
         'crash_heavy': 1,
         'pickup_medium': 1,
         'dropoff_medium': 1,
+        'close_call_medium': 1,
         'coin_light': 1,
         'button_light': 1,
       });
@@ -75,6 +79,7 @@ void main() {
       haptics.crash();
       haptics.pickup();
       haptics.dropoff();
+      haptics.closeCall();
       haptics.coinAward();
       haptics.buttonPress();
 

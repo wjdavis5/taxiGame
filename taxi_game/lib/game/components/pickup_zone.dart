@@ -138,6 +138,11 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
 
     if (_isPickedUp) return;
 
+    // A settled run boards nobody (issue #71): the world keeps ticking
+    // under the end-of-run panel, and a rolling cab must not take on
+    // work the ending already closed.
+    if (game.isShiftOver) return;
+
     // Check if player entered the zone
     if (other is PlayerVehicle) {
       _pickupPassenger();

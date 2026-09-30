@@ -525,5 +525,85 @@ void main() {
       game.resumeGame();
       expect(game.paused, isFalse);
     });
+
+    test('a wreck 8 px short of a drop-off delivers nothing and offers '
+        'no bank (issue #71)', () async {
+      final coinsBefore = gameState.totalCoins;
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      // The issue's scenario: the fare is aboard, the cab rolls toward
+      // its dropoff at full speed, and the third crash lands before the
+      // kerb does. Parked 40 px beyond the delivery spot — clear of the
+      // zone's 40-px reach plus the cab's own body.
+      final fare = game.course!.fare(0);
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+      game.update(1 / 60);
+      expect(game.player.hasPassenger, isTrue, reason: 'passenger aboard');
+      game.player.position = Vector2(fare.dropoff.x, fare.dropoff.y + 30 + 40);
+      game.player.velocity = Vector2(0, -150);
+
+      for (var life = 0; life < 3; life++) {
+        if (life > 0) {
+          // Run out the previous crash's stall so the next crash counts.
+          advanceGameTime(game, TaxiGame.crashStallSeconds + 0.01);
+        }
+        game.onCrash();
+      }
+      await drain();
+      expect(game.overlays.isActive('shiftWrecked'), isTrue);
+      expect(game.isShiftOver, isTrue);
+
+      // The panel is up but the world keeps ticking. A dead stick sheds
+      // 150 px/s at 600 px/s^2 — roughly 19 px of coast, enough to carry
+      // the old, un-halted cab into the zone it died short of.
+      advanceGameTime(game, 1.0);
+
+      // And the gate is not only about momentum: even a cab placed on
+      // the delivery spot under the panel must deliver nothing.
+      game.player.position = Vector2(fare.dropoff.x, fare.dropoff.y + 30);
+      game.update(1 / 60);
+      advanceGameTime(game, 0.1);
+
+      expect(game.player.hasPassenger, isTrue,
+          reason: 'the fare was never delivered');
+      expect(gameState.totalCoins, coinsBefore,
+          reason: 'the forfeited fare paid nothing into the wallet');
+      expect(game.bankPrompt.isActive, isFalse,
+          reason: 'no delivery, no bank-or-push offer over the wreck');
+      expect(game.overlays.isActive('bankOrPush'), isFalse);
+    });
+
+    test('BANK after the shift is over pays nothing (issue #71)',
+        () async {
+      final coinsBefore = gameState.totalCoins;
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      game.fareChain.score = 300; // the forfeit the wreck panel names
+
+      for (var life = 0; life < 3; life++) {
+        if (life > 0) {
+          advanceGameTime(game, TaxiGame.crashStallSeconds + 0.01);
+        }
+        game.onCrash();
+      }
+      await drain();
+      expect(game.isShiftOver, isTrue);
+
+      // Arm the prompt directly — the way the post-wreck coast used to
+      // arm it over the wreck panel — so the guard under test is the
+      // bank's, not the prompt's absence.
+      game.bankPrompt.offer();
+
+      game.bankShift();
+
+      expect(gameState.totalCoins, coinsBefore,
+          reason: 'the forfeited score was never the wallet\'s to pay');
+      expect(game.lastBankedScore, isNull);
+      expect(game.overlays.isActive('shiftBanked'), isFalse,
+          reason: 'a settled shift owns the screen; no banked summary '
+              'stacks over the wreck');
+      expect(game.isShiftOver, isTrue);
+    });
   });
 }

@@ -85,19 +85,22 @@ class NearMissRules {
   }
 }
 
-/// The sound and haptic legs of close-call feedback (issue #23): a
-/// medium haptic thump and a short system click. The game's bundled audio
-/// (issue #4) has no whoosh among its CC0 one-shots, and a mis-chosen
-/// sample would cheapen the flagship moment — so the pass keeps riding the
-/// OS-provided system click: nothing to license, nothing to attribute. It
-/// honours the save's sound setting, the same flag the rest of the game's
-/// effects obey.
+/// The sound leg of close-call feedback (issue #23): a short system
+/// click. The game's bundled audio (issue #4) has no whoosh among its
+/// CC0 one-shots, and a mis-chosen sample would cheapen the flagship
+/// moment — so the pass keeps riding the OS-provided system click:
+/// nothing to license, nothing to attribute. It honours the save's
+/// sound setting, the same flag the rest of the game's effects obey.
+///
+/// The haptic thump used to fire here too, straight at
+/// `HapticFeedback.mediumImpact`, which buzzed with vibration turned
+/// off (issue #75). It now lives in `HapticsService.closeCall`, called
+/// by the game beside this — every buzz rides the same enabled-gate.
 class CloseCallFeedback {
   CloseCallFeedback._();
 
-  /// Fires the thump, and the click when [soundEnabled].
+  /// Fires the click when [soundEnabled].
   static void play({required bool soundEnabled}) {
-    HapticFeedback.mediumImpact();
     if (soundEnabled) {
       SystemSound.play(SystemSoundType.click);
     }

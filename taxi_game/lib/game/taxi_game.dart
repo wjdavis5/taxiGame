@@ -284,14 +284,21 @@ class TaxiGame extends FlameGame
 
   bool isGameActive = false;
 
-  /// True once this shift has settled — banked or wrecked — and stays so
-  /// until the next run starts ([startEndlessRun] or [loadLevel]). The
-  /// end-of-shift summary owns the screen from that moment: pausing
-  /// stacks a second decision under it, and the pause menu's BANK & QUIT
-  /// used to pay the already-banked score out again on every tap —
-  /// unlimited coins, including from a wreck's forfeited score (issue
-  /// #52). [pauseGame] and [bankFromPause] no-op while it is set, and
-  /// the HUD's pause button stands down (its polling widget reads this).
+  /// True once this run has settled and stays so until the next one
+  /// starts ([startEndlessRun] or [loadLevel], which both reset it). The
+  /// shared *terminal* flag: the end-of-shift summaries (banked or
+  /// wrecked, issue #14) and — since issue #71 — the level endings
+  /// (completed or failed) all set it, because an ended run is ended
+  /// whatever panel explains it. The summary owns the screen from that
+  /// moment: pausing stacks a second decision under it, the pause menu's
+  /// BANK & QUIT used to pay the already-banked score out again on every
+  /// tap — unlimited coins, including from a wreck's forfeited score
+  /// (issue #52) — and the world that keeps ticking underneath could
+  /// still "deliver" a fare the ending had already forfeited, whose
+  /// prompt then paid out a second time through BANK (issue #71).
+  /// [pauseGame], [bankFromPause], [bankShift], and the zone callbacks
+  /// all no-op while it is set, and the HUD's pause button stands down
+  /// (its polling widget reads this).
   bool _shiftOver = false;
 
   /// Whether the shift on screen has ended and its summary owns the
@@ -812,6 +819,10 @@ class TaxiGame extends FlameGame
   }
 
   void _onPassengerPickup(PassengerData passenger) {
+    // A settled run boards nobody (issue #71): the world keeps ticking
+    // under the end-of-run panel, and a cab still rolling must not pick
+    // up work the ending already closed.
+    if (_shiftOver) return;
     player.hasPassenger = true;
 
     // The meter starts running: this passenger's countdown begins now
@@ -845,6 +856,11 @@ class TaxiGame extends FlameGame
   }
 
   void _onPassengerDropoff(PassengerData passenger) {
+    // A settled run delivers nothing (issue #71): the world keeps
+    // ticking under the failure panel, and the cab that used to coast
+    // in just short of this kerb paid a fare the wreck had already
+    // forfeited.
+    if (_shiftOver) return;
     passengersDelivered++;
     player.hasPassenger =
         passengers.any((p) => p.isPickedUp && !p.isDelivered);
@@ -888,6 +904,12 @@ class TaxiGame extends FlameGame
   /// Delivery in an endless run (issue #11): the fare pays out on the
   /// spot — there is no level completion to settle up at.
   void _onEndlessFareDelivered(PassengerData passenger) {
+    // A settled shift delivers nothing (issue #71): the wreck panel's
+    // world keeps ticking, and a cab coasting on its last velocity used
+    // to roll into the dropoff it died 8 px short of — "delivering" the
+    // fare, arming the bank prompt over the wreck, and paying a forfeit
+    // out a second time through BANK.
+    if (_shiftOver) return;
     player.hasPassenger = fareController?.hasActivePickup ?? false;
 
     // Score the delivery against the fare chain (issue #12); the coin
@@ -987,6 +1009,11 @@ class TaxiGame extends FlameGame
   /// In a level that teaches banking (issue #16) the run is the level, so
   /// banking settles it as a success — [_bankAndCompleteLevel].
   void bankShift() {
+    // A settled shift has nothing left to bank (issue #71) — the same
+    // guard [bankFromPause] has carried since issue #52. The prompt's
+    // BANK used to bypass it, and a delivery the wreck panel should
+    // never have allowed armed exactly that prompt.
+    if (_shiftOver) return;
     if (bankPrompt.bank() == null) return;
     if (isEndless) {
       _endShiftAsBanked();
@@ -1030,6 +1057,9 @@ class TaxiGame extends FlameGame
   /// Freezes the shift and pays the banked score out. The score itself
   /// stays readable for the panel until the next run resets it.
   void _endShiftAsBanked() {
+    // Belt and braces with [bankShift]'s guard (issue #71): every path
+    // into a payout stands down once the shift has settled.
+    if (_shiftOver) return;
     lastBankedScore = fareChain.score;
 
     // The summary owns the screen from here (issue #52): the shift is
@@ -1038,9 +1068,15 @@ class TaxiGame extends FlameGame
     _shiftOver = true;
     _crashStallRemaining = 0;
     isGameActive = false;
-    _freezePlayer();
+    _haltPlayerForShiftEnd();
     trafficSpawner.pause();
     _dismissBankPrompt();
+
+    // The ticker keeps running under the summary, and update() stops
+    // asserting the engine once the shift settles (issue #73) — so the
+    // ending itself turns it off, the same explicit off [pauseGame]
+    // gives the pause menu.
+    audio?.setEngineRunning(false);
 
     gameState.addCoins(lastBankedScore!);
     _runCoinsEarned += lastBankedScore!;
@@ -1149,13 +1185,40 @@ class TaxiGame extends FlameGame
     startEndlessRun(seed: freshSeed());
   }
 
+  /// The run summary's RACE YOUR GHOST (issue #20), rebuilt in place
+  /// (issue #73): the day's course again with the stored best run
+  /// riding along as the translucent ghost, on the same route the
+  /// summary already owns. The button used to push a *second*
+  /// [GameScreen] over the finished one, and the hidden game kept
+  /// ticking behind it — its per-frame engine-off fought the live race
+  /// through the shared [AudioService], and every MAIN MENU pop landed
+  /// on an older summary instead of the menu. One route, one game: the
+  /// restart mirrors [retryShift], and [startEndlessRun] does the rest
+  /// — it re-derives the ghost day from [isGhostRace], spawns the
+  /// [GhostCar], and clears the settled shift's flags.
+  void raceGhost() {
+    overlays.remove('shiftBanked');
+    overlays.remove('shiftWrecked');
+    isDailyShift = false;
+    isGhostRace = true;
+    startEndlessRun(seed: DailyShift.seedForDateKey(DailyShift.todayKey));
+  }
+
   /// Settles a completed level: freezes the run, pays the flat reward —
   /// unless the level was [banked], whose payout is the chain score
   /// already in the wallet (issue #34) — and unlocks the next rung.
   void _completeLevel({bool banked = false}) {
+    // The completion panel owns the screen from here: the run is as
+    // terminal as a settled shift (issue #71) — no pausing, banking, or
+    // delivering under it, and no cab coasting on into a kerb.
+    _shiftOver = true;
     isGameActive = false;
-    _freezePlayer();
+    _haltPlayerForShiftEnd();
     trafficSpawner.pause();
+    // The engine's explicit off for the same reason as the endless
+    // endings (issue #73): update() stops asserting once the run
+    // settles, so the ending itself is the last call.
+    audio?.setEngineRunning(false);
 
     // Completing the level supersedes any open bank-or-push choice
     // (issue #16): the last fare's delivery can land while a prompt from
@@ -1250,9 +1313,16 @@ class TaxiGame extends FlameGame
       debugPrint('[crash] ${report.explanation}');
       _spawnCrashFx(report);
     }
+    // The failure panel owns the screen from here: the run is as
+    // terminal as a settled shift (issue #71) — the world that keeps
+    // ticking underneath must deliver, bank, and roll nowhere.
+    _shiftOver = true;
     isGameActive = false;
-    _freezePlayer();
+    _haltPlayerForShiftEnd();
     trafficSpawner.pause();
+    // The engine's explicit off, as every terminal ending gives it
+    // (issue #73).
+    audio?.setEngineRunning(false);
 
     // The failure overlay waits out the hit-stop (issue #7): the sparks,
     // shake, and freeze land first, then the panel explains what happened.
@@ -1333,8 +1403,11 @@ class TaxiGame extends FlameGame
     _shiftOver = true;
     _crashStallRemaining = 0;
     isGameActive = false;
-    _freezePlayer();
+    _haltPlayerForShiftEnd();
     trafficSpawner.pause();
+    // The engine's explicit off for the same reason as the bank's (issue
+    // #73): update() has nothing more to assert once the shift settles.
+    audio?.setEngineRunning(false);
     _finalizeRunSummary(ShiftOutcome.wrecked);
 
     // The wreck panel waits out the hit-stop (issue #7): the impact
@@ -1446,7 +1519,10 @@ class TaxiGame extends FlameGame
     world.add(CloseCallPop(position: midPoint, points: points));
 
     // Haptic thump plus the OS click (the game ships no audio assets —
-    // see [CloseCallFeedback]) under the save's existing sound setting.
+    // see [CloseCallFeedback]) under the save's existing settings: the
+    // thump rides the haptics service's vibration gate like every other
+    // buzz, the click the sound flag (issue #75).
+    haptics?.closeCall();
     CloseCallFeedback.play(soundEnabled: gameState.soundEnabled);
   }
 
@@ -1466,7 +1542,13 @@ class TaxiGame extends FlameGame
     // the engine for exactly as long as the world is held. A stopped ticker
     // (pause menu, backgrounding) calls no update at all; those paths turn
     // the engine off explicitly in [pauseGame] and [lifecycleStateChange].
-    if (_playerReady) {
+    //
+    // A settled shift stops asserting altogether (issue #73): the summary
+    // owns the screen but the ticker keeps running, and the finished game's
+    // per-frame engine-off used to fight a live race driven over it through
+    // the shared AudioService. The endings turn the engine off once,
+    // explicitly; from there this loop has nothing more to say.
+    if (_playerReady && !_shiftOver) {
       final speed01 =
           (-player.velocity.y / player.maxSpeed).clamp(0.0, 1.0);
       audio?.setEngineRunning(isGameActive);
@@ -1676,6 +1758,19 @@ class TaxiGame extends FlameGame
     player.setSteering(0);
     // The run is over; the windshield effect ends with it (issue #7).
     _speedLines?.intensity = 0;
+  }
+
+  /// A terminal ending's freeze: on top of the dead stick
+  /// ([_freezePlayer]) the body stops dead. [update] keeps ticking the
+  /// world under an end-of-run panel, and a cab that had only lost its
+  /// inputs kept coasting on its last velocity — rolling into the
+  /// drop-off the wreck had come up just short of and "delivering" a
+  /// fare the ending had already forfeited (issue #71). The crash stall
+  /// deliberately keeps [_freezePlayer] alone: the shift resumes there,
+  /// and the cab's momentum is part of what it resumes with.
+  void _haltPlayerForShiftEnd() {
+    _freezePlayer();
+    player.velocity = Vector2.zero();
   }
 
   void pauseGame() {
