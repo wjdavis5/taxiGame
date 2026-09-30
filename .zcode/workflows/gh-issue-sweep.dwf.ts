@@ -5,10 +5,7 @@ description: "One tick of the recurring pipeline: find open GitHub issues, plan
   full senior code review with a fix loop plus an independent final approval,
   then merge, watch the iOS Release pipeline deploy to TestFlight, and close the
   issues."
-whenToUse: Run on a schedule (every 30 minutes) or on demand whenever you want
-  all open GitHub issues in wjdavis5/taxiGame triaged, implemented in one PR,
-  code-reviewed at a senior level, merged, and deployed to TestFlight
-  automatically.
+whenToUse: "Run on a schedule (every 30 minutes) or on demand whenever you want all open GitHub issues in wjdavis5/taxiGame triaged, implemented in one PR, code-reviewed at a senior level, merged, and deployed to TestFlight automatically."
 args: {}
 */
 /* gh-issue-sweep — one tick of the recurring pipeline.
