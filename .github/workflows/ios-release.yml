@@ -334,6 +334,13 @@ jobs:
 
       - name: Submit for App Store review
         if: steps.review.outputs.submit == 'true'
+        # Interim mitigation for issue #94 (the gate's ASC-state query and
+        # deliver disagree about which versions exist; the attach is refused
+        # and would fail every release run until a human untangles the ASC
+        # records). TestFlight upload has already succeeded by this point;
+        # the failed attempt is logged loudly but must not mark every
+        # deploy red. Remove this once #94 is diagnosed and fixed.
+        continue-on-error: true
         working-directory: ${{ env.PROJECT_PATH }}
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
