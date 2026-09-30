@@ -43,15 +43,17 @@ class TrafficVehicle extends PositionComponent
 
   /// Whether this vehicle's centre was ahead of the taxi's (smaller y)
   /// at the start of their **current contact episode**, re-decided at
-  /// every touch by [PlayerVehicle.onCollisionStart] (issues #74 and
-  /// #80). The pace cap paces a car the taxi rides behind, and where
-  /// the touch *happened* — not where the bodies have drifted within
-  /// the episode — is what decides that: a rear-ender that slides
-  /// through a stopped cab must never start pacing it mid-grind. The
-  /// decision is per episode, not per lifetime: the day the order
-  /// genuinely swaps — the car falls back and rear-ends the taxi, or
-  /// the taxi catches a past rear-ender — the next touch is judged on
-  /// the geometry it starts from.
+  /// every touch by [PlayerVehicle.onCollisionStart] (issues #74, #80
+  /// and #85). The pace cap paces a car the taxi rides behind, and
+  /// where the touch *happened* — not where the bodies have drifted
+  /// within the episode — is what decides that: a rear-ender that
+  /// slides through a stopped cab must never start pacing it
+  /// mid-grind. The decision is per episode, not per lifetime: the
+  /// day the order genuinely swaps — the car falls back and rear-ends
+  /// the taxi, or the taxi catches a past rear-ender — the next touch
+  /// is judged on the geometry it starts from. And an episode spans
+  /// the whole grind, containment stretch included — both hitboxes
+  /// are solid, so Flame never splits a pass in two (#85).
   bool aheadAtContactStart = false;
 
   /// True once this vehicle has been judged for a close call at the pass
@@ -105,11 +107,24 @@ class TrafficVehicle extends PositionComponent
     // Add hitbox. Tightened to 80% of the logical box (issue #6, in the
     // player's favour). Sized from the logical vehicle box only — never
     // from the sprite.
+    //
+    // Solid (issue #85): several traffic boxes clear the cab's scaled
+    // one in both dimensions — a sedan's by a sliver, a bus's by 5 px
+    // either side and 17.5 nose-to-tail — so part of any drive-through
+    // parks the cab's whole hitbox inside this one, where no edges
+    // cross. Flame's containment fallback keeps such an overlap as one
+    // continuous collision only while the outer shape is solid; hollow
+    // here, a rear-ender's pass split in two, the second half fired a
+    // fresh onCollisionStart, and the per-episode ahead/behind ruling
+    // (#80) — re-decided at that new touch, with the passer's centre
+    // already past the cab's — read it "ahead" and pinned the cab to
+    // the passer's speed (#74 reborn). Mirrors the taxi's own solid
+    // hitbox (the outer shape of its cone touches) and the cones'.
     final hitbox = RectangleHitbox(
       size: vehicleSize * CollisionRules.trafficHitboxScale,
       position:
           vehicleSize * ((1 - CollisionRules.trafficHitboxScale) / 2),
-    );
+    )..isSolid = true;
     add(hitbox);
 
     // Warning state for when the player closes on this vehicle dangerously.

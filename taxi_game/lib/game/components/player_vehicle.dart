@@ -203,18 +203,25 @@ class PlayerVehicle extends PositionComponent
   /// per-frame clamp, and #42's bulldozing bus passes through untouched.
   ///
   /// Ahead only, frozen at the start of each contact episode (issues
-  /// #66, #74 and #80): the cap paces a car the taxi rides behind, and
-  /// a car in the taxi's rear is not that. A same-direction follower
-  /// that has just rear-ended the cab used to clamp the cab to the
-  /// follower's own speed on overlap alone (#66), and the per-frame
-  /// centre comparison that fixed it re-decided "ahead" from live
-  /// positions — a stopped cab that waited ~1 s before accelerating
-  /// was pinned anyway once the rear-ender's centre crossed its own
-  /// (#74). The ruling now comes from
+  /// #66, #74, #80 and #85): the cap paces a car the taxi rides
+  /// behind, and a car in the taxi's rear is not that. A same-direction
+  /// follower that has just rear-ended the cab used to clamp the cab
+  /// to the follower's own speed on overlap alone (#66), and the
+  /// per-frame centre comparison that fixed it re-decided "ahead"
+  /// from live positions — a stopped cab that waited ~1 s before
+  /// accelerating was pinned anyway once the rear-ender's centre
+  /// crossed its own (#74). The ruling now comes from
   /// [TrafficVehicle.aheadAtContactStart], recorded at the start of
   /// every touch on the pre-pushback geometry — per episode, not per
   /// lifetime, so an order swap between two cars is judged where the
-  /// new touch stands (#80).
+  /// new touch stands (#80). Per-episode re-ruling is sound only
+  /// because a touch episode truly spans its whole grind, and that in
+  /// turn rests on both hitboxes being solid: mid-drive-through the
+  /// cab's hitbox sits entirely inside the passer's, where no edges
+  /// cross, and Flame's containment fallback drops that stretch as
+  /// "no collision" unless the outer shape is solid — splitting the
+  /// pass in two and re-ruling the second half "ahead" (#85, #74
+  /// reborn; the traffic hitbox went solid for exactly this).
   void _capSpeedToScrapedTraffic() {
     if (!isMounted) return;
     for (final vehicle in game.world.children.whereType<TrafficVehicle>()) {
@@ -392,10 +399,15 @@ class PlayerVehicle extends PositionComponent
     // from its own rear the day it caught up again, and a past
     // rear-ender became drive-through the day the taxi caught IT. So
     // the ruling is per episode — re-decided at every touch's start,
-    // frozen for that episode's grind. #74 holds all the same: its
-    // drive-through is one continuous overlap, and the re-touch that
-    // follows a pushback begins with the rear-ender's centre still
-    // behind the cab it has not finished passing. Same y convention
+    // frozen for that episode's grind — and that is only sound
+    // because an episode really does span the whole grind: part of a
+    // drive-through has the cab's whole hitbox inside the passer's,
+    // where no edges cross, and Flame's containment fallback keeps
+    // that stretch as contact only while the outer hitbox is solid.
+    // The traffic hitbox went solid for exactly this (#85); hollow,
+    // the pass split into two episodes, the second began with the
+    // passer's centre already past the cab's, and the re-ruling read
+    // it "ahead" — the #74 pin come straight back. Same y convention
     // the cap has always used — smaller y is ahead.
     other.aheadAtContactStart = other.position.y < position.y;
 
