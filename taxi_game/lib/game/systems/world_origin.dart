@@ -15,9 +15,18 @@
 /// `worldYForDistance(d) = shiftForDistance(d) - d`, which is always in
 /// (-[period], 0]. When the taxi crosses the next multiple of [period],
 /// [TaxiGame] adds [period] to the y of every world component and to the
-/// camera — the frame every consumer reads *is* this canonical mapping, so
-/// placement code never needs to know how many folds have happened; it
-/// converts true distance to world y and back with these two functions.
+/// camera.
+///
+/// **This canonical mapping describes the frame a distance *belongs to*,
+/// which is only the live frame for distances the taxi has already
+/// reached** (issue #53): a distance just ahead of a boundary the taxi
+/// hasn't crossed belongs to the *next* frame, and placing live
+/// components by canonical y drew them a whole period away — road that
+/// was never painted, fares culled unseen. Live placement therefore goes
+/// through the game's current `worldShift` (`worldShift - distance`),
+/// and these two functions serve the pure, out-of-run queries: seed
+/// determinism tests, distance arithmetic, and the fold bookkeeping
+/// itself.
 ///
 /// [period] is chosen so no stretch of road that renders or scores as one
 /// piece ever straddles a fold:

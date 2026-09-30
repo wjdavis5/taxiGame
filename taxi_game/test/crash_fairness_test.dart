@@ -84,6 +84,33 @@ void main() {
         ],
       );
 
+  /// An oncoming sportsCar driving down-screen at exactly [speed] px/s —
+  /// the striker of issue #58's report (its 147.5 px/s is a 1.3×-multiplied
+  /// speed draw).
+  TrafficVehicle oncomingSportsCar(Vector2 position, double speed) =>
+      TrafficVehicle(
+        position: position.clone(),
+        vehicleType: TrafficVehicleType.sportsCar,
+        baseSpeed: speed / 1.3, // undo the sportsCar type's multiplier
+        path: [
+          Vector2(position.x, position.y + 3000),
+          Vector2(position.x, position.y + 3001),
+        ],
+      );
+
+  /// Same-direction traffic driving up-screen at exactly [speed] px/s (the
+  /// sedan's multiplier is 1.0) — the rear-end case: it closes on a slower
+  /// cab from behind.
+  TrafficVehicle follower(Vector2 position, double speed) => TrafficVehicle(
+        position: position.clone(),
+        vehicleType: TrafficVehicleType.sedan,
+        baseSpeed: speed,
+        path: [
+          Vector2(position.x, position.y - 3000),
+          Vector2(position.x, position.y - 3001),
+        ],
+      );
+
   group('ruling on contact', () {
     test('a low-speed brush is a scrape: run continues, taxi is slowed',
         () async {
@@ -238,6 +265,64 @@ void main() {
       expect(report.closingSpeedAlongImpact, 210);
       expect(report.explanation, contains('bus'));
       expect(report.explanation, contains('210.0'));
+    });
+
+    test('a stationary cab struck at speed is a scrape, not a crash '
+        '(issue #58)', () async {
+      final game = await mountGame(freshGame());
+      final player = game.player;
+
+      // The issue's exact scenario: hands off the stick, parked in the
+      // centre lane, and an oncoming sportsCar collects the cab at
+      // 147.5 px/s — over the 110 crash threshold, none of it the taxi's
+      // doing. Before the fault gate this failed the tutorial level
+      // without the player ever touching the controls.
+      player.position = Vector2(200, 100);
+      player.velocity = Vector2.zero();
+      final car = oncomingSportsCar(Vector2(200, 40), 147.5);
+      game.world.add(car);
+      await game.ready();
+
+      player.onCollisionStart({Vector2(185, 70)}, car);
+
+      // Still a live run, no failure overlay.
+      expect(game.isGameActive, isTrue);
+      expect(game.overlays.activeOverlays, isNot(contains('levelFailed')));
+
+      final report = game.lastImpact!;
+      expect(report.severity, ContactSeverity.scrape);
+      expect(report.closingSpeedAlongImpact, closeTo(147.5, 1e-9));
+      expect(report.playerContribution, 0);
+      // Neither the panel's wording nor the log's blames the player.
+      expect(report.headline, 'A sportsCar ran into you — nothing lost.');
+      expect(report.explanation, contains('not ruled against the taxi'));
+    });
+
+    test('a slower cab rear-ended by same-direction traffic is a scrape '
+        '(issue #58)', () async {
+      final game = await mountGame(freshGame());
+      final player = game.player;
+
+      // The literal rear-end: the cab crawls up-screen at 40 px/s and a
+      // sedan it had overtaken closes from behind at 190 — 150 px/s of
+      // closing, but the player's own velocity points away from the
+      // striker, so none of it is the player's fault.
+      player.position = Vector2(200, 100);
+      player.velocity = Vector2(0, -40);
+      final car = follower(Vector2(200, 200), 190);
+      game.world.add(car);
+      await game.ready();
+
+      player.onCollisionStart({Vector2(200, 130)}, car);
+
+      expect(game.isGameActive, isTrue);
+      expect(game.overlays.activeOverlays, isNot(contains('levelFailed')));
+
+      final report = game.lastImpact!;
+      expect(report.severity, ContactSeverity.scrape);
+      expect(report.closingSpeedAlongImpact, closeTo(150, 1e-9));
+      expect(report.playerContribution, closeTo(-40, 1e-9));
+      expect(report.headline, 'A sedan ran into you — nothing lost.');
     });
 
     test('no ruling is made once the level is over', () async {

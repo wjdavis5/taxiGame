@@ -11,6 +11,7 @@ import 'package:taxi_game/game/components/passenger_note.dart';
 import 'package:taxi_game/game/components/pickup_zone.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/components/ghost_car.dart';
+import 'package:taxi_game/game/components/road_segment.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
 import 'package:taxi_game/game/systems/endless_fare_controller.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
@@ -287,6 +288,29 @@ void main() {
           reason: 'the passenger is still aboard');
       expect(game.world.children.whereType<PassengerNote>(), isNotEmpty,
           reason: 'the passenger says where to meet them');
+      final note = game.world.children.whereType<PassengerNote>().single;
+
+      // And the sentence can actually be read (issue #50): the note is
+      // born at the kerb the dropoff waited on, clamped so the whole
+      // line stays on the phone. The branch follows the measured font:
+      // a sentence that fits keeps its edges inside the margins, and the
+      // test font's over-wide one (429 px against the 400 px viewport)
+      // collapses onto the road's centre — clipped evenly, never lost
+      // off one side.
+      const roadWidth = 2 * TaxiGame.roadCenterX;
+      if (note.width >= roadWidth - 2 * PassengerNote.edgeMargin) {
+        expect(note.width, greaterThan(roadWidth),
+            reason: 'the over-wide premise the branch asserts holds');
+        expect(note.x, closeTo(TaxiGame.roadCenterX, 0.5),
+            reason: 'an over-wide sentence centres on the road');
+      } else {
+        expect(note.x - note.width / 2,
+            greaterThanOrEqualTo(PassengerNote.edgeMargin - 0.5),
+            reason: 'the sentence\'s start is on screen');
+        expect(note.x + note.width / 2,
+            lessThanOrEqualTo(roadWidth - PassengerNote.edgeMargin + 0.5),
+            reason: 'the sentence\'s end is on screen');
+      }
 
       // Reaching the relocated kerb settles the fare: score lands and the
       // chain steps, exactly as an unmissed dropoff would.
@@ -296,6 +320,30 @@ void main() {
       expect(game.player.hasPassenger, isFalse);
       expect(game.score, fare.reward, reason: 'on time: value x 1x');
       expect(game.fareChain.multiplier, 2, reason: 'the chain steps');
+    });
+
+    test('the note stays on the phone at both kerbs (issue #50)', () {
+      // The clamp is the component's own, so its unit is testable
+      // without driving a relocation: construct one at each kerb the
+      // course deals dropoffs to — and dead centre, which must not move.
+      const roadWidth = 2 * TaxiGame.roadCenterX;
+      for (final kerbX in [60.0, TaxiGame.roadCenterX, 340.0]) {
+        final note = PassengerNote(position: Vector2(kerbX, -1000));
+        if (note.width >= roadWidth - 2 * PassengerNote.edgeMargin) {
+          expect(note.width, greaterThan(roadWidth),
+              reason: 'over-wide premise holds at kerb $kerbX');
+          expect(note.x, closeTo(TaxiGame.roadCenterX, 0.5),
+              reason: 'kerb $kerbX: over-wide collapses to the centre '
+                  '(a naive clamp(lo, hi) would have thrown here)');
+        } else {
+          expect(note.x - note.width / 2,
+              greaterThanOrEqualTo(PassengerNote.edgeMargin - 0.5),
+              reason: 'kerb $kerbX: sentence start on screen');
+          expect(note.x + note.width / 2,
+              lessThanOrEqualTo(roadWidth - PassengerNote.edgeMargin + 0.5),
+              reason: 'kerb $kerbX: sentence end on screen');
+        }
+      }
     });
 
     test('the meter keeps running through the miss: a late delivery '
@@ -853,6 +901,189 @@ void main() {
       expect(-lastY, closeTo(game.runDistance, 2.0),
           reason: 'traces count true road, not folded world y');
     });
+  });
+
+  group('creeping across a world fold (issue #53)', () {
+    /// Issue #53's reproduction shape: the old tests teleported straight
+    /// past the boundary, which never builds anything *ahead* of a fold
+    /// the taxi has not crossed yet. A slow crossing does, and everything
+    /// built in that band must land in the frame the world is in *now* —
+    /// not the frame its true distance canonically belongs to, a whole
+    /// period ahead.
+    Future<TaxiGame> mountAtCreepStart(int seed) async {
+      final game = await mountGame(endlessGame(seed));
+      // Coverage and geometry, not survival.
+      game.player.children.whereType<RectangleHitbox>().single.collisionType =
+          CollisionType.inactive;
+      await preloadSprites(game);
+      // Just short of the first fold (100,800): everything the next
+      // ~3,000 px builds straddles the boundary.
+      game.player.position = Vector2(200, -98000);
+      await tickAndSettle(game);
+      expect(game.worldShift, 0, reason: 'the fold has not happened yet');
+      return game;
+    }
+
+    test('every step of a slow crossing keeps chunks and fares in the '
+        'live frame', () async {
+      final game = await mountAtCreepStart(424242);
+
+      // The fare invariant is judged on zones the frame they appear: a
+      // fare spawned correctly waits inside [camera − cullBehind,
+      // camera + generationAhead] of true distance. The bug's fare was
+      // placed a whole period off, read as hopelessly behind, and culled
+      // by the same update that spawned it — so only its spawn frame can
+      // catch it. (Counters alone cannot: a frame may legitimately cull
+      // one driven-past fare and spawn the next, 1,400 px apart.)
+      var knownZones = game.world.children.whereType<PickupZone>().toSet();
+
+      // Creep 60 px per frame across the boundary and 3,200 px beyond.
+      // The taxi moves *relatively* — absolute y re-folds every frame
+      // past the boundary — and the loop drains between frames so Flame
+      // flushes the deferred world adds each tick queues.
+      for (var i = 0; i < 100; i++) {
+        game.player.position += Vector2(0, -60);
+        game.update(1 / 60);
+        await drain();
+
+        // Every live chunk sits exactly where its pinned true distance
+        // says it must, in the frame the world is in right now. Before
+        // the fix, the chunks built ahead of the pending fold sat a full
+        // period off, and the road for true distance 100,000-102,400 px
+        // was never drawn.
+        for (final segment in game.world.children.whereType<RoadSegment>()) {
+          expect(
+            segment.position.y,
+            closeTo(game.worldShift - segment.distanceAtTop, 0.5),
+            reason: 'a chunk built ahead of the fold landed a whole '
+                'period away (top distance ${segment.distanceAtTop})',
+          );
+        }
+
+        // Every fare that appeared this frame waits in the live frame,
+        // within the generation window the controller spawns into.
+        final zones = game.world.children.whereType<PickupZone>().toSet();
+        final cameraDistance =
+            game.worldShift - game.camera.viewfinder.position.y;
+        for (final zone in zones.difference(knownZones)) {
+          final zoneDistance = game.worldShift - zone.position.y;
+          expect(
+            zoneDistance,
+            inInclusiveRange(
+              cameraDistance - EndlessFareController.cullBehind - 50,
+              cameraDistance + EndlessFareController.generationAhead + 50,
+            ),
+            reason: 'a fare spawned a whole period off its slot at camera '
+                'distance ${cameraDistance.toStringAsFixed(0)} (issue #53 '
+                'would have culled it unseen this very frame)',
+          );
+        }
+        knownZones = zones;
+      }
+
+      expect(game.worldShift, WorldOrigin.period,
+          reason: 'the creep really crossed the boundary');
+      // The fold was crossed with fares in play and none lost to it. The
+      // teleport to the creep start skips slots 0-69 behind (counted
+      // missed, never spawned — the legitimate path), so what generated
+      // here is the approach band and beyond: the generator must have
+      // dealt and passed fare 72, the issue's culled-unseen fare.
+      expect(game.fareController!.nextFareIndex, greaterThan(72),
+          reason: 'fare 72, the first slot past the fold, was dealt '
+              'during the creep');
+      // And the road covers the viewport at the end of it all.
+      expectViewportCovered(game);
+    }, timeout: const Timeout(Duration(minutes: 4)));
+
+    test('a fare picked up before the fold carries its stored dropoff '
+        'across it', () async {
+      final game = await mountGame(endlessGame(424242));
+      await preloadSprites(game);
+      final fare = game.course!.fare(71);
+
+      // Sanity: this slot really does straddle the crossing — pickup in
+      // the fold's approach band, the delivery effects' frozen vectors
+      // riding across it. Slot 71 spans [99,400, 100,800).
+      expect(fare.pickupDistance, lessThan(WorldOrigin.period));
+      expect(fare.pickupDistance,
+          greaterThan(WorldOrigin.period - EndlessCourse.slotLength),
+          reason: 'the pickup waits in the fold\'s approach band');
+
+      // No traffic for the boarding: the approach band sits at full
+      // pressure, and one stray car through a parked cab would freeze
+      // the run mid-test. (The creep below inactivates the hitbox
+      // anyway — this test is about geometry, not survival.)
+      game.trafficSpawner.clear();
+
+      // Pull up *short* of the kerb first, so the generator deals the
+      // approach band's fares around the taxi — a zone that materializes
+      // already overlapping a stationary cab never fires its collision
+      // start, so the boarding needs the overlap to begin.
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 200);
+      await tickAndSettle(game);
+
+      // The passenger data is what the delivery effects read (burst,
+      // coin flight): capture it now, while the zone still exists — the
+      // pickup removes the zone from the world. The teleport's catch-up
+      // burn (70 skipped slots) leaves the generator a few ticks behind,
+      // so wait for the zone like the fold tests do.
+      PickupZone? zone;
+      for (var i = 0; i < 40 && zone == null; i++) {
+        await tickAndSettle(game);
+        for (final z in game.world.children.whereType<PickupZone>().toList()) {
+          if ((z.position - fare.pickup).length < 1.0) zone = z;
+        }
+      }
+      expect(zone, isNotNull,
+          reason: 'fare 71\'s pickup zone is live in the approach band');
+      final passenger = zone!.passenger;
+
+      // Then arrive at the kerb, the way the world-coherence harness
+      // boards fares: onto a zone that already exists.
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+      game.update(1 / 60);
+      await drain();
+      expect(game.player.hasPassenger, isTrue, reason: 'passenger boarded');
+
+      // Survive the crossing: coverage, not crashes.
+      game.player.children.whereType<RectangleHitbox>().single.collisionType =
+          CollisionType.inactive;
+
+      // Creep across the fold holding the passenger.
+      for (var i = 0; i < 90; i++) {
+        game.player.position += Vector2(0, -60);
+        game.update(1 / 60);
+        await drain();
+      }
+      expect(game.worldShift, WorldOrigin.period);
+      expect(game.player.hasPassenger, isTrue,
+          reason: 'the carried fare was never culled across the fold');
+      expect(game.fareController!.faresRelocated, greaterThan(0),
+          reason: 'the creep drove past the original dropoff, so the '
+              'forgiveness rule moved it — across the fold, where the old '
+              'placement dealt it a whole period away and the fare died');
+
+      // The invariant that survives both the fold *and* relocations: the
+      // frozen dropoff vector agrees with the live zone it belongs to,
+      // in the live frame. The fold moved the zone; the relocations
+      // moved it further; the stored vector must have ridden both, or
+      // the delivery's burst and coins land a whole period from the kerb
+      // the fare actually settles at.
+      final dropoffZone = game.world.children
+          .whereType<DropoffZone>()
+          .where((z) => z.passenger == passenger)
+          .single;
+      expect(dropoffZone.position.y,
+          inInclusiveRange(-WorldOrigin.period, 0),
+          reason: 'the relocated dropoff waits in the live frame, not a '
+              'stale one');
+      expect(
+        passenger.dropoffLocation.y,
+        closeTo(dropoffZone.position.y, 1.0),
+        reason: 'the stored dropoff stayed in the live frame across the '
+            'fold (issue #53)',
+      );
+    }, timeout: const Timeout(Duration(minutes: 4)));
   });
 
   group('endless HUD', () {

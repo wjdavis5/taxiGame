@@ -315,7 +315,15 @@ class PlayerVehicle extends PositionComponent
       trafficVelocity: other.velocity,
       impactAxis: axis,
     );
-    final severity = CollisionRules.severityFor(approachSpeed);
+    // Fault (issue #58): the closing speed alone would let traffic that
+    // collects a stationary cab fail the level against a player who never
+    // touched the stick. Only the share of the closing the taxi's own
+    // velocity contributed can crash it.
+    final contribution = CollisionRules.playerContribution(
+      playerVelocity: velocity,
+      impactAxis: axis,
+    );
+    final severity = CollisionRules.severityFor(approachSpeed, contribution);
     final report = CollisionRules.buildReport(
       severity: severity,
       vehicleKind: other.vehicleType.name,

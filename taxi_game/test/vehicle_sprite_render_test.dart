@@ -1,4 +1,7 @@
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flame/components.dart';
 import 'package:flame/collisions.dart';
@@ -38,6 +41,77 @@ SpriteComponent spriteOf(PositionComponent vehicle) =>
 
 RectangleHitbox hitboxOf(PositionComponent vehicle) =>
     vehicle.children.whereType<RectangleHitbox>().single;
+
+/// Decodes [image] to straight RGBA bytes — one r, g, b, a quad per pixel.
+Future<Uint8List> rgbaOf(ui.Image image) async {
+  final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  if (bytes == null) fail('could not read pixels back from a sprite');
+  return bytes.buffer.asUint8List();
+}
+
+/// Histogram of the sprite's fully-opaque pixels, keyed r<<16 | g<<8 | b.
+/// The shipped art is flat-shaded (a handful of exact palette steps), so
+/// exact-match counting is enough. Partial-alpha edge pixels are skipped:
+/// anti-aliased fringes differ between premultiplied and straight encodings
+/// and would blur the steps.
+Map<int, int> opaqueHistogram(Uint8List rgba) {
+  final counts = <int, int>{};
+  for (var i = 0; i + 3 < rgba.length; i += 4) {
+    if (rgba[i + 3] != 0xFF) continue;
+    final key = rgba[i] << 16 | rgba[i + 1] << 8 | rgba[i + 2];
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/// The most frequent opaque colour — on these sprites the brightest body
+/// step is the biggest single area, so the mode *is* the body colour.
+int dominantBodyColour(Uint8List rgba) {
+  final counts = opaqueHistogram(rgba);
+  return counts.entries
+      .reduce((a, b) => a.value >= b.value ? a : b)
+      .key;
+}
+
+/// Perceptual luminance of a packed r<<16 | g<<8 | b colour.
+double luminanceOf(int packed) =>
+    0.2126 * ((packed >> 16) & 0xFF) +
+    0.7152 * ((packed >> 8) & 0xFF) +
+    0.0722 * (packed & 0xFF);
+
+/// CIE76 colour difference between two packed sRGB colours: sRGB → linear
+/// → XYZ (D65) → Lab, then Euclidean distance. ΔE below ~20 reads as the
+/// same colour family, which is exactly the collision these guards look
+/// for — a traffic vehicle the player could mistake for their own cab.
+double deltaE76(int packedA, int packedB) {
+  List<double> labOf(int packed) {
+    // sRGB transfer curve, then the D65 matrix the Lab white point matches.
+    double lin(int channel8) {
+      final c = channel8 / 255.0;
+      return c <= 0.04045
+          ? c / 12.92
+          : math.pow((c + 0.055) / 1.055, 2.4).toDouble();
+    }
+
+    final r = lin((packed >> 16) & 0xFF);
+    final g = lin((packed >> 8) & 0xFF);
+    final b = lin(packed & 0xFF);
+    final x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047;
+    final y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    final z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+    double f(double t) =>
+        t > 0.008856 ? math.pow(t, 1 / 3).toDouble() : 7.787 * t + 16 / 116;
+    return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
+  }
+
+  final a = labOf(packedA);
+  final b = labOf(packedB);
+  var sum = 0.0;
+  for (var i = 0; i < 3; i++) {
+    sum += math.pow(a[i] - b[i], 2).toDouble();
+  }
+  return math.sqrt(sum);
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -214,6 +288,101 @@ void main() {
           type.size.x / type.size.y,
         );
       }
+    });
+  });
+
+  // Issue #59: the traffic bus shipped wearing the player taxi's exact
+  // yellow ramp (ΔE 0), so on the road it read as a second player cab —
+  // and its elongated sprite carried a cloned tail outline mid-body. In a
+  // game about steering one taxi through traffic, the player's car must be
+  // unmistakable, so both defects get their own guard here.
+  group('Traffic art distinctness (issue #59)', () {
+    test("no traffic sprite's dominant body colour is within ΔE 20 of the "
+        'player taxi', () async {
+      final game = await mountGame(TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+      ));
+
+      final taxi = dominantBodyColour(await rgbaOf(await game.images.load(
+        VehicleSprites.playerSpritePath(VehicleSprites.defaultVehicleId),
+      )));
+
+      // Every PNG in the traffic folder, not just the five types
+      // TrafficVehicleType maps to — anything dropped there renders on the
+      // road beside the player sooner or later.
+      final folder = Directory('assets/images/vehicles/traffic');
+      final names = folder
+          .listSync()
+          .whereType<File>()
+          .map((f) => f.uri.pathSegments.last)
+          .where((n) => n.endsWith('.png'))
+          .toList()
+        ..sort();
+      expect(names, isNotEmpty);
+
+      for (final name in names) {
+        final sprite = await game.images.load('vehicles/traffic/$name');
+        final distance = deltaE76(taxi, dominantBodyColour(await rgbaOf(sprite)));
+        expect(distance, greaterThan(20),
+            reason: 'traffic/$name reads as the player taxi (dominant body '
+                'colour within ΔE 20 of it)');
+      }
+    });
+
+    test('bus art keeps a single continuous outline — no cloned tail seam',
+        () async {
+      final game = await mountGame(TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+      ));
+      final image = await game.images.load(
+        VehicleSprites.trafficSpritePath(TrafficVehicleType.bus),
+      );
+      final rgba = await rgbaOf(image);
+
+      // The body outline step is the darkest colour covering a real share
+      // of the body — darker than every body/shade step, unlike glass.
+      final counts = opaqueHistogram(rgba);
+      final total = counts.values.reduce((a, b) => a + b);
+      final outline = counts.entries
+          .where((e) => e.value >= total * 0.03)
+          .reduce((a, b) => luminanceOf(a.key) <= luminanceOf(b.key) ? a : b)
+          .key;
+
+      // Rows where outline pixels outnumber all other opaque pixels form
+      // the nose cap at the top and the closed tail outline at the bottom.
+      // A third such run — or a tail outline that starts mid-body — is a
+      // duplicated band, the seam the old elongation shipped with.
+      final runs = <List<int>>[];
+      for (var y = 0; y < image.height; y++) {
+        var opaque = 0;
+        var outlinePixels = 0;
+        for (var x = 0; x < image.width; x++) {
+          final i = (y * image.width + x) * 4;
+          if (rgba[i + 3] != 0xFF) continue;
+          opaque++;
+          if ((rgba[i] << 16 | rgba[i + 1] << 8 | rgba[i + 2]) == outline) {
+            outlinePixels++;
+          }
+        }
+        if (outlinePixels * 2 > opaque) {
+          if (runs.isNotEmpty && runs.last[1] == y - 1) {
+            runs.last[1] = y;
+          } else {
+            runs.add([y, y]);
+          }
+        }
+      }
+
+      expect(runs, hasLength(2),
+          reason: 'only the nose cap and the tail outline should be '
+              'outline-majority; extra runs are cloned-outline seams');
+      expect(runs.first[0], lessThan(image.height * 0.1),
+          reason: 'the first outline run must be the nose cap');
+      expect(runs.last[0], greaterThan(image.height * 0.85),
+          reason: 'the tail outline must close the art, not appear '
+              'mid-body with body hanging below it');
     });
   });
 }

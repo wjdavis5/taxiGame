@@ -1,9 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/models/achievements.dart';
 import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/models/run_record.dart';
+import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
@@ -185,6 +188,93 @@ void main() {
 
       await gameState.recordEndlessRun(run(banked: true, livesLost: 0));
       expect(gameState.isAchievementUnlocked('bank_clean_1'), isTrue);
+    });
+
+    test('the clean-bank count is lifetime — it never drops as the '
+        'history window trims (issue #55)', () async {
+      // The issue's arithmetic: a player banking clean every 20th shift
+      // has fifteen clean banks after 300 shifts, but only ten inside
+      // the last 200 — so counting over the window could never reach
+      // THE HOUSE ALWAYS WINS (15) at a 5% clean rate, and progress read
+      // "11/15" then "10/15" as old clean banks aged out. The measure is
+      // a lifetime counter now; watch it only ever climb.
+      var expected = 0;
+      var previous = 0;
+      for (var i = 1; i <= 300; i++) {
+        final clean = i % 20 == 0;
+        await gameState.recordEndlessRun(run(
+          banked: clean,
+          livesLost: clean ? 0 : 3,
+        ));
+        final count = gameState.achievementState.cleanBankedShifts;
+        expect(count, greaterThanOrEqualTo(previous),
+            reason: 'progress went backwards at shift $i');
+        if (clean) {
+          expected++;
+          expect(count, expected,
+              reason: 'shift $i was the $expected-th clean bank');
+        }
+        previous = count;
+      }
+
+      expect(previous, 15);
+      expect(gameState.isAchievementUnlocked('bank_clean_15'), isTrue,
+          reason: 'fifteen lifetime clean banks, whenever they happened');
+
+      // The contrast that is the bug: the trimmed window now holds only
+      // the last ten of them — the measure must not be reading it.
+      final windowCount = gameState.runHistory
+          .where((record) => record.banked && record.livesLost == 0)
+          .length;
+      expect(windowCount, 10);
+      expect(windowCount, lessThan(previous),
+          reason: 'the window alone could not have earned the award');
+    });
+
+    test('a pre-fix save seeds the lifetime counter from its history '
+        'window (issue #55)', () async {
+      // An old save: a 40-record history whose window holds twelve clean
+      // banks, and a personalBests block written before the counter
+      // existed (no cleanBankedShifts key). Loading must carry those
+      // twelve across — a fix may not start a veteran at zero.
+      final history = <Map<String, dynamic>>[
+        for (var i = 0; i < 40; i++)
+          run(banked: i < 12, livesLost: i < 12 ? 0 : 3).toJson(),
+      ];
+      final save = SaveData.createDefault().toJson();
+      (save['personalBests'] as Map<String, dynamic>)
+          .remove('cleanBankedShifts');
+
+      SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey: jsonEncode(save),
+        StorageService.runHistoryKey: jsonEncode(history),
+      });
+      final storage = StorageService();
+      await storage.init();
+      final migrated = GameStateService(storage);
+      await migrated.loadSaveData();
+
+      expect(migrated.achievementState.cleanBankedShifts, 12,
+          reason: 'the window\'s clean banks seed the lifetime counter');
+      expect(migrated.isAchievementUnlocked('bank_clean_5'), isTrue,
+          reason: 'twelve clean banks retro-award SURE HANDS on load');
+
+      // The seed persisted, not just patched memory: a restart reads it
+      // straight from the save even though the window may since have
+      // moved on.
+      final reloadedStorage = StorageService();
+      await reloadedStorage.init();
+      final reloaded = GameStateService(reloadedStorage);
+      await reloaded.loadSaveData();
+      expect(reloaded.achievementState.cleanBankedShifts, 12);
+
+      // And the stored counter wins ties with the window: seeding takes
+      // the maximum, so a post-migration load never re-reads a smaller
+      // number back in.
+      expect(
+        reloaded.personalBests.toJson().containsKey('cleanBankedShifts'),
+        isTrue,
+      );
     });
 
     test('a streak unlocks from consecutive completed dailies', () async {

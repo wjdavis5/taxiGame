@@ -66,7 +66,8 @@ void main() {
         ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
-        ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink());
+        ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('pauseMenu', (_, __) => const SizedBox.shrink());
 
   /// Lets pending component mounts finish before the next simulated tick.
   Future<void> drain() async {
@@ -429,6 +430,100 @@ void main() {
 
       expect(game.overlays.isActive('shiftBanked'), isFalse);
       expect(game.lastBankedScore, isNull);
+    });
+  });
+
+  group('a settled shift closes the bank (issue #52)', () {
+    test('banking twice: the second pause-menu bank pays nothing', () async {
+      final coinsBefore = gameState.totalCoins;
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      game.fareChain.score = 500;
+
+      game.bankFromPause();
+      expect(gameState.totalCoins, coinsBefore + 500);
+      final historyAfterBank = gameState.runHistory.length;
+
+      // The issue's exploit, verbatim: the summary leaves the top-right
+      // pause button reachable, the menu still reads "500 coins at
+      // risk", and every BANK 500 & QUIT tap paid out again.
+      game.pauseGame();
+      expect(game.overlays.isActive('pauseMenu'), isFalse,
+          reason: 'the summary owns the screen; no menu stacks under it');
+      game.bankFromPause();
+
+      expect(gameState.totalCoins, coinsBefore + 500,
+          reason: 'a settled shift has nothing left to pay');
+      expect(gameState.runHistory.length, historyAfterBank,
+          reason: 'and no extra run records either');
+      expect(game.isShiftOver, isTrue);
+    });
+
+    test('a wrecked shift\'s forfeited score pays nothing through the '
+        'pause menu', () async {
+      final coinsBefore = gameState.totalCoins;
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      game.fareChain.score = 400; // the forfeit the wreck panel names
+
+      for (var life = 0; life < 3; life++) {
+        if (life > 0) {
+          // Run out the previous crash's stall so the next crash counts.
+          advanceGameTime(game, TaxiGame.crashStallSeconds + 0.01);
+        }
+        game.onCrash();
+      }
+      await drain();
+      expect(game.overlays.isActive('shiftWrecked'), isTrue);
+
+      game.pauseGame();
+      game.bankFromPause();
+
+      expect(gameState.totalCoins, coinsBefore,
+          reason: 'the forfeited score was never the wallet\'s to pay');
+      expect(game.isShiftOver, isTrue);
+    });
+
+    test('a bank made during a crash stall stays ended — the stall cannot '
+        'resume the world under the summary', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      game.fareChain.score = 240;
+
+      game.onCrash(); // a life spent; the 1.2 s stall begins
+      game.pauseGame(); // still legal mid-stall — the shift is live
+      game.bankFromPause();
+      expect(game.overlays.isActive('shiftBanked'), isTrue);
+
+      // Two seconds of frames — past the stall's full countdown. Before
+      // the fix the countdown finished here and flipped [isGameActive]
+      // back on underneath the panel, engine and stick included.
+      advanceGameTime(game, 2.0);
+
+      expect(game.isGameActive, isFalse,
+          reason: 'the stall must not resume the world under the panel');
+      expect(game.isShiftOver, isTrue);
+    });
+
+    test('a fresh shift re-arms the pause menu', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      game.fareChain.score = 240;
+      game.bankFromPause();
+      expect(game.isShiftOver, isTrue);
+
+      // DRIVE AGAIN: the summary is gone and the next shift is a live
+      // run with a working pause menu again.
+      game.retryShift();
+      await tickAndSettle(game);
+
+      expect(game.isShiftOver, isFalse);
+      expect(game.isGameActive, isTrue);
+      game.pauseGame();
+      expect(game.overlays.isActive('pauseMenu'), isTrue,
+          reason: 'the fresh shift has a pause menu to offer again');
+      game.resumeGame();
+      expect(game.paused, isFalse);
     });
   });
 }

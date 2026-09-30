@@ -10,11 +10,16 @@
 		progress is written to UserDefaults on the device via shared_preferences
 		and never leaves it.
 
-		Required-reason API usage is declared by the plugins that make the calls.
-		shared_preferences ships its own PrivacyInfo.xcprivacy covering its
-		UserDefaults access (CA92.1), so this app-level manifest does not restate
-		it. Keep NSPrivacyCollectedDataTypes consistent with the App Privacy
-		answers in App Store Connect.
+		Required-reason API usage is declared where the calls are made. The
+		app's own Swift reads file modification dates - the share-card cleanup
+		(AppDelegate.pruneStagedCards) sorts the staged PNGs by content
+		modification date - so this manifest declares the File Timestamp
+		category with reason C617.1: files inside the app's own container,
+		which is where the cards stage (NSTemporaryDirectory()/score_cards).
+		Plugins declare their own: shared_preferences ships its own
+		PrivacyInfo.xcprivacy covering its UserDefaults access (CA92.1), not
+		restated here. Keep NSPrivacyCollectedDataTypes consistent with the
+		App Privacy answers in App Store Connect.
 	-->
 	<key>NSPrivacyTracking</key>
 	<false/>
@@ -23,6 +28,15 @@
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array/>
 	<key>NSPrivacyAccessedAPITypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

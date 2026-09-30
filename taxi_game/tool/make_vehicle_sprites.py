@@ -2,10 +2,11 @@
 # art facing up the screen — nose at the top, the direction every vehicle
 # travels in game — from Kenney's Racing Pack.
 #
-# Why a script at all: five of the fifteen cars ship in body colours the
-# pack does not offer (gray, white), the bus is an elongated van, and every
-# canvas must carry the exact proportions of its logical vehicle box so the
-# stretch render in PlayerVehicle/TrafficVehicle/GhostCar stays undistorted.
+# Why a script at all: six of the fifteen cars ship in body colours the
+# pack does not offer (gray, white, orange), the bus is an elongated and
+# recoloured van, and every canvas must carry the exact proportions of its
+# logical vehicle box so the stretch render in PlayerVehicle/TrafficVehicle/
+# GhostCar stays undistorted.
 # The transform is fully deterministic — no random elements, no resampling:
 # bodies are copied pixel-for-pixel, recolours are exact palette swaps, and
 # the only geometry change is transparent padding plus the bus's duplicated
@@ -31,10 +32,15 @@ from PIL import Image
 # shading the Kenney bodies use (body / mid / dark — the pack's biggest
 # body area is its brightest step), chosen to keep the white body distinct
 # from the (255,255,255) window glass and the gray body distinct from the
-# near-black tyres and trim.
+# near-black tyres and trim. The orange exists for the bus (issue #59): it
+# must not wear the taxi's yellow (the player's cab has to be unmistakable
+# on the road), yet every green or blue is already a player or traffic
+# car, and the pack's own red (232,106,23) is an orange-red — so this
+# orange clears the taxi by ΔE76 ≈ 30 and the reds by ≈ 61.
 RAMPS = {
     'white': ((226, 230, 235), (204, 209, 216), (158, 164, 173)),
     'gray': ((152, 158, 165), (128, 134, 142), (84, 90, 97)),
+    'orange': ((255, 128, 0), (229, 117, 16), (159, 80, 10)),
 }
 
 # Recolouring only ever starts from a yellow body, so one hue window covers
@@ -79,19 +85,36 @@ def recolor_yellow(im, ramp):
 
 def elongate(im, extra_rows):
     """Stretch a body vertically by duplicating a band of plain roof rows —
-    how the bus is built from the van. The band is the longest run of rows
-    containing nothing but body-colour and transparent pixels, so no window
-    or shadow is ever cloned; [extra_rows] tiled copies of it are inserted
-    at the run's centre."""
+    how the bus is built from the van. A row qualifies only when every
+    opaque pixel is body-colour family AND the darkest shade step makes up
+    at most half of them: the rows where that dark step dominates are the
+    nose cap and the closed tail outline, and cloning either would print a
+    second complete outline mid-body (the rear seam issue #59 shipped
+    with, where the tail outline was duplicated at ~88% height with a
+    detached band of body hanging below it). [extra_rows] tiled copies of
+    the longest qualifying run are inserted at the run's centre, so the
+    side outline runs continuously through the insert."""
     clean = []
     for y in range(im.height):
+        opaque = outline = 0
         ok = True
         for x in range(im.width):
             r, g, b, a = im.load()[x, y]
-            if a > 0 and not is_yellow_body(r, g, b):
-                ok = False
-                break
-        clean.append(ok)
+            if a > 0:
+                if not is_yellow_body(r, g, b):
+                    ok = False
+                    break
+                opaque += 1
+                # The same value cut recolor_yellow uses to pick its darkest
+                # step — on the pack's bodies those pixels read as outline.
+                _h, _s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+                if v < 0.75:
+                    outline += 1
+        # A fully transparent row would duplicate into a visible gap, and an
+        # outline-majority row into a seam, so neither counts as cloneable
+        # roof. (Flank outline pixels — a handful per row beside a solid
+        # body — stay allowed; tiled copying keeps them aligned.)
+        clean.append(ok and opaque > 0 and outline * 2 <= opaque)
     # The longest run of clean rows is the plain roof band to duplicate.
     best_start, best_len, i = 0, 0, 0
     while i < len(clean):
@@ -119,15 +142,18 @@ def elongate(im, extra_rows):
 
 def build(source, box_aspect, ramp=None, extra_rows=0):
     """Load a Racing Pack PNG and turn it into a shipped sprite: optional
-    recolour, optional elongation, then transparent side padding until the
+    elongation, optional recolour, then transparent side padding until the
     canvas carries [box_aspect] (width/height). The body is never resampled
     and never cropped; it fills the canvas height exactly, so stretching the
-    canvas over the logical vehicle box renders the body undistorted."""
+    canvas over the logical vehicle box renders the body undistorted.
+    Elongation must run first because elongate() finds its cloneable roof
+    band through the yellow-hue predicate; once recolour has swapped the
+    body there is no yellow left to find."""
     im = source.convert('RGBA')
-    if ramp is not None:
-        im = recolor_yellow(im, RAMPS[ramp])
     if extra_rows:
         im = elongate(im, extra_rows)
+    if ramp is not None:
+        im = recolor_yellow(im, RAMPS[ramp])
     im = im.crop(im.getbbox())  # normalise any transparent margin first
     w, h = im.size
     if box_aspect is None:
@@ -161,8 +187,10 @@ SPEC = [
     ('traffic/sports_red.png', 'PNG/Cars/car_red_3.png', (38, 55), None, 0),
     ('traffic/suv_blue.png', 'PNG/Cars/car_blue_5.png', (42, 70), None, 0),
     # The bus: the pack has no bus, so the van body is elongated to the
-    # 50x100 box by duplicating plain roof rows (CC0 permits the derivative).
-    ('traffic/bus_yellow.png', 'PNG/Cars/car_yellow_5.png', (50, 100), None, 29),
+    # 50x100 box by duplicating plain roof rows and recoloured to orange —
+    # yellow is the player taxi's colour and made the bus read as a second
+    # cab (issue #59). CC0 permits the derivative.
+    ('traffic/bus_orange.png', 'PNG/Cars/car_yellow_5.png', (50, 100), 'orange', 29),
     # Not referenced by trafficSpritePath; kept top-down for folder consistency.
     ('traffic/compact_white.png', 'PNG/Cars/car_yellow_2.png', (34, 50), 'white', 0),
     ('traffic/van_white.png', 'PNG/Cars/car_yellow_5.png', (48, 72), 'white', 0),

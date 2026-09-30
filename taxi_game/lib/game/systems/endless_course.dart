@@ -149,7 +149,8 @@ class EndlessCourse {
   /// the road a seed already dealt. The chain runs in true distance (issue
   /// #30) — relocations can cross a world fold, where raw world y would
   /// jump the spot a whole [WorldOrigin.period] away. [worldShift] is the
-  /// live fold, with the same window rule [fare] applies.
+  /// live frame the spot is being placed into, exactly as [fare] applies
+  /// it; null keeps the pure canonical mapping for out-of-run queries.
   Vector2 relocatedDropoff(
     int index, {
     int attempt = 0,
@@ -168,20 +169,22 @@ class EndlessCourse {
           : (environment?.rightCurbXAt(distance) ?? rightCurbX);
     }
     final shift =
-        max(WorldOrigin.shiftForDistance(distance), worldShift ?? 0.0);
+        worldShift ?? WorldOrigin.shiftForDistance(distance);
     return Vector2(x, shift - distance);
   }
 
   /// Generates fare [index]. Deterministic and order-independent.
   ///
-  /// [worldShift] is the live world fold (issue #30) when the fare is
-  /// being placed into a running world. A slot just *behind* a fresh fold
-  /// boundary canonically lives in the previous window — without the live
-  /// shift it would be placed a whole period away from the road it
-  /// belongs to. With it, such a slot lands just below the start line of
-  /// the live frame, exactly where that stretch of road is. Null (the
-  /// default) keeps the pure canonical mapping, which is what the
-  /// determinism tests and any out-of-run query want.
+  /// [worldShift] is the world's *live* frame (issue #30) when the fare
+  /// is being placed into a running world: the slot then lands at
+  /// `worldShift − pickupDistance`, wherever the taxi happens to be
+  /// relative to the fold boundaries. That covers both windows the old
+  /// `max(canonical, live)` rule mishandled half of — a slot just behind
+  /// a fresh fold and, the issue #53 bug, a slot just *ahead* of a fold
+  /// the taxi hasn't crossed yet, which used to be dealt a whole period
+  /// into the next frame, read as hopelessly behind, and culled unseen.
+  /// Null (the default) keeps the pure canonical mapping, which is what
+  /// the determinism tests and any out-of-run query want.
   EndlessFare fare(int index, {double? worldShift}) {
     final random = Random(_slotSeed(index));
 
@@ -221,16 +224,16 @@ class EndlessCourse {
         break; // Standard geometry; the VIP's deal is payout and clock.
     }
 
-    // True distances into the run (issue #30): fares are placed at the
-    // canonical world y for their distance — or the live fold's frame
-    // when the slot sits behind it — so a fare generated past a world
-    // fold lands in the frame the camera is actually in. Pickup and
+    // True distances into the run (issue #30): placed at the live
+    // shift's frame when one is given — the frame the camera is actually
+    // in, whether the slot sits before, behind, or across a pending fold
+    // (issue #53) — or the canonical mapping for pure queries. Pickup and
     // dropoff share one slot, and a slot never straddles a fold boundary
     // (the period is a whole number of slots), so one shift covers both.
     final pickupDistance = index * slotLength + pickupInset;
     final dropoffDistance = pickupDistance + rideLength;
     final shift =
-        max(WorldOrigin.shiftForDistance(pickupDistance), worldShift ?? 0.0);
+        worldShift ?? WorldOrigin.shiftForDistance(pickupDistance);
     final pickupY = shift - pickupDistance;
     final dropoffY = shift - dropoffDistance;
 

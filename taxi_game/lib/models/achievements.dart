@@ -20,10 +20,12 @@ class AchievementState {
   final int mostFaresInOneShift;
 
   /// Shifts that ended in a bank with no life lost — the banking
-  /// discipline the clean-bank achievements measure. Counted over the
-  /// on-device shift history (issue #17's fixed window), which is longer
-  /// than any threshold here needs: the shift that earns the fifteenth
-  /// clean bank is by definition still in the window when it is counted.
+  /// discipline the clean-bank achievements measure. A lifetime count
+  /// held in [PersonalBests] (issue #55), never trimmed: the shift
+  /// history is a fixed 200-record window, and counting over it let
+  /// progress fall as old clean banks aged out — with THE HOUSE ALWAYS
+  /// WINS (15) unreachable outright for anyone banking clean less than
+  /// 7.5% of the time.
   final int cleanBankedShifts;
 
   /// How many garage vehicles the player owns, starter included.

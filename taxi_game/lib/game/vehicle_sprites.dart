@@ -46,7 +46,11 @@ class VehicleSprites {
       case TrafficVehicleType.suv:
         return 'vehicles/traffic/suv_blue.png';
       case TrafficVehicleType.bus:
-        return 'vehicles/traffic/bus_yellow.png';
+        // Orange, not the taxi's yellow: the bus is built from the same
+        // pack van as the player cab, and in a game about steering one
+        // taxi through traffic the player's car must be unmistakable
+        // (issue #59). Guarded by the ΔE test in vehicle_sprite_render_test.
+        return 'vehicles/traffic/bus_orange.png';
     }
   }
 }

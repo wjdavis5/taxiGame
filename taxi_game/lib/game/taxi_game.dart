@@ -283,6 +283,21 @@ class TaxiGame extends FlameGame
   bool get isPlayerReady => _playerReady;
 
   bool isGameActive = false;
+
+  /// True once this shift has settled — banked or wrecked — and stays so
+  /// until the next run starts ([startEndlessRun] or [loadLevel]). The
+  /// end-of-shift summary owns the screen from that moment: pausing
+  /// stacks a second decision under it, and the pause menu's BANK & QUIT
+  /// used to pay the already-banked score out again on every tap —
+  /// unlimited coins, including from a wreck's forfeited score (issue
+  /// #52). [pauseGame] and [bankFromPause] no-op while it is set, and
+  /// the HUD's pause button stands down (its polling widget reads this).
+  bool _shiftOver = false;
+
+  /// Whether the shift on screen has ended and its summary owns the
+  /// screen (issue #52). See [_shiftOver].
+  bool get isShiftOver => _shiftOver;
+
   int currentLevelNumber = 1;
 
   /// The loaded ladder level's authored name ('First Ride', 'Bank It'),
@@ -533,11 +548,13 @@ class TaxiGame extends FlameGame
     // Clear any impact juice left over from the previous run (issue #7),
     // along with the lives budget and any crash stall it was mid-way
     // through (issue #14): a fresh shift starts with three lives and no
-    // debt from the last one.
+    // debt from the last one. The fresh shift also re-arms the pause
+    // menu (issue #52): the previous summary no longer owns the screen.
     shake.reset();
     hitStop.reset();
     _pendingOverlayName = null;
     _crashStallRemaining = 0;
+    _shiftOver = false;
     lives.reset();
     _speedLines?.intensity = 0;
     _applyShake(0); // restores the viewport position, dropping any shake
@@ -646,11 +663,13 @@ class TaxiGame extends FlameGame
     // Clear any impact juice left over from the previous level (issue
     // #7). The lives budget resets with it: a level has no failure
     // budget — its first crash still fails it — but the counter must
-    // never carry a spent budget across modes (issue #14).
+    // never carry a spent budget across modes (issue #14). A fresh level
+    // also re-arms the pause menu's shift-over guard (issue #52).
     shake.reset();
     hitStop.reset();
     _pendingOverlayName = null;
     _crashStallRemaining = 0;
+    _shiftOver = false;
     lives.reset();
     _speedLines?.intensity = 0;
     _applyShake(0); // restores the viewport position, dropping any shake
@@ -948,9 +967,12 @@ class TaxiGame extends FlameGame
   /// The pause menu's BANK & QUIT (issue #5): pays the at-risk score out
   /// through the ordinary bank path and hands the shift its earned
   /// summary — quitting is no longer the one way out that silently
-  /// deletes the run. A no-op without a live score to protect.
+  /// deletes the run. A no-op without a live score to protect, and —
+  /// since issue #52 — a no-op once the shift has already settled: the
+  /// summary owns the screen, and every extra tap here used to pay the
+  /// same score into the wallet again.
   void bankFromPause() {
-    if (!isEndless || fareChain.score <= 0) return;
+    if (!isEndless || _shiftOver || fareChain.score <= 0) return;
     overlays.remove('pauseMenu');
     paused = false;
     _endShiftAsBanked();
@@ -1010,6 +1032,11 @@ class TaxiGame extends FlameGame
   void _endShiftAsBanked() {
     lastBankedScore = fareChain.score;
 
+    // The summary owns the screen from here (issue #52): the shift is
+    // over for pausing and banking alike, and a crash stall still
+    // counting down must not resume the world underneath the panel.
+    _shiftOver = true;
+    _crashStallRemaining = 0;
     isGameActive = false;
     _freezePlayer();
     trafficSpawner.pause();
@@ -1300,6 +1327,11 @@ class TaxiGame extends FlameGame
   /// Nothing is paid into the wallet here; the forfeited score is only
   /// ever read, by the wreck panel, to say what was lost.
   void _endShiftAsWrecked() {
+    // The wreck summary owns the screen (issue #52): no pausing under
+    // it, and — the hole this flag closes — no BANK & QUIT paying the
+    // forfeited score out through the pause menu afterwards.
+    _shiftOver = true;
+    _crashStallRemaining = 0;
     isGameActive = false;
     _freezePlayer();
     trafficSpawner.pause();
@@ -1585,11 +1617,14 @@ class TaxiGame extends FlameGame
   /// which is what keeps the canvas's single-precision transforms from
   /// degrading the road into bare sky on long runs.
   ///
-  /// The world frame the fold produces is exactly the canonical mapping
-  /// [WorldOrigin.worldYForDistance] defines, so placement code never
-  /// needs to know a fold happened. Anything holding coordinates outside
-  /// the component tree (traffic waypoints, ghost traces, coin anchors)
-  /// converts through [worldShift] instead.
+  /// The fold's frame is the live shift [worldShift] itself, and live
+  /// placement — chunks, fare zones — goes through it (`worldShift −
+  /// distance`), *not* the canonical per-distance mapping: a distance
+  /// just ahead of a boundary the taxi hasn't crossed belongs to the next
+  /// frame canonically, and placing it there drew it a whole period away
+  /// (issue #53). Anything holding coordinates outside the component tree
+  /// (traffic waypoints, ghost traces, frozen passenger vectors) converts
+  /// through [worldShift] too, and is shifted at its owner.
   void _maybeRebaseWorld() {
     if (!isEndless || !_playerReady) return;
 
@@ -1603,12 +1638,13 @@ class TaxiGame extends FlameGame
 
     // World children only: a chunk's cones and a vehicle's sprite are in
     // their parent's local space and must not move twice. Traffic paths
-    // are the one world-sized state held outside the tree — shifted at
-    // their owner.
+    // and the fares' frozen passenger vectors are the world-sized state
+    // held outside the tree — shifted at their owners.
     for (final child in world.children) {
       if (child is PositionComponent) child.position.y += delta;
     }
     trafficSpawner.shiftWorld(delta);
+    fareController?.shiftStoredFares(delta);
     // The viewfinder's getter hands back a copy (it reads a transform
     // offset), so the fold assigns a fresh vector — `+=` on `.position.y`
     // would fold everything but the camera. The follow behavior locks the
@@ -1645,8 +1681,10 @@ class TaxiGame extends FlameGame
   void pauseGame() {
     // The primer already holds the world still (issue #4): a pause menu
     // stacked on it could only fight the prompt for the release, so the
-    // HUD's pause button stands down until the choice resolves.
-    if (_bankPrimerActive) return;
+    // HUD's pause button stands down until the choice resolves. And a
+    // settled shift's summary owns the screen (issue #52): a menu under
+    // it offered a bank that paid the same score out on every tap.
+    if (_bankPrimerActive || _shiftOver) return;
     paused = true;
     // The ticker stops with the pause, so no update frame will quiet the
     // engine — turn it off here (issue #4).
@@ -1722,6 +1760,33 @@ class TaxiGame extends FlameGame
           overlays.add('pauseMenu');
         }
     }
+  }
+
+  /// Leaving a game screen is not backgrounding the app — but Flame's
+  /// dispose path fakes exactly that: `GameWidget.disposeCurrentGame`
+  /// fires `lifecycleStateChange(AppLifecycleState.paused)` immediately
+  /// before this hook, which suspends the whole audio service. Nothing
+  /// on the menu ever resumed it, so the music died after every game,
+  /// and the Settings toggle could not revive it either — `playMusic`
+  /// returns early while suspended (issue #54). Hand the audio back to
+  /// the menu here, guarded on the app actually being in the foreground:
+  /// the framework updates `WidgetsBinding.lifecycleState` *before*
+  /// notifying observers, so a genuine backgrounding is already visible
+  /// as hidden/paused/detached by the time this runs, and only the
+  /// synthetic pause of a widget disposal slips through (a null state —
+  /// headless tests — also means foreground). The engine stays off after
+  /// a game: `pauseAll` already cleared its want, and the menu does not
+  /// drive.
+  @override
+  void onDispose() {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    final appInBackground = lifecycle == AppLifecycleState.hidden ||
+        lifecycle == AppLifecycleState.paused ||
+        lifecycle == AppLifecycleState.detached;
+    if (!appInBackground) {
+      audio?.resumeAll();
+    }
+    super.onDispose();
   }
 
   @override

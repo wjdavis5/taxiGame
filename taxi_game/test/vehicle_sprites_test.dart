@@ -63,7 +63,7 @@ void main() {
       );
       expect(
         VehicleSprites.trafficSpritePath(TrafficVehicleType.bus),
-        'vehicles/traffic/bus_yellow.png',
+        'vehicles/traffic/bus_orange.png',
       );
     });
 

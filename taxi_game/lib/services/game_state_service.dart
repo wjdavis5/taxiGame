@@ -95,9 +95,11 @@ class GameStateService extends ChangeNotifier {
         furthestDistanceMetres:
             _saveData.personalBests.furthestDistanceMetres.floor(),
         mostFaresInOneShift: _saveData.personalBests.mostFaresInOneShift,
-        cleanBankedShifts: _runHistory
-            .where((record) => record.banked && record.livesLost == 0)
-            .length,
+        // The lifetime counter, not a count over the history window
+        // (issue #55): the window trims at [maxRecordedRuns], and a
+        // progress number that falls as old clean banks age out is the
+        // bug this field replaced.
+        cleanBankedShifts: _saveData.personalBests.cleanBankedShifts,
         unlockedVehicleCount: _saveData.unlockedVehicles.length,
         longestDailyStreak: AchievementCatalog.longestDailyStreak(
           _dailyHistory,
@@ -237,6 +239,22 @@ class GameStateService extends ChangeNotifier {
         ..clear()
         ..addAll(dailies);
     }
+    // The clean-bank counter's one-time migration (issue #55): saves
+    // written before the counter existed have no number stored, and
+    // their only record of clean banks is the history window. Seed the
+    // lifetime counter with the larger of what is stored and what the
+    // window holds, so a pre-fix save keeps every clean bank its window
+    // still shows — and persist it immediately, before the window can
+    // trim one out from under the seed. Post-migration saves always hold
+    // the larger number, so this no-ops from then on.
+    final windowCleanBanks = _runHistory
+        .where((record) => record.banked && record.livesLost == 0)
+        .length;
+    var migratedCleanBanks = false;
+    if (windowCleanBanks > _saveData.personalBests.cleanBankedShifts) {
+      _saveData.personalBests.cleanBankedShifts = windowCleanBanks;
+      migratedCleanBanks = true;
+    }
     // The ghost trace loads with everything else (issue #20); a missing
     // or corrupt one just means no ghost to race, never a crash.
     _dailyGhost = _storageService.loadDailyGhost();
@@ -246,6 +264,7 @@ class GameStateService extends ChangeNotifier {
     // from a load; the records screen simply shows them earned.
     _evaluateAchievements(announce: false);
     notifyListeners();
+    if (migratedCleanBanks) await save();
   }
 
   /// Save current data to storage
@@ -316,6 +335,7 @@ class GameStateService extends ChangeNotifier {
       longestChain: record.longestChain,
       distancePx: record.distancePx,
       faresDelivered: record.faresDelivered,
+      livesLost: record.livesLost,
     );
     _runHistory.add(record);
     if (_runHistory.length > maxRecordedRuns) {
