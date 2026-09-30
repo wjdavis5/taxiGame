@@ -71,4 +71,4 @@ __azurite_db_blob_extent__.json
 
 # Windows artifact: a Git Bash redirect to "> nul" creates a real file
 # with the reserved name; never let it trip a clean-tree check.
-/nul
+nul
