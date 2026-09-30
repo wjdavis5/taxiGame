@@ -159,7 +159,7 @@ end
 versions = asc_get("/v1/apps/#{APP_ID}/appStoreVersions?limit=#{PAGE_LIMIT}",
                    FIXTURES[:appStoreVersions], 'appStoreVersions')['data']
 fail!('appStoreVersions returned no data array - not a shape Apple sends; ' \
-      'refusing to read it as an inventory') if versions.nil?
+      'refusing to read it as an inventory') unless versions.is_a?(Array)
 
 if versions.empty?
   # #93's failure mode in its purest form. The app is live on the store, so
@@ -183,7 +183,15 @@ end
 # has not COMPLETEd still occupies Apple's review slot; creating another is
 # what Apple refused in the build-1074 run.
 submissions = asc_get("/v1/reviewSubmissions?filter[app]=#{APP_ID}&limit=#{PAGE_LIMIT}",
-                      FIXTURES[:reviewSubmissions], 'reviewSubmissions')['data'] || []
+                      FIXTURES[:reviewSubmissions], 'reviewSubmissions')['data']
+# The second source fails on the same broken shapes the first one does
+# (PR #100 review): reading a missing or JSON-null data array as "no
+# submissions in flight" made an untrusted 200 here yield NONE — the one
+# verdict that submits, over a review that may be live. An EMPTY array
+# stays legal and healthy: an app whose every submission has COMPLETEd,
+# or that has never submitted, really has nothing in flight.
+fail!('reviewSubmissions returned no data array - not a shape Apple sends; ' \
+      'refusing to read it as "no submissions in flight"') unless submissions.is_a?(Array)
 if submissions.length >= PAGE_LIMIT
   fail!("reviewSubmissions returned #{submissions.length} records, the page limit - " \
         'client-side scanning assumes they all fit on one page')

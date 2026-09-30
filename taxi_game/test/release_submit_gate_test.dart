@@ -217,6 +217,14 @@ void main() {
           reason: 'an empty appStoreVersions list is a broken answer for a '
               'live app; trusting it as NONE is what submitted over a live '
               'review in the build-1074 run');
+
+      // The second source rejects the same broken shapes the first one
+      // does (PR #100 review): a missing or JSON-null data array is not
+      // "no submissions in flight" — that reading is the one that yields
+      // NONE, the submit verdict, from an untrusted answer.
+      expect(script, contains('reviewSubmissions returned no data array'),
+          reason: 'an untrusted second-source answer must fail the run, '
+              'never quietly mean "nothing in flight"');
     });
 
     test('the query signs from the environment and targets this app', () {
@@ -561,6 +569,51 @@ void main() {
             reason: 'the seam is also a parser boundary: unparseable input '
                 'is an error, not a default verdict');
         expect(result.stdout, isNot(contains('NONE')));
+      },
+      skip: skipWithoutRuby,
+    );
+
+    test(
+      'a missing or null data array on the second source fails the run, '
+      'never "nothing in flight"',
+      () {
+        // The PR #100 review finding: `['data'] || []` read both of these
+        // shapes as an empty list — the one answer that yields NONE, the
+        // submit verdict — so an untrusted 200 on the second source could
+        // still submit over a live review. The version list here is a
+        // healthy no-match, which is exactly the pairing where the broken
+        // second source used to produce NONE.
+        for (final broken in ['{"data": null}', '{}']) {
+          final result = runGate(
+            versions: body([versionRecord('v1', '1.0.0', 'READY_FOR_SALE')]),
+            submissions: broken,
+          );
+
+          expect(result.exitCode, 1, reason: 'body $broken');
+          expect(result.stdout, isNot(contains('NONE')), reason: 'body $broken');
+          expect(result.stderr, contains('no data array'),
+              reason: 'body $broken — the failure must name the broken '
+                  'shape');
+        }
+      },
+      skip: skipWithoutRuby,
+    );
+
+    test(
+      'an empty submissions list stays the legal "nothing in flight" answer',
+      () {
+        // Only missing/null is a broken answer; [] is the healthy state of
+        // an app whose every submission has COMPLETEd (or that has never
+        // submitted), and the #93 fix must keep submitting on it.
+        final result = runGate(
+          versions: body([versionRecord('v1', '1.0.0', 'READY_FOR_SALE')]),
+          submissions: body([]),
+        );
+
+        expect(result.exitCode, 0);
+        expect((result.stdout as String).trim(), 'NONE',
+            reason: 'the guard must not over-tighten: an empty list really '
+                'is "nothing in flight"');
       },
       skip: skipWithoutRuby,
     );
