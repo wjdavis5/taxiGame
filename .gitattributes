@@ -1,0 +1,3 @@
+
+# Dynamic-workflow definitions are parsed by tooling that requires LF.
+*.dwf.ts text eol=lf
