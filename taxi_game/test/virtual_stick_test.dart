@@ -16,7 +16,10 @@ import 'package:taxi_game/services/storage_service.dart';
 /// and the event-driven wiring that feeds the taxi — including the crash
 /// stall's suspension of it (issue #91): a thumb held through a
 /// non-fatal crash keeps owning the stick, so the shift resumes under a
-/// thumb that drives instead of one that must lift and land again.
+/// thumb that drives instead of one that must lift and land again. The
+/// pause menu's RESUME re-feeds the same way (issue #103): a thumb that
+/// moved during the pause is tracked, and the cab must not leave the
+/// menu driving the axes it entered with.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -154,13 +157,16 @@ void main() {
 
     /// The mounted endless shift these tests drive. Headless games have
     /// no overlay builder map; the crash flow adds 'shiftWrecked' at the
-    /// third endless crash, so a stand-in is registered as GameScreen
-    /// does (the three-strikes test pattern).
+    /// third endless crash and the pause flow adds 'pauseMenu', so
+    /// stand-ins are registered as GameScreen does (the three-strikes and
+    /// bank-or-push test patterns).
     Future<void> mountRun() => mountGame(TaxiGame(
           levelLoader: LevelLoaderService(),
           gameState: gameState,
           endlessSeed: 42,
-        )..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink()));
+        )
+          ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('pauseMenu', (_, __) => const SizedBox.shrink()));
 
     /// Advances game time by [seconds], in clamped frames (issue #36): no
     /// single frame may consume more than [TaxiGame.maxUpdateDelta], so
@@ -438,6 +444,67 @@ void main() {
       stick.onDragUpdate(glide(const Offset(72, -144)));
       expect(game.player.throttleInput, 0,
           reason: 'the stale pointer feeds nothing after a release');
+    });
+
+    test('a thumb that centred under the pause menu drives nothing after '
+        'RESUME (issue #103)', () async {
+      await mountRun();
+
+      stick.onDragStart(touchDown());
+      // Full lock right and half throttle, as a running player holds it.
+      stick.onDragUpdate(glide(const Offset(36, -36)));
+      expect(game.player.steeringInput, 1.0);
+      expect(game.player.throttleInput, greaterThan(0));
+
+      game.pauseGame();
+
+      // The thumb glides back to the origin while the menu is up: the
+      // offset keeps tracking, but the stick feeds nothing while paused —
+      // so the cab still carries its pre-pause axes, the exact stale
+      // drive the issue names, and only the resume can replace them.
+      stick.onDragUpdate(glide(const Offset(-36, 36)));
+      expect(game.player.throttleInput, greaterThan(0),
+          reason: 'the pause itself feeds nothing, so the last fed value '
+              'stands until the resume re-feeds');
+
+      game.resumeGame();
+
+      // The re-fed offset is the origin: dead centre, both axes. Before
+      // the fix the stale full-lock drive survived the menu, and the cab
+      // kept steering and throttling until the thumb next moved.
+      expect(game.paused, isFalse);
+      expect(stick.isActive, isTrue,
+          reason: 'a pause is not an ending; the thumb still owns the stick');
+      expect(game.player.steeringInput, 0);
+      expect(game.player.throttleInput, 0);
+    });
+
+    test('RESUME re-feeds the offset the thumb actually holds, not the one '
+        'it entered the pause with (issue #103)', () async {
+      await mountRun();
+
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      // The offset the thumb will rest at after the pause: 24 px of the
+      // 60 px glide returned, and no further events at all — a dead-still
+      // thumb emits nothing for a resume to ride on.
+      final held = VirtualStick.resolve(
+        Vector2(0, -36),
+        radius: VirtualStick.stickRadius,
+      );
+
+      game.pauseGame();
+      stick.onDragUpdate(glide(const Offset(0, 24)));
+
+      game.resumeGame();
+
+      expect(
+        game.player.throttleInput,
+        closeTo(held.throttle, 1e-9),
+        reason: 'the resume drives with where the thumb is, not where it '
+            'was when the pause landed',
+      );
+      expect(game.player.steeringInput, 0, reason: 'the glide was pure up');
     });
 
     test('suspend zeroes and resume re-feeds, and only a live game is fed',

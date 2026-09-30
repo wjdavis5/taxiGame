@@ -983,6 +983,14 @@ class TaxiGame extends FlameGame
     if (_bankPrimerActive) {
       _bankPrimerActive = false;
       paused = false;
+      // The primer froze the world mid-drive, and a thumb that moved (and
+      // was tracked) through the freeze must not hand the cab its
+      // pre-freeze axes back: re-feed the offset the thumb actually holds
+      // — the same hand-back [resumeGame] gives the pause menu and the
+      // crash stall's resume gives its 1.2 s (issues #103, #91). The
+      // ending paths that also land here have already stood the shift
+      // down, so the stick's own live-game gate makes their call a no-op.
+      _virtualStick?.resume();
     }
   }
 
@@ -1851,6 +1859,12 @@ class TaxiGame extends FlameGame
   void resumeGame() {
     if (_bankPrimerActive) return;
     paused = false;
+    // The thumb that held the stick through the pause kept tracking its
+    // glides but fed nothing (the stick's pause gate), so the cab left the
+    // menu driving the pre-pause axes until the thumb next moved (issue
+    // #103) — re-feed the offset the resume actually finds. The stall's
+    // own resume (issue #91) does the same hand-back one freeze over.
+    _virtualStick?.resume();
     overlays.remove('pauseMenu');
   }
 

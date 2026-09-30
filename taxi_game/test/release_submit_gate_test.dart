@@ -16,10 +16,22 @@ import 'package:flutter_test/flutter_test.dart';
 /// list that came back without the in-review 1.0.0 as `NONE` and tried to
 /// submit over a live review, which Apple refused (build 1074). So the gate
 /// now asks a second source — `GET /v1/reviewSubmissions?filter[app]=…` —
-/// and answers `REVIEW_IN_FLIGHT` whenever any submission has not
-/// COMPLETEd, overriding everything the version records said; an empty
+/// and answers `REVIEW_IN_FLIGHT` whenever a submission actively holds the
+/// review slot, overriding everything the version records said; an empty
 /// version list is a hard error, because a live app always has versions
 /// and "no data" means the query landed wrong, not "nothing submitted".
+///
+/// #102 split that second source's verdict in two: a submission parked in
+/// `UNRESOLVED_ISSUES` (where Apple leaves it after rejecting the version)
+/// or `READY_FOR_REVIEW` (created, never confirmed) blocks a new one
+/// exactly as a live review does — but no review is running and no push
+/// can clear it. The old single "unfinished" verdict answered the
+/// post-rejection version bump with a green TestFlight-only run and the
+/// same "wait for Apple" message a live review gets, so the bump the docs
+/// prescribed never submitted anything. `REVIEW_STUCK` is still
+/// TestFlight-only (the 4d35205 policy: deploys stay green while a human
+/// untangles App Store Connect) but never silent — the run emits a
+/// `::warning::` naming the real recovery.
 ///
 /// The gate lives in YAML and Ruby, so these tests pin its contract two
 /// ways: text assertions over the workflow and the script (the exact set
@@ -120,6 +132,35 @@ void main() {
     'DEVELOPER_REJECTED',
     'DEVELOPER_REMOVED_FROM_SALE',
     'REMOVED_FROM_SALE',
+  ];
+
+  /// Every `state` Apple's OpenAPI spec defines for a reviewSubmission,
+  /// verbatim from the spec's `filter[state]` enum (the same seven the
+  /// script's header quotes). `appleStates` above holds the parallel enum
+  /// for appStoreVersion records; the two are different value sets, and
+  /// #102's stuck pair must come from this one.
+  const submissionStates = [
+    'READY_FOR_REVIEW',
+    'WAITING_FOR_REVIEW',
+    'IN_REVIEW',
+    'UNRESOLVED_ISSUES',
+    'CANCELING',
+    'COMPLETING',
+    'COMPLETE',
+  ];
+
+  /// The reviewSubmission states that hold no review slot but will never
+  /// clear themselves (issue #102): `UNRESOLVED_ISSUES` is where Apple
+  /// parks a submission after rejecting the version — a human must resolve
+  /// the rejection in App Store Connect — and `READY_FOR_REVIEW` is a
+  /// submission created but never confirmed. Both block a new submission
+  /// exactly as a live review does, so both stay TestFlight-only; the
+  /// split exists so the run says which one it hit and names the one act
+  /// that clears it, instead of the #93-era silence around a bump that
+  /// could never submit.
+  const stuckSubmissionStates = [
+    'UNRESOLVED_ISSUES',
+    'READY_FOR_REVIEW',
   ];
 
   group('the submit gate decides from App Store Connect (issues #89, #93)',
@@ -271,12 +312,16 @@ void main() {
       expect(script, contains('/v1/reviewSubmissions?filter[app]='));
       expect(script, contains("puts 'REVIEW_IN_FLIGHT'"));
 
-      // The classification is "COMPLETE, or active" — never an enumeration
-      // of active states. COMPLETING is a real Apple value (it is in the
-      // live OpenAPI spec's filter[state] enum) that fastlane's mirror of
-      // the spec still lacks; the next state Apple invents must land on
-      // the blocking side of this comparison too.
-      expect(script, contains("!= 'COMPLETE'"));
+      // The classification's blocking default survived #102's split: done
+      // is COMPLETE alone, the stuck pair is peeled off by name, and
+      // everything else — COMPLETING, which fastlane's mirror of the spec
+      // still lacks, nil, and the next state Apple invents — stays on the
+      // in-flight side of the line. An enumerated *active* list could
+      // never guarantee that; only a default can.
+      expect(script, contains("== 'COMPLETE'"),
+          reason: 'COMPLETE is the single finished state, so the reject '
+              'keeps every other state blocking before the stuck pair is '
+              'named');
 
       final decision = stepBlock('Decide whether to submit for review');
       expect(decision, contains(r'[ "$states" = "NONE" ]'),
@@ -288,6 +333,65 @@ void main() {
         reason: 'an unfinished review submission must map to TestFlight '
             'only, overriding both NONE and editable-state verdicts',
       );
+    });
+
+    test('a stuck submission is its own verdict with its own recovery '
+        '(issue #102)', () {
+      // The stuck pair is pinned in the greppable %w[...] form, the same
+      // way editable_states is: growing or shrinking the set is a behavior
+      // change that must update this list with it.
+      final match = RegExp(
+        r'STUCK_SUBMISSION_STATES = %w\[([^\]]+)\]',
+      ).firstMatch(script);
+      expect(match, isNotNull,
+          reason: 'the script must declare its stuck-state list in the '
+              'greppable STUCK_SUBMISSION_STATES = %w[...] form this suite '
+              'reads');
+      final stuck = match!.group(1)!.split(RegExp(r'\s+'));
+
+      expect(stuck, unorderedEquals(stuckSubmissionStates),
+          reason: 'the stuck set is exactly the two states issue #102 '
+              'names — a rejection\'s parking state and a never-confirmed '
+              'draft');
+      // A typo here would never match a real API response and every
+      // rejection would silently read as REVIEW_IN_FLIGHT again — the
+      // message #102 exists to deliver, lost. Every entry must be a real
+      // reviewSubmission state.
+      for (final state in stuck) {
+        expect(submissionStates, contains(state),
+            reason: '$state is not a reviewSubmission state Apple can return');
+      }
+
+      expect(script, contains("puts 'REVIEW_STUCK'"));
+
+      final decision = stepBlock('Decide whether to submit for review');
+      expect(
+        decision,
+        contains(r'elif [ "$states" = "REVIEW_STUCK" ]'),
+        reason: 'the workflow must handle the stuck verdict as its own '
+            'branch, before NONE or the per-record states could read a '
+            'bump as submittable',
+      );
+
+      // Both blocking verdicts leave submit=false; the difference is that
+      // the stuck one may not pass silently — the #102 failure was a
+      // green run whose bump never submitted, so the branch must carry a
+      // warning annotation that names the recovery.
+      expect(
+        decision,
+        contains('::warning::'),
+        reason: 'a bump that cannot submit must not look like a normal '
+            'TestFlight-only run',
+      );
+      final warning =
+          RegExp(r'::warning::([^\n]+)').firstMatch(decision)!.group(1)!;
+      expect(warning, contains('App Store Connect'),
+          reason: 'the recovery is a human act in App Store Connect');
+      expect(warning, contains('bump'),
+          reason: 'the warning must pre-empt the documented recovery that '
+              'does not work while the submission sits there');
+      expect(warning.toLowerCase(), contains('issue #102'),
+          reason: 'the annotation names the issue that explains the state');
     });
 
     test('the submit step fires on the gate output; dispatch overrides', () {
@@ -307,12 +411,18 @@ void main() {
       // regardless of state), so it must be checked first — the state gate
       // is the default, not the override. REVIEW_IN_FLIGHT sits between it
       // and NONE: the second source overrides every version-record verdict
-      // (#93) but still yields to an explicit human choice.
+      // (#93) but still yields to an explicit human choice. REVIEW_STUCK
+      // slots in behind its sibling (#102): a live review is the harder
+      // block and wins when both exist, while the stuck pair still
+      // overrides the NONE a version bump would otherwise earn.
       final manualAt = decision.indexOf(r'[ "$manual" = "true" ]');
       final flightAt = decision.indexOf(r'[ "$states" = "REVIEW_IN_FLIGHT" ]');
+      final stuckAt = decision.indexOf(r'[ "$states" = "REVIEW_STUCK" ]');
       final noneAt = decision.indexOf(r'[ "$states" = "NONE" ]');
       expect(manualAt, greaterThan(-1));
       expect(flightAt, greaterThan(-1));
+      expect(stuckAt, greaterThan(-1),
+          reason: 'the workflow must branch on REVIEW_STUCK at all');
       expect(noneAt, greaterThan(-1));
       expect(manualAt, lessThan(flightAt),
           reason: 'a ticked manual dispatch must submit regardless of what '
@@ -321,6 +431,13 @@ void main() {
           reason: 'REVIEW_IN_FLIGHT must be decided before NONE — a live '
               'submission blocks a new one even when the version list lacks '
               'the version entirely (#93)');
+      expect(flightAt, lessThan(stuckAt),
+          reason: 'a live review is the harder block: when one submission '
+              'is in flight and another stuck, the in-flight verdict wins '
+              '(the script decides the same way)');
+      expect(stuckAt, lessThan(noneAt),
+          reason: 'the stuck submission a rejection left behind overrides '
+              'the NONE a version bump would otherwise earn (#102)');
     });
 
     test('the fixture seam injects both query bodies, no secrets needed', () {
@@ -340,7 +457,7 @@ void main() {
   // so this group can run the real decision logic end to end: the fixtures
   // are the full JSON bodies, stdout/stderr/exit code come back through
   // Process.runSync, and nothing touches the network or a secret.
-  group('the gate script over fixture responses (issue #93)', () {
+  group('the gate script over fixture responses (issues #93, #102)', () {
     /// `ruby --version` output, or null when ruby is not installed. The
     /// behavioral tests need the real interpreter; the pinned-contract
     /// tests above do not.
@@ -614,6 +731,72 @@ void main() {
         expect((result.stdout as String).trim(), 'NONE',
             reason: 'the guard must not over-tighten: an empty list really '
                 'is "nothing in flight"');
+      },
+      skip: skipWithoutRuby,
+    );
+
+    test(
+      'a rejection parked in UNRESOLVED_ISSUES after a bump is REVIEW_STUCK, '
+      'never NONE (issue #102)',
+      () {
+        // The #102 scenario itself: 1.0.0 was rejected, the developer
+        // bumped to 1.0.1 exactly as the docs prescribed, and the rejected
+        // submission still sits unresolved. The bump earns no NONE while
+        // it exists — and the verdict must say what is actually blocking,
+        // not the #93-era "unfinished" line that reads as "wait for Apple".
+        final result = runGate(
+          versions: body([versionRecord('v1', '1.0.0', 'READY_FOR_SALE')]),
+          submissions: body([submissionRecord('s1', 'UNRESOLVED_ISSUES')]),
+        );
+
+        expect(result.exitCode, 0);
+        expect((result.stdout as String).trim(), 'REVIEW_STUCK');
+        expect(result.stdout, isNot(contains('NONE')));
+        expect(result.stderr, contains('UNRESOLVED_ISSUES'),
+            reason: 'the CI log must name the parked state');
+        expect(result.stderr, contains('App Store Connect'),
+            reason: 'and the one act that clears it — no push can');
+      },
+      skip: skipWithoutRuby,
+    );
+
+    test(
+      'a never-confirmed READY_FOR_REVIEW draft blocks an editable version '
+      '(issue #102)',
+      () {
+        final result = runGate(
+          versions: body([
+            versionRecord('v1', '1.0.1', 'PREPARE_FOR_SUBMISSION'),
+          ]),
+          submissions: body([submissionRecord('s1', 'READY_FOR_REVIEW')]),
+        );
+
+        expect(result.exitCode, 0);
+        expect((result.stdout as String).trim(), 'REVIEW_STUCK',
+            reason: 'the version record alone would submit; the stuck draft '
+                'blocks it exactly as a live review would, and the verdict '
+                'must say what kind of block it is');
+      },
+      skip: skipWithoutRuby,
+    );
+
+    test(
+      'a live review outranks a stuck one when both exist (issue #102)',
+      () {
+        // Precedence inside the script mirrors the workflow's branch
+        // order: REVIEW_IN_FLIGHT is the harder block — Apple is actively
+        // holding the slot — so it wins over REVIEW_STUCK the same way it
+        // wins over NONE.
+        final result = runGate(
+          versions: body([versionRecord('v1', '1.0.0', 'REJECTED')]),
+          submissions: body([
+            submissionRecord('s1', 'UNRESOLVED_ISSUES'),
+            submissionRecord('s2', 'IN_REVIEW'),
+          ]),
+        );
+
+        expect(result.exitCode, 0);
+        expect((result.stdout as String).trim(), 'REVIEW_IN_FLIGHT');
       },
       skip: skipWithoutRuby,
     );

@@ -146,14 +146,18 @@ jobs:
           # before the Submit step — and its replacement run, and a
           # multi-commit push whose bump is not the last commit — logging
           # the version as unchanged and shipping TestFlight only forever.
-          # The script's verdicts: REVIEW_IN_FLIGHT — an unfinished
-          # reviewSubmission for the app, whatever the version records said
-          # (#93); NONE — no version record and no active submission; or the
-          # matching records' appStoreStates. It exits 1 on any failure,
-          # including answers it cannot trust (an empty version list is a
-          # broken answer, not "no version yet"), and `set -e` fails the
-          # run: defaulting to TestFlight-only on a query failure is exactly
-          # the silent drop this gate exists to prevent.
+          # The script's verdicts: REVIEW_IN_FLIGHT — a reviewSubmission
+          # actively holding Apple's review slot, whatever the version
+          # records said (#93); REVIEW_STUCK — a submission no push can
+          # move (UNRESOLVED_ISSUES after a rejection, or a never-confirmed
+          # READY_FOR_REVIEW), which blocks a new one exactly as a live
+          # review does (#102); NONE — no version record and no active
+          # submission; or the matching records' appStoreStates. It exits 1
+          # on any failure, including answers it cannot trust (an empty
+          # version list is a broken answer, not "no version yet"), and
+          # `set -e` fails the run: defaulting to TestFlight-only on a
+          # query failure is exactly the silent drop this gate exists to
+          # prevent.
           states="$(ruby tools/asc_version_state.rb "$current")"
 
           submit=false
@@ -166,6 +170,20 @@ jobs:
             # new one no matter what state the (possibly incomplete) version
             # list reported.
             echo "App Store Connect has an unfinished review submission for this app: TestFlight only."
+          elif [ "$states" = "REVIEW_STUCK" ]; then
+            # A rejection's debris (issue #102): the reviewSubmission sits
+            # in UNRESOLVED_ISSUES (Apple parks it there after rejecting
+            # the version) or READY_FOR_REVIEW (created, never confirmed).
+            # No review is running, but no second submission may be created
+            # while it exists — so the version bump that used to be the
+            # documented recovery submits nothing, silently, on a green
+            # run. Deliberately TestFlight-only and green (the 4d35205
+            # policy: deploys must keep landing while a human untangles
+            # App Store Connect, and #93 forbids automating past a
+            # rejection), but never silent: the warning annotation names
+            # the one act that unblocks submissions, because no push —
+            # bump or manual dispatch included — can perform it.
+            echo "::warning::App Store Connect holds a review submission no push can move (UNRESOLVED_ISSUES or READY_FOR_REVIEW): TestFlight only, and a version bump will NOT submit until it is cleared in App Store Connect (resolve the rejection, or remove the submission). This is issue #102."
           elif [ "$states" = "NONE" ]; then
             submit=true
             echo "$current has no App Store Connect version yet: submitting for review."

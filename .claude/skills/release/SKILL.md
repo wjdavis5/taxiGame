@@ -21,12 +21,20 @@ a second submission for a version string already submitted, so the
 pipeline asks Apple (`tools/asc_version_state.rb`) — two sources, failing
 closed on any answer it cannot trust — and decides like this:
 
-- Any unfinished `reviewSubmissions` record for the app (`REVIEW_IN_FLIGHT`
-  — anything not yet `COMPLETE`) → build and upload to TestFlight
-  **only**, whatever the version records said. This is the guard that
-  would have stopped the build-1074 run, which read a version list that
-  came back without the in-review version as "no version yet" and tried to
-  submit over a live review (issue #93).
+- Any `reviewSubmissions` record actively holding Apple's review slot
+  (`REVIEW_IN_FLIGHT` — `WAITING_FOR_REVIEW`, `IN_REVIEW`, `COMPLETING`,
+  `CANCELING`, or any state the gate does not recognize) → build and
+  upload to TestFlight **only**, whatever the version records said. This
+  is the guard that would have stopped the build-1074 run, which read a
+  version list that came back without the in-review version as "no
+  version yet" and tried to submit over a live review (issue #93).
+- A submission stuck with no review running (`REVIEW_STUCK` —
+  `UNRESOLVED_ISSUES`, where Apple parks a submission after rejecting the
+  version, or `READY_FOR_REVIEW`, created but never confirmed) → build
+  and upload to TestFlight **only**, with a `::warning::` annotation. No
+  second submission may be created while it exists, and no push — a
+  version bump included — can clear it: resolve the rejection or remove
+  the submission in App Store Connect first (issue #102).
 - No record for the version yet (`NONE`), or every matching record still
   machine-editable (`PREPARE_FOR_SUBMISSION`, `INVALID_BINARY`) → build,
   upload to TestFlight, **and submit for review**.
@@ -39,7 +47,11 @@ routine push (issue #93): a person at Apple sent reasons someone must read
 and act on, and this repo's automation pushes about hourly —
 auto-resubmitting would fire unaddressed rejections at Apple with no human
 involved. Resubmit deliberately: bump the version (new string → `NONE`) or
-use the manual dispatch below. `INVALID_BINARY` still auto-resubmits
+use the manual dispatch below — and clear the rejected submission in App
+Store Connect first: while it sits `UNRESOLVED_ISSUES` neither route
+submits anything, because the gate answers `REVIEW_STUCK` and every push
+ships TestFlight only with a warning annotation (issue #102).
+`INVALID_BINARY` still auto-resubmits
 because it is Apple rejecting the artifact itself; the fix is a new build
 and the next push attaches it.
 
@@ -189,6 +201,14 @@ Tell the user, concretely:
 - **The gate answers `REVIEW_IN_FLIGHT`** — normal while any version is in
   review: the run ships TestFlight only and stays green. Nothing to fix;
   wait for Apple, or remove the submission in App Store Connect first.
+- **The gate answers `REVIEW_STUCK`** (issue #102) — a submission sits in
+  `UNRESOLVED_ISSUES` (the aftermath of a rejection) or `READY_FOR_REVIEW`
+  (never confirmed). No review is running, but no new submission may be
+  created either, so the run ships TestFlight only with a `::warning::`
+  annotation and stays green. Tell the user plainly: the version bump did
+  not submit and cannot, until someone resolves the rejection or removes
+  the submission in App Store Connect — then the next push submits by
+  itself.
 - **The state query itself fails** (`ruby tools/asc_version_state.rb` exits
   non-zero) — the run fails loudly instead of guessing TestFlight-only.
   Read the log: an HTTP code means an App Store Connect outage (a re-run
