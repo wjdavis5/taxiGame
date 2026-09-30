@@ -4,7 +4,6 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 import '../systems/run_environment.dart';
-import '../systems/world_origin.dart';
 
 /// Road segment component that renders the road.
 ///
@@ -360,14 +359,18 @@ class RoadSegment extends PositionComponent {
       }
 
       // Cross street: a carriageway band spanning the whole view. Its
-      // edges convert from true distance through [WorldOrigin], so the
-      // band lands in the chunk's own frame whatever fold it sits past.
-      final bandTopLocal = WorldOrigin.worldYForDistance(
-              centerDistance + RunEnvironment.intersectionHalfBand) -
-          position.y;
-      final bandBottomLocal = WorldOrigin.worldYForDistance(
-              centerDistance - RunEnvironment.intersectionHalfBand) -
-          position.y;
+      // edges convert from true distance by pure subtraction — the chunk's
+      // top edge *is* [distanceAtTop], so true distance d sits
+      // distanceAtTop − d down the chunk (issue #53). The old canonical
+      // [WorldOrigin] conversion assumed the chunk sat in the frame its
+      // distance belongs to, which drifted a whole period for chunks
+      // built ahead of a pending fold, and mis-drew any band whose edges
+      // straddled a fold boundary (first possible at 504,000 px, the LCM
+      // of the 9,000 px spacing and the period).
+      final bandTopLocal = distanceAtTop -
+          (centerDistance + RunEnvironment.intersectionHalfBand);
+      final bandBottomLocal = distanceAtTop -
+          (centerDistance - RunEnvironment.intersectionHalfBand);
       canvas.drawRect(
         Rect.fromLTRB(-centerX, bandTopLocal, centerX, bandBottomLocal),
         asphalt,

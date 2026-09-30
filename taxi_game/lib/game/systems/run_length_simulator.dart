@@ -165,7 +165,9 @@ class HazardWindow {
 ///    stats, lateral movement at full steering lock, both hitboxes scaled
 ///    exactly as the live game scales them;
 ///  - rulings: every contact judged by [CollisionRules.severityFor] on the
-///    closing speed along the impact axis, once per overlap episode —
+///    closing speed along the impact axis *and* the player's share of it
+///    (issue #58: traffic ramming a boxed-in taxi is a scrape, not a
+///    life), once per overlap episode —
 ///    scrapes shed speed and push apart, crashes spend one of three lives
 ///    and freeze the world for the crash stall;
 ///  - the driver: a competent human stand-in. It scans the road at
@@ -659,7 +661,12 @@ class RunLengthSimulator {
         final relY = -speed - v.vy;
         final into =
             math.max(0.0, -(relX * axisX + relY * axisY));
-        final severity = CollisionRules.severityFor(into);
+        // Fault half of the ruling (issue #58): how much of that closing
+        // is the taxi's own doing. The taxi's velocity is (vx, -speed); a
+        // contact the traffic initiated — the reflex driver boxed in and
+        // rammed from behind — must cost speed, never a life.
+        final mine = -(vx * axisX - speed * axisY);
+        final severity = CollisionRules.severityFor(into, mine);
 
         if (severity == ContactSeverity.crash) {
           lives--;

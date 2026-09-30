@@ -148,8 +148,12 @@ class _GameScreenState extends State<GameScreen> {
     // The at-risk stake (issue #5): quitting an endless run forfeits the
     // unbanked score silently, so the menu names the number — and offers
     // the bank as the exit that keeps it. A level or a scoreless run has
-    // nothing at stake, and the menu stays the plain two buttons.
-    final atRisk = game.isEndless ? game.score : 0;
+    // nothing at stake, and the menu stays the plain two buttons. A
+    // shift that already settled has nothing at stake either (issue
+    // #52): the score has been paid or forfeited, and this menu can only
+    // be open from before the ending — the summary owns the screen now.
+    final atRisk =
+        game.isEndless && !game.isShiftOver ? game.score : 0;
     return Center(
       child: Container(
         padding: const EdgeInsets.all(20),

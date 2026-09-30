@@ -245,6 +245,23 @@ class EndlessFareController extends Component
     _active.removeWhere((f) => f.passenger == passenger);
   }
 
+  /// Moves every active fare's frozen [PassengerData] vectors by the
+  /// fold's [delta]. The fold (issue #30) shifts the world tree — pickup
+  /// and dropoff *zones* ride it — but a fare's stored vectors live
+  /// outside the tree, frozen at the frame the slot was drawn in. Since
+  /// issue #53 a fare can be spawned before a fold and collected after
+  /// it, so those vectors must ride too: the delivery's burst and coin
+  /// flight (and anything else reading [PassengerData.dropoffLocation])
+  /// land at the kerb the fare actually settles at, a period away from
+  /// nothing. Called from [TaxiGame]'s rebase, beside the traffic
+  /// spawner's shift — the two world-sized states held outside the tree.
+  void shiftStoredFares(double delta) {
+    for (final f in _active) {
+      f.passenger.pickupLocation.y += delta;
+      f.passenger.dropoffLocation.y += delta;
+    }
+  }
+
   /// The forgiveness rule (issue #28). A carried fare whose dropoff the
   /// taxi has driven past is not lost with it: the one-way street makes
   /// "past" mean unreachable, and an unreachable dropoff means a fare that

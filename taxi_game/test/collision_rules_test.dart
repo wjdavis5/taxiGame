@@ -6,21 +6,103 @@ void main() {
   group('severityFor', () {
     test('a gentle touch is a scrape', () {
       expect(
-        CollisionRules.severityFor(CollisionRules.scrapeSpeedThreshold - 1),
+        CollisionRules.severityFor(
+          CollisionRules.scrapeSpeedThreshold - 1,
+          100,
+        ),
         ContactSeverity.scrape,
       );
-      expect(CollisionRules.severityFor(0), ContactSeverity.scrape);
+      expect(
+        CollisionRules.severityFor(0, 0),
+        ContactSeverity.scrape,
+      );
     });
 
     test('closing at or above the threshold is a crash', () {
       expect(
-        CollisionRules.severityFor(CollisionRules.scrapeSpeedThreshold),
+        CollisionRules.severityFor(
+          CollisionRules.scrapeSpeedThreshold,
+          100,
+        ),
         ContactSeverity.crash,
       );
       expect(
-        CollisionRules.severityFor(CollisionRules.scrapeSpeedThreshold + 500),
+        CollisionRules.severityFor(
+          CollisionRules.scrapeSpeedThreshold + 500,
+          100,
+        ),
         ContactSeverity.crash,
       );
+    });
+
+    test('a stationary cab struck over the threshold is a scrape (issue #58)',
+        () {
+      // The issue's log line, verbatim geometry: taxi 0.0, sportsCar 147.5
+      // closing along the impact axis — over the 110 crash threshold, all
+      // of it the striker's. The player contributed nothing, so nothing
+      // can be ruled against them.
+      expect(
+        CollisionRules.severityFor(147.5, 0),
+        ContactSeverity.scrape,
+      );
+      expect(
+        CollisionRules.severityFor(
+          CollisionRules.scrapeSpeedThreshold + 500,
+          0,
+        ),
+        ContactSeverity.scrape,
+      );
+    });
+
+    test('a cab driving away while struck is a scrape (issue #58)', () {
+      // Rear-end of a slower cab: the player's own velocity points away
+      // from the striker (negative contribution).
+      expect(
+        CollisionRules.severityFor(150, -40),
+        ContactSeverity.scrape,
+      );
+    });
+
+    test('any player share of the closing keeps the crash rule intact', () {
+      // Even one px/s of player closing, over the threshold, is a crash:
+      // the fault gate must not neuter real player-caused contacts.
+      expect(
+        CollisionRules.severityFor(CollisionRules.scrapeSpeedThreshold, 1),
+        ContactSeverity.crash,
+      );
+    });
+  });
+
+  group('playerContribution', () {
+    test('head-on driving counts the full player speed', () {
+      // Player drives up (-y) into a vehicle above; the axis points
+      // down-screen from the vehicle to the player.
+      final contribution = CollisionRules.playerContribution(
+        playerVelocity: Vector2(0, -150),
+        impactAxis: Vector2(0, 1),
+      );
+      expect(contribution, 150);
+    });
+
+    test('a stationary cab contributes nothing', () {
+      expect(
+        CollisionRules.playerContribution(
+          playerVelocity: Vector2.zero(),
+          impactAxis: Vector2(0, 1),
+        ),
+        0,
+      );
+    });
+
+    test('driving away from the striker is negative', () {
+      // Player crawling up-screen away from a faster vehicle behind it:
+      // the axis points up-screen (traffic → player), the player's
+      // velocity along it is negative.
+      final contribution = CollisionRules.playerContribution(
+        playerVelocity: Vector2(0, -40),
+        impactAxis: Vector2(0, -1),
+      );
+      expect(contribution, -40);
     });
   });
 
@@ -191,6 +273,8 @@ void main() {
       expect(report.trafficSpeed, 60);
       expect(report.closingSpeed, 210);
       expect(report.closingSpeedAlongImpact, 210);
+      // The player drove the full 150 into the contact along the axis.
+      expect(report.playerContribution, 150);
       expect(report.playerPosition, Vector2(200, 100));
       expect(report.contactPoint, Vector2(198.3, 70.2));
 
@@ -227,6 +311,46 @@ void main() {
           (CollisionRules.scrapeSpeedKeep * 100).toStringAsFixed(0),
         ),
       );
+    });
+
+    test('a struck-stationary report records zero contribution and never '
+        'blames the player (issue #58)', () {
+      // The issue's Level 8 contact: a parked cab, oncoming sportsCar at
+      // 147.5 px/s — the ruling is a scrape and every surface words it as
+      // the taxi being hit, not hitting.
+      final report = CollisionRules.buildReport(
+        severity: CollisionRules.severityFor(
+          147.5,
+          CollisionRules.playerContribution(
+            playerVelocity: Vector2.zero(),
+            impactAxis: CollisionRules.impactAxis(
+              Vector2(200, 527.7),
+              Vector2(200, 400),
+            ),
+          ),
+        ),
+        vehicleKind: 'sportsCar',
+        playerVelocity: Vector2.zero(),
+        playerPosition: Vector2(200, 527.7),
+        trafficVelocity: Vector2(0, 147.5),
+        trafficPosition: Vector2(200, 400),
+        contactPoint: Vector2(185.0, 527.7),
+      );
+
+      expect(report.severity, ContactSeverity.scrape);
+      expect(report.closingSpeedAlongImpact, closeTo(147.5, 1e-9));
+      expect(report.playerContribution, 0);
+
+      expect(report.headline, 'A sportsCar ran into you — nothing lost.');
+      expect(report.headline, isNot(contains('You hit')));
+      expect(report.headline, isNot(contains('You scraped')));
+
+      expect(report.explanation, contains('Struck by a sportsCar'));
+      expect(report.explanation, contains('147.5'));
+      // The struck scrape closes *over* the crash threshold; claiming it
+      // was under it (the ordinary scrape wording) would be a lie.
+      expect(report.explanation, isNot(contains('under the')));
+      expect(report.explanation, contains('not ruled against the taxi'));
     });
   });
 
@@ -272,6 +396,27 @@ void main() {
 
       expect(report.headline, contains('scraped the sedan'));
       expect(report.headline, contains('nothing lost'));
+    });
+
+    test('a cab run into from behind is worded as the victim (issue #58)',
+        () {
+      // Same-direction traffic closing on a slower cab from behind: the
+      // player is driving *away* along the impact axis (it points from the
+      // striker below up to the cab), so the headline must not read as the
+      // player doing anything.
+      final report = CollisionRules.buildReport(
+        severity: ContactSeverity.scrape,
+        vehicleKind: 'sedan',
+        playerVelocity: Vector2(0, -40),
+        playerPosition: Vector2(200, 100),
+        trafficVelocity: Vector2(0, -190),
+        trafficPosition: Vector2(200, 200),
+        contactPoint: Vector2(200, 130),
+      );
+
+      expect(report.playerContribution, -40);
+      expect(report.headline, 'A sedan ran into you — nothing lost.');
+      expect(report.headline, isNot(contains('You ')));
     });
 
     test('the headline never leaks the telemetry vocabulary', () {

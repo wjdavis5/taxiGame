@@ -2,17 +2,21 @@ import 'dart:math' as math;
 
 import 'package:flame/components.dart';
 
-/// How a player–traffic contact is judged (issue #6).
+/// How a player–traffic contact is judged (issues #6, #58).
 ///
 /// The pre-#6 rule failed the level on *any* contact at *any* speed. The
 /// fair rule judges the physics of the touch: how fast the two vehicles
 /// were closing along the impact axis. A gentle, glancing touch is a
-/// scrape; a fast approach is a crash.
+/// scrape; a fast approach is a crash. Since #58 the rule is also
+/// fault-aware: only the part of the closing the player's own velocity
+/// contributed can crash the run, so traffic ramming a stationary cab is
+/// a scrape at most, never a fail against the player.
 enum ContactSeverity {
-  /// Low-speed glancing contact: the player is slowed, nothing is lost.
+  /// Low-speed glancing contact — or any contact the traffic vehicle, not
+  /// the player, was responsible for. The player is slowed, nothing is lost.
   scrape,
 
-  /// A real collision: the run ends.
+  /// A real collision the player drove into: the run ends.
   crash,
 }
 
@@ -26,6 +30,7 @@ class CrashReport {
     required this.trafficSpeed,
     required this.closingSpeed,
     required this.closingSpeedAlongImpact,
+    required this.playerContribution,
     required this.playerPosition,
     required this.trafficPosition,
     required this.contactPoint,
@@ -51,6 +56,13 @@ class CrashReport {
   /// rule is judged on.
   final double closingSpeedAlongImpact;
 
+  /// How much of that closing was the player's own doing: the player's
+  /// velocity along the impact axis, px/s (issue #58). Zero or negative
+  /// when the player was struck — stationary, or driving away from the
+  /// vehicle that ran into them — and such contacts must not be worded
+  /// as the player hitting anything.
+  final double playerContribution;
+
   final Vector2 playerPosition;
   final Vector2 trafficPosition;
   final Vector2 contactPoint;
@@ -72,6 +84,12 @@ class CrashReport {
       case ContactSeverity.crash:
         return 'You hit the $vehicleKind$how.';
       case ContactSeverity.scrape:
+        // A struck cab is never the one doing the hitting (issue #58): a
+        // player parked in a lane who gets collected by traffic must not
+        // read 'You …' off their own screen.
+        if (playerContribution <= 0) {
+          return 'A $vehicleKind ran into you — nothing lost.';
+        }
         return 'You scraped the $vehicleKind — slower now, nothing lost.';
     }
   }
@@ -82,6 +100,7 @@ class CrashReport {
     final total = closingSpeed.toStringAsFixed(1);
     final mine = playerSpeed.toStringAsFixed(1);
     final theirs = trafficSpeed.toStringAsFixed(1);
+    final fault = playerContribution.toStringAsFixed(1);
     final at =
         '(${contactPoint.x.toStringAsFixed(1)}, ${contactPoint.y.toStringAsFixed(1)})';
     switch (severity) {
@@ -89,8 +108,18 @@ class CrashReport {
         return 'Crashed into a $vehicleKind — $axis px/s along the impact '
             'axis (≥ ${CollisionRules.scrapeSpeedThreshold.toStringAsFixed(0)} '
             'crash threshold), $total px/s total closing speed '
-            '(taxi $mine, $vehicleKind $theirs), contact at $at.';
+            '(taxi $mine, $vehicleKind $theirs, taxi closing at $fault '
+            'px/s of it), contact at $at.';
       case ContactSeverity.scrape:
+        // The struck variant deliberately does not lean on the crash
+        // threshold: a rear-end can close well over it and still rule a
+        // scrape, because none of the closing was the player's.
+        if (playerContribution <= 0) {
+          return 'Struck by a $vehicleKind — $axis px/s closing along the '
+              'impact axis, none of it the taxi\'s (taxi $mine, '
+              '$vehicleKind $theirs); not ruled against the taxi. '
+              'Contact at $at.';
+        }
         return 'Scraped a $vehicleKind — $axis px/s along the impact axis, '
             'under the ${CollisionRules.scrapeSpeedThreshold.toStringAsFixed(0)} '
             'px/s crash threshold; taxi slowed to '
@@ -179,9 +208,29 @@ class CollisionRules {
     return math.max(0.0, -relative.dot(impactAxis));
   }
 
-  /// The severity ruling for a contact closing at [approachSpeed] px/s.
-  static ContactSeverity severityFor(double approachSpeed) =>
-      approachSpeed >= scrapeSpeedThreshold
+  /// How fast the player's own velocity carries the cab *into* the traffic
+  /// vehicle along the impact axis, px/s — the fault half of the severity
+  /// ruling (issue #58). Signed: negative when the player is moving away,
+  /// so 0-or-negative marks a contact the other vehicle initiated. The
+  /// total [approachSpeed] can be entirely the striker's — a stationary
+  /// cab rear-ended at speed closes fast while contributing nothing.
+  static double playerContribution({
+    required Vector2 playerVelocity,
+    required Vector2 impactAxis,
+  }) =>
+      -playerVelocity.dot(impactAxis);
+
+  /// The severity ruling for a contact closing at [approachSpeed] px/s of
+  /// which the player's own velocity contributed [playerContribution] px/s.
+  /// A crash needs a hard close *and* the player closing: judging the total
+  /// alone let traffic rear-end a stationary cab over the threshold and
+  /// fail the level against a player who never touched the stick (issue
+  /// #58). Struck contacts rule a scrape at most.
+  static ContactSeverity severityFor(
+    double approachSpeed,
+    double playerContribution,
+) =>
+      approachSpeed >= scrapeSpeedThreshold && playerContribution > 0
           ? ContactSeverity.crash
           : ContactSeverity.scrape;
 
@@ -251,6 +300,10 @@ class CollisionRules {
       closingSpeedAlongImpact: approachSpeed(
         playerVelocity: playerVelocity,
         trafficVelocity: trafficVelocity,
+        impactAxis: axis,
+      ),
+      playerContribution: playerContribution(
+        playerVelocity: playerVelocity,
         impactAxis: axis,
       ),
       playerPosition: playerPosition.clone(),

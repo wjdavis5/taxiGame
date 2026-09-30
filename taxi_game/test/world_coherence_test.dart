@@ -201,9 +201,10 @@ void main() {
           reason: 'chunk $index renders the current run\'s environment');
       expect(
           segment.position.y,
-          closeTo(
-              WorldOrigin.worldYForDistance(segment.distanceAtTop), 0.5),
-          reason: 'chunk $index sits in the live world frame');
+          closeTo(game.worldShift - segment.distanceAtTop, 0.5),
+          reason: 'chunk $index sits in the live world frame — the '
+              'world\'s current shift, not the frame its distance '
+              'canonically belongs to (issue #53)');
     }
     expect(manager.chunkCount, lessThanOrEqualTo(10),
         reason: 'the chunk count stays within the manager\'s window');
@@ -375,6 +376,9 @@ CrashReport _fakeCrashReport() {
     trafficSpeed: 0,
     closingSpeed: 150,
     closingSpeedAlongImpact: 150,
+    // The player drove the whole contact: 150 px/s straight into the
+    // sedan's impact axis (issue #58's fault record).
+    playerContribution: 150,
     playerPosition: position,
     trafficPosition: position + Vector2(0, -30),
     contactPoint: position,

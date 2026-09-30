@@ -26,29 +26,46 @@ class HudOverlay extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Level number, or distance driven in an endless shift
-                Consumer<GameStateService>(
-                  builder: (context, gameState, child) {
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 15,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: game.isEndless
-                          // The rung's authored name ('First Ride',
-                          // 'Bank It') rides the number: the ladder's
-                          // flavor is content, not dead JSON. Polled like
-                          // the distance badge because the name lands
-                          // with the async level load, after this bar's
-                          // first build.
-                          ? _EndlessDistanceBadge(game: game)
-                          : _LevelNameBadge(game: game),
-                    );
-                  },
+                // Level number, or distance driven in an endless shift.
+                //
+                // The title yields first (issue #57), mirroring the second
+                // row's #43 fix: none of this row's three children could
+                // shrink, so a long level name ('Level 8 · KEEP THE CHAIN')
+                // beside a wide coin pill shoved the pause button off the
+                // right edge — 43 px on a 420 pt phone, worse on a 375 pt
+                // one, and the player could no longer pause. Coins and
+                // pause stay rigid (the pause control must never be the
+                // thing that gives way); the title pill renders at natural
+                // size while it fits and scales down when it does not.
+                // Both badge branches ride inside: the endless distance
+                // label is short, but it owns the same slot.
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Consumer<GameStateService>(
+                      builder: (context, gameState, child) {
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 15,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: game.isEndless
+                              // The rung's authored name ('First Ride',
+                              // 'Bank It') rides the number: the ladder's
+                              // flavor is content, not dead JSON. Polled like
+                              // the distance badge because the name lands
+                              // with the async level load, after this bar's
+                              // first build.
+                              ? _EndlessDistanceBadge(game: game)
+                              : _LevelNameBadge(game: game),
+                        );
+                      },
+                    ),
+                  ),
                 ),
                 
                 // Coins
@@ -96,20 +113,10 @@ class HudOverlay extends StatelessWidget {
                   },
                 ),
                 
-                // Pause button
-                IconButton(
-                  onPressed: () {
-                    game.pauseGame();
-                  },
-                  icon: const Icon(
-                    Icons.pause,
-                    color: Colors.white,
-                    size: 32,
-                  ),
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.black54,
-                  ),
-                ),
+                // Pause button: stands down while a summary owns the
+                // screen (issue #52) — the polling widget below reads
+                // the game's shift-over state on the HUD's short timer.
+                _PauseButton(game: game),
               ],
             ),
             
@@ -176,6 +183,59 @@ class _LevelNameBadgeState extends State<_LevelNameBadge> {
         color: Colors.white,
         fontSize: 18,
         fontWeight: FontWeight.bold,
+      ),
+    );
+  }
+}
+
+/// The top bar's pause control (issue #52): stands down entirely while an
+/// end-of-shift summary owns the screen. The summary panel does not reach
+/// the top-right corner, so the button stayed tappable after a shift
+/// ended — and the pause menu it opened offered BANK & QUIT on a shift
+/// that had already paid out, banking the same score again on every tap.
+/// Polls the game on the HUD's short timer like the badges do; the
+/// underlying [TaxiGame.pauseGame] guard makes the button harmless even
+/// in the fraction of a second before the poll catches up.
+class _PauseButton extends StatefulWidget {
+  const _PauseButton({required this.game});
+
+  final TaxiGame game;
+
+  @override
+  State<_PauseButton> createState() => _PauseButtonState();
+}
+
+class _PauseButtonState extends State<_PauseButton> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.game.isShiftOver) return const SizedBox.shrink();
+    return IconButton(
+      onPressed: () {
+        widget.game.pauseGame();
+      },
+      icon: const Icon(
+        Icons.pause,
+        color: Colors.white,
+        size: 32,
+      ),
+      style: IconButton.styleFrom(
+        backgroundColor: Colors.black54,
       ),
     );
   }

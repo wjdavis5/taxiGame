@@ -66,7 +66,7 @@ Player vehicles — `assets/images/vehicles/player/`:
   taxi_yellow.png
 
 Traffic vehicles — `assets/images/vehicles/traffic/`:
-  bus_yellow.png
+  bus_orange.png
   compact_white.png
   motorcycle_black.png
   sedan_gray.png
@@ -88,8 +88,13 @@ Modifications of the CC0 sources (all made in-repo, regenerate with
   - luxury_white, sedan_gray, minivan_gray, compact_white, van_white —
     bodies recoloured (the pack sells no white or gray car); the pack's
     three-step body shading is preserved, glass and trim untouched.
-  - bus_yellow — the pack has no bus; the van body elongated to the
-    50x100 box by duplicating a band of plain roof rows.
+  - bus_orange — the pack has no bus; the van body recoloured to orange
+    (the pack's only warm body colours are the yellow the player's taxi
+    wears and an orange-red the traffic cars use, and the bus must not
+    read as a second player cab, issue #59) and elongated to the 50x100
+    box by duplicating a band of plain mid-roof rows — outline-majority
+    rows are excluded from the band so the cloned section carries no
+    second tail outline.
   - all files — trimmed and padded with transparent margins to the
     logical box proportions above; no resampling, no other edits.
 

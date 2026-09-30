@@ -89,8 +89,14 @@ class DifficultyCurve {
   /// from issue #11's 40,000 px by the run simulator (issue #18): the
   /// pressure a median shift must survive at its deepest lives here, and
   /// the simulator's driver only stayed ahead of the tightening when the
-  /// half-pressure point moved out of the first two kilometres.
-  static const double fullRampDistance = 70000.0;
+  /// half-pressure point moved out of the first two kilometres. Pulled back
+  /// in to 52,000 px when issue #58's fault gate arrived: contacts the
+  /// traffic vehicle initiated no longer cost lives (they are scrapes at
+  /// most), the boxed-in-and-rammed death left the simulator's deaths, and
+  /// the median shift stretched to 4.3 km — past the target band. The ramp
+  /// completing 1.8 km sooner restores the 2-4 km median with the fairness
+  /// profile centred (past-4 km survival back to ~one shift in six).
+  static const double fullRampDistance = 52000.0;
 
   /// Distance (px) at which the slow post-ramp creep tops out.
   static const double creepEndDistance = 240000.0;

@@ -20,6 +20,7 @@ void main() {
       expect(bests.longestChain, 0);
       expect(bests.furthestDistancePx, 0.0);
       expect(bests.mostFaresInOneShift, 0);
+      expect(bests.cleanBankedShifts, 0);
     });
 
     test('only a bank can set the banked-score record', () {
@@ -33,6 +34,7 @@ void main() {
         longestChain: 4,
         distancePx: 8000,
         faresDelivered: 6,
+        livesLost: 3,
       );
       expect(bests.bestBankedScore, 0);
       expect(wreckImproved, isTrue,
@@ -46,6 +48,7 @@ void main() {
         longestChain: 1,
         distancePx: 1000,
         faresDelivered: 1,
+        livesLost: 0,
       );
       expect(bests.bestBankedScore, 120);
     });
@@ -58,7 +61,10 @@ void main() {
         longestChain: 6,
         distancePx: 20000,
         faresDelivered: 10,
+        livesLost: 0,
       );
+      // The second shift banks but costs a life, so it neither beats a
+      // maximum nor adds a clean bank: nothing at all improves.
       expect(
         bests.applyRun(
           score: 100,
@@ -66,14 +72,16 @@ void main() {
           longestChain: 2,
           distancePx: 3000,
           faresDelivered: 2,
+          livesLost: 1,
         ),
         isFalse,
-        reason: 'a worse shift sets no record',
+        reason: 'a worse shift sets no record and no clean bank',
       );
       expect(bests.bestBankedScore, 340);
       expect(bests.longestChain, 6);
       expect(bests.furthestDistancePx, 20000);
       expect(bests.mostFaresInOneShift, 10);
+      expect(bests.cleanBankedShifts, 1);
     });
 
     test('a tie keeps the old record, like the score best does', () {
@@ -84,6 +92,7 @@ void main() {
         longestChain: 3,
         distancePx: 5000,
         faresDelivered: 3,
+        livesLost: 2,
       );
       expect(
         bests.applyRun(
@@ -92,6 +101,7 @@ void main() {
           longestChain: 3,
           distancePx: 5000,
           faresDelivered: 3,
+          livesLost: 2,
         ),
         isFalse,
       );
@@ -103,12 +113,14 @@ void main() {
         longestChain: 6,
         furthestDistancePx: 20000,
         mostFaresInOneShift: 10,
+        cleanBankedShifts: 17,
       );
       final restored = PersonalBests.fromJson(bests.toJson());
       expect(restored.bestBankedScore, 340);
       expect(restored.longestChain, 6);
       expect(restored.furthestDistancePx, 20000);
       expect(restored.mostFaresInOneShift, 10);
+      expect(restored.cleanBankedShifts, 17);
     });
 
     test('a save written before the records existed loads as none', () {
@@ -131,6 +143,73 @@ void main() {
     });
   });
 
+  group('the clean-bank counter (issue #55)', () {
+    test('a clean bank counts, and the count only ever climbs', () {
+      final bests = PersonalBests();
+      expect(
+        bests.applyRun(
+          score: 100,
+          banked: true,
+          longestChain: 1,
+          distancePx: 1000,
+          faresDelivered: 1,
+          livesLost: 0,
+        ),
+        isTrue,
+        reason: 'a clean bank is an improvement worth persisting even '
+            'when it sets no maximum',
+      );
+      expect(bests.cleanBankedShifts, 1);
+      bests.applyRun(
+        score: 100,
+        banked: true,
+        longestChain: 1,
+        distancePx: 1000,
+        faresDelivered: 1,
+        livesLost: 0,
+      );
+      expect(bests.cleanBankedShifts, 2,
+          reason: 'no tie rule here — every clean bank counts once');
+    });
+
+    test('a bank that cost a life is not a clean bank', () {
+      final bests = PersonalBests();
+      bests.applyRun(
+        score: 500,
+        banked: true,
+        longestChain: 4,
+        distancePx: 8000,
+        faresDelivered: 6,
+        livesLost: 2,
+      );
+      expect(bests.cleanBankedShifts, 0);
+    });
+
+    test('a wreck is not a bank at all', () {
+      final bests = PersonalBests();
+      bests.applyRun(
+        score: 500,
+        banked: false,
+        longestChain: 4,
+        distancePx: 8000,
+        faresDelivered: 6,
+        livesLost: 0,
+      );
+      expect(bests.cleanBankedShifts, 0);
+    });
+
+    test('a pre-#55 save loads its missing counter as zero', () {
+      final restored = PersonalBests.fromJson({
+        'bestBankedScore': 340,
+        'longestChain': 6,
+        'furthestDistancePx': 20000,
+        'mostFaresInOneShift': 10,
+        // No cleanBankedShifts key: the field postdates this save.
+      });
+      expect(restored.cleanBankedShifts, 0);
+    });
+  });
+
   group('records through the service (issue #21)', () {
     late GameStateService gameState;
 
@@ -140,6 +219,7 @@ void main() {
       int chain = 2,
       double distancePx = 4000,
       int fares = 3,
+      int livesLost = 0,
     }) {
       return RunRecord(
         endedAtMs: 0,
@@ -147,8 +227,8 @@ void main() {
         score: score,
         faresDelivered: fares,
         longestChain: chain,
-        livesLost: 0,
-        lifeLossDistancesPx: const [],
+        livesLost: livesLost,
+        lifeLossDistancesPx: List.filled(livesLost, 500.0),
         banked: banked,
         durationSeconds: 60,
       );
@@ -176,6 +256,7 @@ void main() {
       expect(bests.longestChain, 5);
       expect(bests.furthestDistancePx, 20000);
       expect(bests.mostFaresInOneShift, 10);
+      expect(bests.cleanBankedShifts, 1);
     });
 
     test('a wrecked shift never sets the banked record', () async {
@@ -204,6 +285,9 @@ void main() {
       expect(reloaded.personalBests.longestChain, 5);
       expect(reloaded.personalBests.furthestDistancePx, 20000);
       expect(reloaded.personalBests.mostFaresInOneShift, 10);
+      expect(reloaded.personalBests.cleanBankedShifts, 1,
+          reason: 'the lifetime clean-bank count rides the save, not the '
+              'trimmed history (issue #55)');
     });
   });
 }

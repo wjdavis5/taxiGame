@@ -15,10 +15,14 @@ import 'world_origin.dart';
 ///
 /// Chunk placement is pure index math over *true distance*: chunk *i*
 /// covers run distances [i · [chunkLength], (i + 1) · [chunkLength]), and
-/// sits at the world y [WorldOrigin.worldYForDistance] maps its top edge
-/// to — so coverage is exactly reproducible for a given camera path, and
-/// the world's folds (issue #30) never change which chunk holds which
-/// stretch of road.
+/// sits at world y `worldShift − topDistance` — the frame the world is in
+/// *right now*, not the frame the distance canonically belongs to (issue
+/// #53: chunks built ahead of a fold the taxi hasn't crossed yet used to
+/// be placed a whole [WorldOrigin.period] into the next frame, and the
+/// road for ~2,400 px around every fold was never drawn). The fold then
+/// moves them by the same delta as everything else, so coverage is
+/// exactly reproducible for a given camera path and the world's folds
+/// (issue #30) never change which chunk holds which stretch of road.
 ///
 /// With an [environment] (issue #24) each chunk renders the road geometry
 /// that exists over its stretch, and carries that stretch's construction
@@ -68,7 +72,8 @@ class RoadChunkManager extends Component with HasGameReference<TaxiGame> {
   /// Top (largest-y) edge of chunk [index] before any world fold (issue
   /// #30): chunk 0 covers [-800, 0]; negative indices cover the road
   /// behind the run's start. Kept for the first-frame view of the road —
-  /// live placement always goes through [WorldOrigin.worldYForDistance].
+  /// live placement always goes through the game's current world shift
+  /// (issue #53).
   static double chunkTopY(int index) => -(index + 1) * chunkLength;
 
   /// The chunk containing world y [y] in the first frame band (no fold
@@ -110,10 +115,13 @@ class RoadChunkManager extends Component with HasGameReference<TaxiGame> {
     for (var i = bottomIndex; i <= topIndex; i++) {
       if (_chunks.containsKey(i)) continue;
       final chunk = RoadSegment(
-        // Chunk i's top edge is true distance (i + 1) · chunkLength;
-        // [WorldOrigin] maps it into the frame the camera is in.
-        position: Vector2(TaxiGame.roadCenterX,
-            WorldOrigin.worldYForDistance((i + 1) * chunkLength)),
+        // Chunk i's top edge is true distance (i + 1) · chunkLength,
+        // placed in the live frame — the world's *current* shift, which
+        // before a fold is a whole period behind the frame the distance
+        // canonically belongs to (issue #53). The fold moves the chunk
+        // with the rest of the world, so it stays right through it.
+        position: Vector2(
+            TaxiGame.roadCenterX, shift - (i + 1) * chunkLength),
         length: chunkLength,
         environment: environment,
         topDistance: (i + 1) * chunkLength,
@@ -142,7 +150,6 @@ class RoadChunkManager extends Component with HasGameReference<TaxiGame> {
       final start = zone.startDistance.clamp(fromDistance, toDistance);
       final end = zone.endDistance.clamp(fromDistance, toDistance);
       for (var d = start; d <= end; d += coneSpacing) {
-        final worldY = WorldOrigin.worldYForDistance(d);
         final road = env.roadAt(d);
         // The line itself sits on the boundary; [zone.closedRight] only
         // decides which lanes the spawner keeps clear beyond it.
@@ -150,11 +157,16 @@ class RoadChunkManager extends Component with HasGameReference<TaxiGame> {
         // The chunk's local space has its origin at the road box's
         // top-left — the anchor (top-centre at roadCenterX) shifted left
         // by half the 200 px box — which is exactly where the classic
-        // road render starts drawing.
+        // road render starts drawing. The local y is pure distance math
+        // (issue #53): the chunk's top edge *is* [toDistance], so a cone
+        // at true distance d sits toDistance − d down it — true whatever
+        // frame the chunk was placed in, where the old canonical-mapping
+        // conversion drifted a whole period for chunks built ahead of a
+        // pending fold.
         chunk.add(RoadObstacle(
           position: Vector2(
             coneX - (TaxiGame.roadCenterX - 100),
-            worldY - chunk.position.y,
+            toDistance - d,
           ),
         ));
       }
