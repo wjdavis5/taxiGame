@@ -105,18 +105,44 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   }
 
   void _spawnVehicles(TrafficProfile profile) {
+    // Where this wave materialises: a fixed 500 px ahead of the camera,
+    // one frame shared by every lane of the wave.
+    final spawnY = game.camera.viewfinder.position.y - spawnDistanceAhead;
+
+    // The lane list belongs to the road the cars will stand on (issue
+    // #95): the profile's lanes are laid over the road under the *taxi*
+    // (the pressure's home), but the car materialises 500 px ahead —
+    // where an avenue may already have narrowed to two lanes. Fractions
+    // survive a width change, not a lane-count change: re-laying the
+    // taxi-road lanes onto a two-lane street put the avenue's middle
+    // lane exactly on that street's centre divider, where a car drove
+    // half in the oncoming lane for its whole fixed-x life. The
+    // difficulty core — interval, speeds, per-side probability — stays
+    // at the taxi's distance; only the lane xs, roles, and count come
+    // from the spawn road. Level mode has no living road (fixed lanes on
+    // a fixed street) and keeps the pattern's lanes.
+    final env = game.environment;
+    final spawnDistance =
+        env == null ? null : max(0.0, game.worldShift - spawnY);
+    final lanes = env == null
+        ? profile.lanes
+        : env
+            .trafficAt(_distanceOf!(), geometryDistance: spawnDistance)
+            .lanes;
+
     // Try to spawn a vehicle in each lane based on probability
-    for (final laneConfig in profile.lanes) {
+    for (final laneConfig in lanes) {
       if (random.nextDouble() <= laneConfig.spawnProbability) {
-        _spawnVehicleInLane(laneConfig);
+        _spawnVehicleInLane(laneConfig, spawnY, spawnDistance);
       }
     }
   }
 
-  void _spawnVehicleInLane(TrafficLaneConfig laneConfig) {
-    // Calculate spawn position (ahead of player/camera)
-    final spawnY = game.camera.viewfinder.position.y - spawnDistanceAhead;
-
+  void _spawnVehicleInLane(
+    TrafficLaneConfig laneConfig,
+    double spawnY,
+    double? spawnDistance,
+  ) {
     // The level course ends (issue #31): nothing materialises past its
     // end, and whatever spawns near it stays fully on the street — half
     // the longest body is the least depth that guarantees that. The roll
@@ -134,25 +160,13 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     // street. The roll above already happened, so skipping keeps the RNG
     // stream — and with it the seed's reproducibility — untouched. The
     // clearance reads true distance (issue #30): world y folds back
-    // toward the origin as the run deepens.
+    // toward the origin as the run deepens. The lane x is already the
+    // spawn road's own (chosen in [_spawnVehicles], issue #95), so it is
+    // used as-is.
     final env = game.environment;
-    final spawnDistance =
-        env == null ? null : max(0.0, game.worldShift - spawnY);
-    var spawnX = laneConfig.laneX;
+    final spawnX = laneConfig.laneX;
     if (env != null) {
-      // The lane x belongs to the road at the spawn distance, not the
-      // one under the taxi (issue #87): the profile was laid out over
-      // roadAt(runDistance) — the difficulty pressure stays there — but
-      // the car materialises 500 px ahead, where an avenue may already
-      // have narrowed. Lane px do not survive a width change; lane
-      // fractions do, so this recovers the fraction from the taxi's
-      // road and re-lays it on the road that actually exists at the
-      // spawn. Level mode has no living road — fixed lanes on a fixed
-      // street — and keeps its lane x untouched.
-      spawnX = env.roadAt(spawnDistance!).xAtFraction(
-          env.roadAt(_distanceOf!()).fractionOf(laneConfig.laneX));
-
-      if (env.isIntersectionAt(spawnDistance)) return;
+      if (env.isIntersectionAt(spawnDistance!)) return;
       if (env.isLaneBlockedAt(spawnDistance, spawnX)) return;
     }
 
@@ -266,8 +280,25 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   /// components the game's fold moves directly; their waypoints live here,
   /// so a vehicle steering across a fold would otherwise aim at a spot a
   /// whole period behind the road it is on.
+  ///
+  /// An *unmounted* vehicle — one whose spawn fired this very frame, so
+  /// `add` has only queued it (Flame applies the queue inside the tree's
+  /// own update, which runs after the fold) — is not yet in
+  /// `world.children`, so the fold's walk over the tree never moved its
+  /// position. Moving only its path here would leave position and
+  /// waypoints a whole period (`WorldOrigin.period`, 100,800 px) apart:
+  /// the first waypoint sits that far away, so it can never be reached
+  /// to advance past, and the car — frozen in the stale frame —
+  /// reappears one period later as a parked obstacle in the middle of
+  /// the road (issue #98).
+  /// Shifting an unmounted car's position here keeps position and path
+  /// in the same frame; a mounted car's position was already moved by
+  /// the tree walk, and moving it again would double-shift it.
   void shiftWorld(double dy) {
     for (final vehicle in _activeVehicles) {
+      if (!vehicle.isMounted) {
+        vehicle.position.y += dy;
+      }
       for (var i = 0; i < vehicle.path.length; i++) {
         vehicle.path[i] = Vector2(vehicle.path[i].x, vehicle.path[i].y + dy);
       }

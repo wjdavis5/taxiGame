@@ -78,19 +78,27 @@ artifact.board("issues", {
 });
 
 const tail = (s: string) => (s.length > 4000 ? "...\n" + s.slice(-4000) : s);
+// The log-path suffix from `%TEMP%` / `$env:TEMP` down to the file, built
+// once so the write and the read below can never name different files.
+// The backslash is doubled at the source level: in a JS/TS string literal
+// a lone `\s` is not an escape and collapses to a plain `s`, which wrote
+// the log to `…\Tempsweep_flutter.log` while the read-back evaluated the
+// unset `$env:TEMPsweep_flutter` — every failed gate round reached the
+// coder with an empty log (issue #97).
+const flutterLog = "\\sweep_flutter.log";
 const flutter = async (what: string, timeoutMs: number) => {
   // The full suite's output can exceed world.run's stdout cap, which
   // errored a whole sweep mid-gates: capture to a temp file instead and
   // hand back only a tail, and only when the command failed.
   const run = await world.run(
     "cmd",
-    ["/c", "cd taxi_game && flutter " + what + " > %TEMP%\sweep_flutter.log 2>&1"],
+    ["/c", "cd taxi_game && flutter " + what + " > %TEMP%" + flutterLog + " 2>&1"],
     { timeoutMs },
   );
   if (run.exitCode === 0) return { exitCode: 0, output: "" };
   const log = await world.run(
     "cmd",
-    ["/c", "powershell -NoProfile -Command Get-Content -Tail 200 $env:TEMP\sweep_flutter.log"],
+    ["/c", "powershell -NoProfile -Command Get-Content -Tail 200 $env:TEMP" + flutterLog],
   );
   return { exitCode: run.exitCode, output: log.stdout };
 };

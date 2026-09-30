@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 /// The Date-seeded Daily Shift (issue #19).
 ///
 /// The game is permanently offline — no leaderboards, no accounts, no
@@ -21,6 +23,15 @@
 class DailyShift {
   DailyShift._();
 
+  /// The clock [todayKey] reads. Production leaves it at [DateTime.now];
+  /// tests pin a fixed moment (issue #96) so crossing midnight is a
+  /// controlled step rather than a sleep — build a screen on day D, move
+  /// the clock into D+1, and prove a button built for D refuses to start
+  /// D+1's course or write D+1's ghost. Mutable static state, so every
+  /// test that pins it must restore `DateTime.now` in teardown.
+  @visibleForTesting
+  static DateTime Function() clock = DateTime.now;
+
   /// The date key of the local calendar day [moment] falls on:
   /// zero-padded 'yyyy-MM-dd'. Local, deliberately — there is no server
   /// to define a canonical time zone, and none is wanted; the day a
@@ -34,7 +45,7 @@ class DailyShift {
   }
 
   /// The date key of today, on this device's clock.
-  static String get todayKey => dateKeyFor(DateTime.now());
+  static String get todayKey => dateKeyFor(clock());
 
   /// The run seed for the day named by [dateKey] ('yyyy-MM-dd').
   ///

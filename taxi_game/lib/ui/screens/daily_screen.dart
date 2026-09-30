@@ -266,12 +266,21 @@ class _TodayCard extends StatelessWidget {
               ElevatedButton.icon(
                 key: const Key('daily_race_ghost_button'),
                 onPressed: () {
+                  // The day this card was built for (issue #96): the
+                  // card is a Consumer snapshot, so a screen left open
+                  // across midnight still shows D's result — and this
+                  // tap used to re-read `todayKey` (D+1), driving D+1's
+                  // never-shared course as ghostless free practice whose
+                  // trace then became D+1's ghost. The card's own day is
+                  // the only one it may race; once it is no longer
+                  // today, the tap does nothing.
+                  if (result!.dateKey != DailyShift.todayKey) return;
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (context) => GameScreen(
                         endlessSeed:
-                            DailyShift.seedForDateKey(DailyShift.todayKey),
+                            DailyShift.seedForDateKey(result!.dateKey),
                         isGhostRace: true,
                       ),
                     ),

@@ -36,11 +36,11 @@ class RoadGeometry {
   double get rightX => centerX + width / 2;
 
   /// The lane-fraction of a world x on this road — the inverse of
-  /// [xAtFraction]. Fractions, not px, are what survive a width change:
-  /// the spawner re-lays a lane onto the road that exists at the spawn
-  /// distance by asking the taxi's road for the fraction and the spawn
-  /// road for the x back (issue #87 — lane px from the taxi's road put
-  /// cars on the sidewalk wherever an avenue narrowed).
+  /// [xAtFraction]. Fractions, not px, are what survive a width change
+  /// (the coordinate issue #87's fix re-laid lanes through); they do not
+  /// survive a lane-count change, which is why the spawner now takes its
+  /// whole lane set from the road at the spawn distance (issue #95)
+  /// instead of carrying fractions across a layout change.
   double fractionOf(double x) => (x - leftX) / width;
 
   /// The world x at lane-fraction [f] of this road (0 = left edge, 1 =
@@ -468,16 +468,25 @@ class RunEnvironment {
   }
 
   /// The traffic profile in effect at [distance]: the difficulty curve's
-  /// anchors, laid out over the road geometry that actually exists there,
-  /// with the environment's modifier folded in. The spawner consumes this
-  /// exactly like a level pattern.
-  TrafficProfile trafficAt(double distance) {
+  /// anchors — interval, speeds, per-side probability — at the *taxi's*
+  /// distance, with the environment's modifier folded in, laid out over
+  /// the road geometry at [geometryDistance] when given, else over the
+  /// road at [distance] itself. The spawner passes the distance traffic
+  /// actually materialises at (500 px ahead, issue #95): the lane set —
+  /// xs, roles, count, and the per-side split that keeps the road's total
+  /// expected spawn rate on the curve — belongs to the road the cars will
+  /// stand on, while the pressure stays where the player is. Fractions
+  /// survive a width change but not a lane-count change, so re-laying the
+  /// taxi-road lanes onto a different lane layout put cars between lanes
+  /// — the avenue's middle lane landed exactly on a two-lane street's
+  /// centre divider.
+  TrafficProfile trafficAt(double distance, {double? geometryDistance}) {
     final core = DifficultyCurve.trafficCoreFor(
       distance,
       environmentModifier: difficultyModifierAt(distance),
     );
 
-    final road = roadAt(distance);
+    final road = roadAt(geometryDistance ?? distance);
     final xs = road.laneXs;
 
     // Count each side once so the road's total expected spawn rate

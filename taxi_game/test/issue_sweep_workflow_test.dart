@@ -2,7 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// The issue-sweep workflow's push and CI contract (issue #88).
+/// The issue-sweep workflow's push and CI contract (issue #88), and its
+/// gate-log round trip (issue #97).
 ///
 /// The sweep script (`.zcode/workflows/gh-issue-sweep.dwf.ts`) drives real
 /// git pushes and real CI waits, so this suite cannot execute it — the
@@ -122,6 +123,44 @@ void main() {
       expect(RegExp('green CI on head ').allMatches(script).length,
           greaterThanOrEqualTo(3),
           reason: 'merge-failure and final-report claims must name the head');
+    });
+  });
+
+  group('the flutter gate helper round-trips one log path (issue #97)', () {
+    // The gate helper captures failed analyze/test output to a temp file
+    // and reads it back — the write is cmd, the read is PowerShell, and
+    // the path between them must be built once or the two shells can
+    // name different files. The original bug was an escaping bug: a lone
+    // `\s` inside a JS/TS string literal is not an escape sequence and
+    // collapses to a plain `s`, so the write targeted
+    // `%TEMP%sweep_flutter.log` (a file in temp's parent) while the read
+    // evaluated the unset `$env:TEMPsweep_flutter` to `$null` — every
+    // failed gate round reached the coder with an empty log.
+    test('the write and the read build the path from one shared constant',
+        () {
+      final body = helperBody('flutter', 'const sleepSeconds');
+
+      // The suffix lives in exactly one correctly escaped constant —
+      // top-level, just above the helper — and the source-level `\\`
+      // evaluates to a single backslash at runtime.
+      expect(script, contains(r'const flutterLog = "\\sweep_flutter.log"'),
+          reason: 'the path suffix must be defined once, escaped');
+
+      // Both commands interpolate that constant — never a private copy
+      // of the path, which is how writer and reader diverged.
+      expect(body, contains(r'" > %TEMP%" + flutterLog'),
+          reason: 'the cmd write must redirect through the constant');
+      expect(body, contains(r'$env:TEMP" + flutterLog'),
+          reason: 'the PowerShell read must read through the constant');
+    });
+
+    test('the collapsed single-backslash form appears nowhere', () {
+      // The bug's source form: `%TEMP%` or `$env:TEMP` directly glued to
+      // a single-backslash `\sweep_flutter.log`. Neither shell may ever
+      // see it again — with the backslash lost, cmd wrote to temp's
+      // parent and PowerShell read a null path.
+      expect(script, isNot(contains(r'%TEMP%\sweep_flutter.log')));
+      expect(script, isNot(contains(r'$env:TEMP\sweep_flutter.log')));
     });
   });
 }

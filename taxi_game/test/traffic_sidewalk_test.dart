@@ -10,23 +10,26 @@ import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/systems/difficulty_curve.dart';
 import 'package:taxi_game/game/systems/run_environment.dart';
 import 'package:taxi_game/game/taxi_game.dart';
-import 'package:taxi_game/models/traffic_pattern.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
-/// Traffic and the road's width changes (issue #87).
+/// Traffic and the road's width and lane-count changes (issues #87, #95).
 ///
-/// Endless traffic takes its lane x from the road under the taxi but
-/// materialises 500 px ahead, and its straight path never re-reads
-/// the road — so wherever an avenue narrowed, cars appeared over the kerb
-/// and drove the sidewalk for their whole life. The fix is two-sided: the lane
-/// is re-laid on the road that exists at the *spawn* distance (fractions
-/// survive a width change; px do not), and a spawn is skipped outright
+/// Endless traffic materialises 500 px ahead of the taxi on a straight
+/// path that never re-reads the road. Two defects came from that: lane
+/// px taken from the road under the taxi put cars over the kerb wherever
+/// an avenue narrowed (#87), and the fraction re-lay that fixed it put
+/// the avenue's middle lane exactly on a two-lane street's centre
+/// divider when the lane *count* changed too (#95). The fix is
+/// two-sided: the spawner takes its whole lane set — xs, roles, count,
+/// per-side split — from the road at the spawn distance (the difficulty
+/// core stays at the taxi's distance), and a spawn is skipped outright
 /// when the body it rolled leaves the road anywhere over the span its
 /// waypoints cover. These tests cover the containment helper exactly,
-/// the fraction re-lay, and — flood-spawning at a real avenue→narrow
-/// boundary — the live invariant that no car ever sits on the sidewalk.
+/// the spawn-road lane set, and — flood-spawning at real
+/// avenue→narrow boundaries — the live invariants that no car ever sits
+/// on the sidewalk or between lanes.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -224,7 +227,7 @@ void main() {
     });
   });
 
-  group('the lane re-lay (issue #87)', () {
+  group('the lane set follows the spawn road (issues #87 and #95)', () {
     test('fractions survive the width change; px do not', () {
       final env = RunEnvironment(seed: 7);
       final boundary = firstAvenueToNarrow(env)!;
@@ -239,9 +242,13 @@ void main() {
       // Round-trip on one road is exact.
       expect(taxiRoad.xAtFraction(fraction), closeTo(laneX, 1e-9));
 
-      // Re-laid 500 px past the boundary the lane keeps its fraction of a
-      // narrower road — and the fraction is what fits, where the raw px
-      // (288 + a bus half-width) already hangs over the tapering kerb.
+      // The same fraction of a narrower width is the coordinate that
+      // survives a width change — the math issue #87's fix rode. The raw
+      // px does not: 288 plus a bus half-width already hangs over the
+      // tapering kerb 400 px past the boundary, where the fraction does
+      // not. (The spawner no longer carries fractions across a layout
+      // change at all — that is #95 below — but the width invariant is
+      // what made fractions look safe, and it is only half the truth.)
       final spawnRoad = env.roadAt(boundary + 400);
       final relaid = spawnRoad.xAtFraction(fraction);
       expect(relaid, lessThan(laneX));
@@ -251,29 +258,84 @@ void main() {
           reason: 'the old px would have put a bus over the kerb');
     });
 
-    test('the re-laid lane keeps the taxi-road fractions, not just any x',
-        () {
-      // The fraction the spawner recovers is a *lane* fraction of the
-      // profile the taxi's road carries — so a car re-laid on a narrower
-      // street still sits on its lane's line, one of that profile's
-      // fractions, never between lanes.
-      final env = RunEnvironment(seed: 2);
+    test('a two-lane spawn road offers only its own lanes — none on the '
+        'divider (issue #95)', () {
+      // The defect's arithmetic: the taxi is on an avenue (three lanes,
+      // middle fraction 1/2), the road 500+ px ahead is two-lane. The
+      // old re-lay mapped the avenue's middle lane to
+      // xAtFraction(1/2) — exactly the x where the two-lane road draws
+      // its dashed centre divider — and the containment gate (kerbs
+      // only) waved it through, so the car straddled the line for its
+      // whole fixed-x life. The lane set must instead be the spawn
+      // road's own: two lanes, on its own lane xs, never the centre.
+      final env = RunEnvironment(seed: 7);
       final boundary = firstAvenueToNarrow(env)!;
-      final taxiRoad = env.roadAt(boundary - 100);
-      for (final laneX in taxiRoad.laneXs) {
-        final f = taxiRoad.fractionOf(laneX);
+      final taxiDistance = boundary - 100;
+      expect(env.roadAt(taxiDistance).profile.laneCount, 3,
+          reason: 'precondition: the taxi is on the avenue');
+
+      final spawnDistance = boundary + 400; // past the taper's middle
+      final spawnRoad = env.roadAt(spawnDistance);
+      expect(spawnRoad.profile.laneCount, 2,
+          reason: 'precondition: the spawn road carries two lanes');
+      final divider = spawnRoad.xAtFraction(0.5);
+
+      final lanes =
+          env.trafficAt(taxiDistance, geometryDistance: spawnDistance).lanes;
+      expect(lanes, hasLength(2),
+          reason: 'the wave rolls the spawn road\'s lane count');
+      for (final lane in lanes) {
         expect(
-          taxiRoad.profile.laneFractions.any((p) => (p - f).abs() < 0.001),
+          spawnRoad.laneXs.any((x) => (x - lane.laneX).abs() < 0.001),
           isTrue,
-          reason: 'lane $laneX resolves to a profile fraction',
+          reason: 'lane x ${lane.laneX.toStringAsFixed(1)} is one of the '
+              'spawn road\'s own lane xs ${spawnRoad.laneXs}',
         );
-        // And the same fraction of a different width stays inside that
-        // road's extents (containment beyond that is the skip's call).
-        final narrow = env.roadAt(boundary + 700);
-        final x = narrow.xAtFraction(f);
-        expect(x, greaterThanOrEqualTo(narrow.leftX));
-        expect(x, lessThanOrEqualTo(narrow.rightX));
+        expect((lane.laneX - divider).abs(), greaterThan(5),
+            reason: 'no lane may straddle the centre divider at '
+                '${divider.toStringAsFixed(1)}');
       }
+      // And the avenue's middle lane — the one the re-lay used to carry
+      // onto the divider — is not represented at all.
+      expect(
+        lanes.any((l) =>
+            (spawnRoad.fractionOf(l.laneX) - 0.5).abs() < 0.001),
+        isFalse,
+        reason: 'a two-lane road has no lane at fraction 1/2',
+      );
+    });
+
+    test('the difficulty core stays at the taxi\'s distance (issue #95)',
+        () {
+      // Same spawn road, two different taxi distances: the lane xs,
+      // roles, and count come from the geometry road, while the interval
+      // and speeds follow the taxi's own distance — pressure is where
+      // the player is, lanes are where the cars stand.
+      final env = RunEnvironment(seed: 7);
+      const geometryDistance = 5000.0; // calm open: always standard
+      final early = env.trafficAt(4000, geometryDistance: geometryDistance);
+      final late = env.trafficAt(50000, geometryDistance: geometryDistance);
+
+      final geometryRoad = env.roadAt(geometryDistance);
+      for (final profile in [early, late]) {
+        expect(profile.lanes, hasLength(geometryRoad.laneCount));
+        for (final lane in profile.lanes) {
+          expect(
+            geometryRoad.laneXs.any((x) => (x - lane.laneX).abs() < 0.001),
+            isTrue,
+            reason: 'lane xs come from the geometry road',
+          );
+        }
+      }
+      expect(early.lanes.first.oncoming, late.lanes.first.oncoming,
+          reason: 'lane roles come from the geometry road');
+
+      // The core is the plain (no geometry override) profile's own.
+      expect(early.spawnInterval,
+          env.trafficAt(4000).spawnInterval);
+      expect(late.spawnInterval, env.trafficAt(50000).spawnInterval);
+      expect(late.spawnInterval, lessThan(early.spawnInterval),
+          reason: 'the deep-run pressure still tightens the interval');
     });
   });
 
@@ -287,28 +349,19 @@ void main() {
       final boundary = firstAvenueToNarrow(env)!;
       expect(boundary, 28000);
 
-      // Flood probability on the real profile: every wave rolls a spawn
-      // in every lane, so the 30 s window is the densest traffic this
-      // boundary can see. The interval is the only knob touched — lane
-      // xs and speeds still come from trafficAt, exactly what the live
-      // spawner consumes.
+      // Flood cadence on the real profile: the interval is the only knob
+      // that still reaches the spawner's wave loop — the lane list comes
+      // straight from the environment at the spawn distance now (issue
+      // #95), so a probability injection through profileOf would no
+      // longer reach the lanes. Density rides the road's real
+      // probabilities at this deep-run distance, plenty for the
+      // invariant to bite.
       game.trafficSpawner.clear();
       final flood = TrafficSpawner.distanceBased(
-        profileOf: (d) {
-          final base = env.trafficAt(d);
-          return TrafficProfile(
-            spawnInterval: 0.3,
-            lanes: [
-              for (final lane in base.lanes)
-                TrafficLaneConfig(
-                  laneX: lane.laneX,
-                  speedRange: lane.speedRange,
-                  spawnProbability: 1.0,
-                  oncoming: lane.oncoming,
-                ),
-            ],
-          );
-        },
+        profileOf: (d) => TrafficProfile(
+          spawnInterval: 0.3,
+          lanes: env.trafficAt(d).lanes,
+        ),
         distanceOf: () => game.runDistance,
         random: math.Random(4242),
       );
@@ -317,21 +370,21 @@ void main() {
       await drain();
 
       // Park the taxi 450 px below the boundary: still on the avenue, so
-      // the lanes under it are the avenue's, while every spawn lands
-      // 500 px ahead — 50 px into the narrowing taper. This is the exact
-      // geometry of the bug; the re-lay has to move the lanes onto the
-      // road that exists there, and the skip has to turn away the
-      // same-direction kerb lanes whose 3000 px paths cross the full
-      // narrowing (probed at this seed: the oncoming lane at the 1/6
-      // line holds, its span never reaching the taper's end, and every
-      // same-direction lane but the centre line is turned away — no
-      // rolled body fits the narrowing at the kerb lines).
+      // the difficulty core under it is the avenue's, while every spawn
+      // lands 500 px ahead — 50 px into the narrowing taper, whose lane
+      // layout is already the narrow street's two lanes. This is the
+      // exact geometry of the bug: the wave must roll the *spawn* road's
+      // lanes (never the avenue's middle lane re-laid onto the divider),
+      // and the skip has to turn away whatever body does not fit the
+      // narrowing over the span its path covers.
       game.player.position = Vector2(TaxiGame.roadCenterX, -(boundary - 450));
       await tickAndSettle(game);
       final taxiDistance = game.runDistance;
       expect(taxiDistance, closeTo(boundary - 450, 1));
-      final taxiFractions =
-          env.roadAt(taxiDistance).profile.laneFractions;
+      expect(env.roadAt(taxiDistance).profile.laneCount, 3,
+          reason: 'precondition: the taxi is still on the avenue');
+      expect(env.roadAt(taxiDistance + 500).profile.laneCount, 2,
+          reason: 'precondition: the spawn road is the narrow street');
 
       var vehiclesSeen = 0;
       final laneFractionsSeen = <double>{};
@@ -344,21 +397,30 @@ void main() {
               game.world.children.whereType<TrafficVehicle>().toList();
           vehiclesSeen = math.max(vehiclesSeen, vehicles.length);
           for (final v in vehicles) {
-            laneFractionsSeen
-                .add(expectOnRoadAndOnALane(game, env, v, taxiFractions));
+            laneFractionsSeen.add(expectOnRoadAndOnALane(game, env, v));
           }
         }
       }
 
-      // The window was not vacuous: the flood kept cars on the street
-      // through the whole 30 s, on more than one lane line.
+      // The window was not vacuous, and the traffic that survived sits
+      // on the spawn road's own lanes — never the centre line. Only the
+      // oncoming lane can carry cars here: its span runs down-screen and
+      // never reaches the taper's end, while the same-direction lane's
+      // x at the taper's still-wide road (≈265) overhangs the narrow
+      // kerb over its 3 050 px path, so the containment gate turns every
+      // body on it away — the gate doing exactly its job. (The old
+      // probability-1.0 test kept its second lane alive through the bug
+      // itself: the avenue middle lane re-laid onto x 200 fit the
+      // narrowing precisely because it straddled the centre.)
       expect(vehiclesSeen, greaterThan(3),
           reason: 'the flood must have spawned traffic for the invariant '
               'to mean anything');
-      expect(laneFractionsSeen.length, greaterThan(1),
-          reason: 'both surviving lane lines carried traffic (the kerb '
-              'lanes cannot fit any body on the narrow width — their '
-              'spawns are the ones the skip turns away)');
+      expect(laneFractionsSeen, contains(closeTo(0.25, 0.001)),
+          reason: 'the oncoming lane — the one lane whose span holds the '
+              'narrowing — carried traffic');
+      expect(laneFractionsSeen, isNot(contains(closeTo(0.5, 0.001))),
+          reason: 'no car ever took the centre line the old re-lay '
+              'landed the avenue\'s middle lane on');
     }, timeout: const Timeout(Duration(minutes: 3)));
   });
 
@@ -402,21 +464,10 @@ void main() {
 
       game.trafficSpawner.clear();
       final flood = TrafficSpawner.distanceBased(
-        profileOf: (d) {
-          final base = env.trafficAt(d);
-          return TrafficProfile(
-            spawnInterval: 0.3,
-            lanes: [
-              for (final lane in base.lanes)
-                TrafficLaneConfig(
-                  laneX: lane.laneX,
-                  speedRange: lane.speedRange,
-                  spawnProbability: 1.0,
-                  oncoming: lane.oncoming,
-                ),
-            ],
-          );
-        },
+        profileOf: (d) => TrafficProfile(
+          spawnInterval: 0.3,
+          lanes: env.trafficAt(d).lanes,
+        ),
         distanceOf: () => game.runDistance,
         random: math.Random(90210),
       );
@@ -436,8 +487,6 @@ void main() {
       await tickAndSettle(game);
       final taxiDistance = game.runDistance;
       expect(taxiDistance, closeTo(boundary - 2000, 1));
-      final taxiFractions =
-          env.roadAt(taxiDistance).profile.laneFractions;
 
       var vehiclesSeen = 0;
       final laneFractionsSeen = <double>{};
@@ -451,8 +500,7 @@ void main() {
               game.world.children.whereType<TrafficVehicle>().toList();
           vehiclesSeen = math.max(vehiclesSeen, vehicles.length);
           for (final v in vehicles) {
-            final f =
-                expectOnRoadAndOnALane(game, env, v, taxiFractions);
+            final f = expectOnRoadAndOnALane(game, env, v);
             laneFractionsSeen.add(f);
             if ((f - 0.75).abs() < 0.001) {
               typesOnTheKerbLine.add(v.vehicleType.name);
@@ -483,15 +531,14 @@ void main() {
 /// a player sees over the kerb) stays inside roadAt at every distance
 /// its path covers, its own half-length beyond each end waypoint
 /// included. 25 px sampling — finer than any taper moves. Returns the
-/// lane fraction the car took, for the caller's lane-line census, and
-/// asserts that fraction is one of the taxi-road profile's lanes — the
-/// lane is re-laid by fraction onto the road at the car's own spawn
-/// distance, never an avenue x pasted onto a narrow street.
+/// lane fraction the car took on its own spawn road, for the caller's
+/// lane-line census, and asserts the car's x is one of that road's lane
+/// xs — never an avenue x pasted onto a narrow street, and never the
+/// centre divider between a two-lane road's lanes (issue #95).
 double expectOnRoadAndOnALane(
   TaxiGame game,
   RunEnvironment env,
   TrafficVehicle v,
-  List<double> taxiFractions,
 ) {
   final shift = game.worldShift;
   var minDistance = double.infinity;
@@ -519,13 +566,15 @@ double expectOnRoadAndOnALane(
   }
 
   final spawnDistance = shift - v.path.first.y;
-  final f = env.roadAt(spawnDistance).fractionOf(v.position.x);
+  final spawnRoad = env.roadAt(spawnDistance);
+  final f = spawnRoad.fractionOf(v.position.x);
   expect(
-    taxiFractions.any((p) => (p - f).abs() < 0.001),
+    spawnRoad.laneXs.any((x) => (x - v.position.x).abs() < 0.001),
     isTrue,
     reason: 'x ${v.position.x.toStringAsFixed(1)} at spawn distance '
         '${spawnDistance.toStringAsFixed(0)} is not on a lane of the '
-        'taxi-road profile $taxiFractions',
+        'spawn road (lanes ${spawnRoad.laneXs}) — between lanes, or on '
+        'the divider',
   );
   return f;
 }
