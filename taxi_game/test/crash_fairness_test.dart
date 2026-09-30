@@ -119,18 +119,31 @@ void main() {
         ],
       );
 
-  /// Same-direction traffic driving up-screen at exactly [speed] px/s (the
-  /// sedan's multiplier is 1.0) — the rear-end case: it closes on a slower
-  /// cab from behind.
-  TrafficVehicle follower(Vector2 position, double speed) => TrafficVehicle(
+  /// Same-direction traffic of any [type] driving up-screen at exactly
+  /// [speed] px/s (the type's speed multiplier undone in the base speed)
+  /// — the rear-end striker in any body size. The size is the point of
+  /// the [type] parameter (issue #85): only a hitbox that clears the
+  /// cab's scaled one in both dimensions can fully contain it mid-pass.
+  TrafficVehicle followerOfType(
+    TrafficVehicleType type,
+    Vector2 position,
+    double speed,
+  ) =>
+      TrafficVehicle(
         position: position.clone(),
-        vehicleType: TrafficVehicleType.sedan,
-        baseSpeed: speed,
+        vehicleType: type,
+        baseSpeed: speed / type.speedMultiplier,
         path: [
           Vector2(position.x, position.y - 3000),
           Vector2(position.x, position.y - 3001),
         ],
       );
+
+  /// Same-direction traffic driving up-screen at exactly [speed] px/s (the
+  /// sedan's multiplier is 1.0) — the rear-end case: it closes on a slower
+  /// cab from behind.
+  TrafficVehicle follower(Vector2 position, double speed) =>
+      followerOfType(TrafficVehicleType.sedan, position, speed);
 
   group('ruling on contact', () {
     test('a low-speed brush is a scrape: run continues, taxi is slowed',
@@ -658,6 +671,16 @@ void main() {
       // own 60 px/s and holds it there. The ahead/behind ruling must
       // be frozen at the first touch, where the geometry says who ran
       // into whom.
+      //
+      // #85 reopened that hole from underneath the per-episode fix
+      // (#80): the sedan's hitbox (32×48) swallows the cab's (30×45)
+      // for the couple of frames their centres sit within 1.5 px, and
+      // a hollow traffic box made Flame drop that stretch as "no
+      // collision" — the pass became two episodes, the second judged
+      // with the sedan's centre already past the cab's, so "ahead",
+      // pin. The traffic hitbox is solid now, and the whole
+      // drive-through is the one continuous episode the per-episode
+      // ruling was designed around.
       final game = TaxiGame(
         levelLoader: LevelLoaderService(),
         gameState: gameState,
@@ -694,21 +717,17 @@ void main() {
       final car = follower(Vector2(200, -93), 60);
       game.world.add(car);
 
-      // Frames still stopped, until the follower has driven fully
-      // through the stationary body and cleared it ahead — past the
-      // exact window where a per-frame centre comparison flips its
-      // answer, and past the touch itself. (Waiting only the report's
-      // ~1 s left the car mid-pass: the moment the cab then floors it
-      // it re-catches the car almost at once, and that new touch is
-      // legitimately ruled ahead — the #80 chase scenario below. The
-      // pin this test polices needs the car clear, so freedom is
-      // measurable before any choice to ride its bumper again.)
-      for (var i = 0; i < 250; i++) {
+      // ~1 s of frames still stopped: the touch lands in the first few
+      // (60 px/s closes the hair between the boxes almost at once),
+      // and over the full second the follower drives on through the
+      // stationary body — through the containment sliver where their
+      // centres cross, out the other side, still overlapping — until
+      // its centre sits well past the cab's. That is the exact window
+      // where the split episode used to hand the pin back, and where a
+      // rider who has just been shoved answers with the throttle.
+      for (var i = 0; i < 60; i++) {
         await tester.pump(const Duration(milliseconds: 16));
-        if (car.position.y < player.position.y - 120) break;
       }
-      expect(car.position.y < player.position.y - 120, isTrue,
-          reason: 'staging: the rear-ender must be fully past and clear');
 
       // Only now does the driver answer the bump with the throttle.
       player.startAccelerating();
@@ -716,28 +735,119 @@ void main() {
       // About seven seconds of frames, watching the speed the whole
       // way through, frame by frame after the clamp has had its say.
       var maxSpeedReached = 0.0;
-      var taxiEverAhead = false;
       for (var i = 0; i < 400; i++) {
         await tester.pump(const Duration(milliseconds: 16));
         maxSpeedReached = math.max(maxSpeedReached, -player.velocity.y);
-        if (player.position.y <= car.position.y) taxiEverAhead = true;
         if (!game.isGameActive) break;
       }
 
       // The rear-end is the follower's fault, not the taxi's.
       expect(game.isGameActive, isTrue);
       // Pinned, the cab could never exceed the follower's 60; free, it
-      // runs away toward its 150 top speed — the waited-out touch
-      // holds nothing. (Once the cab deliberately rides the car's
-      // bumper again that new touch paces it, as the #80 chase test
-      // below covers; the cab never passes the car either way.)
+      // runs away to its 150 top speed — the waited-out touch holds
+      // nothing over the drive-through it happened inside.
       expect(maxSpeedReached, greaterThan(120),
           reason: 'a rear-ender the cab waited out must never pace the '
               'cab — the ruling is frozen at the touch, not re-derived '
               'from centres every frame');
-      expect(taxiEverAhead, isFalse,
-          reason: 'pacing the car it catches is the cap holding, not the '
-              'pin shoving it through');
+      // And it actually pulled clear: the gap opens past the grind
+      // instead of freezing on the follower's bumper.
+      expect(car.position.y - player.position.y, greaterThan(100),
+          reason: 'the follower must fall behind, not ride the cab');
+    });
+
+    testWidgets(
+        'a rear-ended taxi is not pinned by a same-lane bus whose hitbox '
+        'swallows the cab\'s (issue #85)',
+        (tester) async {
+      // The wide door the #74 sedan could only nudge for a frame or
+      // two: a bus hitbox (40×80, the 80% scale of a 50×100 logical
+      // body) clears the cab's (30×45) by 5 px either side and 17.5
+      // nose-to-tail, so a bus driving over a stopped cab holds the
+      // cab's whole hitbox inside its own for over half a second —
+      // no edges cross for that entire stretch. With the traffic
+      // hitbox hollow, Flame's containment fallback ruled the stretch
+      // "no collision": the pass split into two episodes, and the
+      // second onCollisionStart — its per-episode ahead/behind ruling
+      // (#80) re-decided with the bus's centre already past the
+      // cab's — read the rear-ender as "ahead" and pinned the cab to
+      // the bus's own 60 px/s. #74, reborn. The traffic hitbox is
+      // solid now, so Flame keeps the containment pass as the one
+      // continuous touch it physically is, and the ruling stays
+      // frozen at the rear-end itself.
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: 7,
+      );
+      await tester.pumpWidget(GameWidget(game: game));
+      // As above (issue #62): wait for the taxi's onLoad, not just the
+      // run going live — the pin scenario needs the player's hitbox
+      // registered before any contact ruling, and the sprite fetch
+      // behind it is real I/O fake-async time cannot run.
+      await tester.runAsync(() async {
+        for (var i = 0;
+            i < 300 && !(game.isGameActive && game.player.isLoaded);
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+      // One timed frame to mount the loaded taxi (see above).
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(game.isGameActive, isTrue);
+      expect(game.player.isMounted, isTrue);
+
+      // Kill the shift's own spawner so the only traffic is the bus.
+      game.trafficSpawner.clear();
+      final player = game.player;
+      player.position = Vector2(200, -140);
+      player.velocity = Vector2.zero(); // stopped, hands off the stick
+
+      // A bus in the taxi's lane, its centre 47 px behind the taxi's
+      // — a hair outside the boxes — driving up at 60 px/s. Every bit
+      // of the closing is the bus's own doing, so the touch is a
+      // scrape whatever the closing (#58) and the run must stay live.
+      final bus =
+          followerOfType(TrafficVehicleType.bus, Vector2(200, -93), 60);
+      game.world.add(bus);
+
+      // Frames still stopped, until the bus's centre is 20 px past the
+      // cab's: out of the containment stretch (which ends at 17.5 px
+      // of centre gap) but still well inside the overlap (which runs
+      // to 62.5 — the bus's half-hitbox 40 plus the cab's 22.5) —
+      // squarely the window where the split episode had
+      // already re-ruled the bus "ahead" while the shove continued.
+      for (var i = 0; i < 150; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (bus.position.y < player.position.y - 20) break;
+      }
+      expect(bus.position.y < player.position.y - 20, isTrue,
+          reason: 'staging: the bus must be past the cab and still '
+              'overlapping it');
+
+      // Only now does the driver answer with the throttle. Pinned, the
+      // clamp holds the cab at the bus's 60 for as long as the boxes
+      // overlap — and at matched speeds they never separate; free, the
+      // cab runs away toward its 150 top speed.
+      player.startAccelerating();
+      var maxSpeedReached = 0.0;
+      for (var i = 0; i < 400; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        maxSpeedReached = math.max(maxSpeedReached, -player.velocity.y);
+        if (!game.isGameActive) break;
+      }
+
+      // The rear-end is the bus's doing, not the taxi's.
+      expect(game.isGameActive, isTrue);
+      expect(maxSpeedReached, greaterThan(120),
+          reason: 'a bus whose hitbox swallows the cab\'s must never '
+              'pace the cab mid-drive-through — the containment '
+              'stretch is one touch, not two');
+      // And it actually pulled clear: the gap opens past the grind
+      // instead of freezing on the bus's bumper.
+      expect(bus.position.y - player.position.y, greaterThan(100),
+          reason: 'the bus must fall behind, not ride the cab');
     });
 
     testWidgets(
