@@ -202,26 +202,30 @@ class PlayerVehicle extends PositionComponent
   /// (#58) keeps being ruled by the contact judge, not shoved by a
   /// per-frame clamp, and #42's bulldozing bus passes through untouched.
   ///
-  /// Ahead only, frozen at the first touch (issues #66 and #74): the
-  /// cap paces a car the taxi rides behind, and a car in the taxi's
-  /// rear is not that. A same-direction follower that has just
-  /// rear-ended the cab used to clamp the cab to the follower's own
-  /// speed on overlap alone (#66), and the per-frame centre comparison
-  /// that fixed it re-decided "ahead" from live positions — a stopped
-  /// cab that waited ~1 s before accelerating was pinned anyway once
-  /// the rear-ender's centre crossed its own (#74). The ruling now
-  /// comes from [TrafficVehicle.aheadAtFirstContact], recorded once at
-  /// the touch on the pre-pushback geometry.
+  /// Ahead only, frozen at the start of each contact episode (issues
+  /// #66, #74 and #80): the cap paces a car the taxi rides behind, and
+  /// a car in the taxi's rear is not that. A same-direction follower
+  /// that has just rear-ended the cab used to clamp the cab to the
+  /// follower's own speed on overlap alone (#66), and the per-frame
+  /// centre comparison that fixed it re-decided "ahead" from live
+  /// positions — a stopped cab that waited ~1 s before accelerating
+  /// was pinned anyway once the rear-ender's centre crossed its own
+  /// (#74). The ruling now comes from
+  /// [TrafficVehicle.aheadAtContactStart], recorded at the start of
+  /// every touch on the pre-pushback geometry — per episode, not per
+  /// lifetime, so an order swap between two cars is judged where the
+  /// new touch stands (#80).
   void _capSpeedToScrapedTraffic() {
     if (!isMounted) return;
     for (final vehicle in game.world.children.whereType<TrafficVehicle>()) {
       if (!vehicle.contactedPlayer) continue;
       if (vehicle.velocity.y >= 0) continue;
-      // Ahead at the first touch only (issues #66 and #74) — the same
-      // convention (smaller y is ahead) the flag was recorded under.
-      // Anything else is beside or behind the taxi and must never hold
-      // it back, however far the grind has carried it since.
-      if (!vehicle.aheadAtFirstContact) continue;
+      // Ahead at the episode's start (issues #66, #74 and #80) — the
+      // same convention (smaller y is ahead) the flag was recorded
+      // under. Anything else is beside or behind the taxi at the touch
+      // and must never hold it back, however far the episode's grind
+      // has carried it since.
+      if (!vehicle.aheadAtContactStart) continue;
       final halfWidths =
           (vehicleSize.x * CollisionRules.playerHitboxScale +
                   vehicle.vehicleSize.x * CollisionRules.trafficHitboxScale) /
@@ -374,19 +378,26 @@ class PlayerVehicle extends PositionComponent
     // out of the running for a close call at the pass (issue #23).
     other.contactedPlayer = true;
 
-    // Freeze the ahead/behind ruling here, at the first touch (issue
-    // #74) — on the pre-pushback positions, before _applyScrape moves
-    // either body. The pace cap below paces a car the taxi rides
-    // behind, and #66's per-frame centre comparison re-derived that
-    // ruling from live positions every tick: a stopped cab rear-ended
-    // at 60 px/s waited out a second on the throttle while the
-    // rear-ender drove through it, and once the follower's centre
-    // crossed the cab's the pin came back. Where the touch happened is
-    // who ran into whom; it is decided once and never revised. Same y
-    // convention the cap has always used — smaller y is ahead.
-    if (!recontact) {
-      other.aheadAtFirstContact = other.position.y < position.y;
-    }
+    // Freeze the ahead/behind ruling here, at the start of every
+    // contact episode (issues #74 and #80) — on the pre-pushback
+    // positions, before _applyScrape moves either body. The pace cap
+    // below paces a car the taxi rides behind, and #66's per-frame
+    // centre comparison re-derived that ruling from live positions
+    // every tick: a stopped cab rear-ended at 60 px/s waited out a
+    // second on the throttle while the rear-ender drove through it,
+    // and once the follower's centre crossed the cab's the pin came
+    // back (#74). But freezing the ruling for a vehicle's whole
+    // lifetime overcorrected (#80): a car the taxi once scraped and
+    // later left behind kept its stale "ahead" and pinned the taxi
+    // from its own rear the day it caught up again, and a past
+    // rear-ender became drive-through the day the taxi caught IT. So
+    // the ruling is per episode — re-decided at every touch's start,
+    // frozen for that episode's grind. #74 holds all the same: its
+    // drive-through is one continuous overlap, and the re-touch that
+    // follows a pushback begins with the rear-ender's centre still
+    // behind the cab it has not finished passing. Same y convention
+    // the cap has always used — smaller y is ahead.
+    other.aheadAtContactStart = other.position.y < position.y;
 
     final contactPoint = intersectionPoints.isEmpty
         ? (position + other.position) / 2

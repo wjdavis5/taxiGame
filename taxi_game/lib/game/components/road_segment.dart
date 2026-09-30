@@ -56,6 +56,15 @@ class RoadSegment extends PositionComponent {
   /// chunks stay cheap.
   static const double _rowStep = 40.0;
 
+  /// A zebra crossing's bars: three of them, this tall, separated by this
+  /// gap, wherever a crossing paints — the level street's end, and both
+  /// approaches of an endless junction. Class-level because the junction
+  /// renderer also needs the stack's pitch — bar plus gap — to base the
+  /// below-band crossing a whole stack clear of the cross street's
+  /// asphalt (issue #82).
+  static const double _crosswalkBarHeight = 6.0;
+  static const double _crosswalkBarGap = 5.0;
+
   RoadSegment({
     required Vector2 position,
     required this.length,
@@ -174,11 +183,13 @@ class RoadSegment extends PositionComponent {
     final crossingPaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.85)
       ..style = PaintingStyle.fill;
-    const barHeight = 6.0;
-    const barGap = 5.0;
     for (var i = 0; i < 3; i++) {
       canvas.drawRect(
-        Rect.fromLTWH(4, 34 + i * (barHeight + barGap), size.x - 8, barHeight),
+        Rect.fromLTWH(
+            4,
+            34 + i * (_crosswalkBarHeight + _crosswalkBarGap),
+            size.x - 8,
+            _crosswalkBarHeight),
         crossingPaint,
       );
     }
@@ -367,19 +378,41 @@ class RoadSegment extends PositionComponent {
       // built ahead of a pending fold, and mis-drew any band whose edges
       // straddled a fold boundary (first possible at 504,000 px, the LCM
       // of the 9,000 px spacing and the period).
+      //
+      // Horizontally the band spans the whole fixed-resolution view —
+      // world x 0..400, the camera's width either side of the road's
+      // centre line (issue #82). The old `fromLTRB(-centerX, …, centerX,
+      // …)` wrote centre-line coordinates as though they were box-local,
+      // so the asphalt landed at world −100..300: every cross street sat
+      // 100 px left, and the street's right kerb, sidewalk, and edge
+      // painted straight through the junction's right half. World x w is
+      // local w − boxLeft — the same left-edge conversion the rows and
+      // crosswalks already use (issue #33).
+      final boxLeft = centerX - size.x / 2;
       final bandTopLocal = distanceAtTop -
           (centerDistance + RunEnvironment.intersectionHalfBand);
       final bandBottomLocal = distanceAtTop -
           (centerDistance - RunEnvironment.intersectionHalfBand);
       canvas.drawRect(
-        Rect.fromLTRB(-centerX, bandTopLocal, centerX, bandBottomLocal),
+        Rect.fromLTRB(-boxLeft, bandTopLocal, 2 * centerX - boxLeft,
+            bandBottomLocal),
         asphalt,
       );
 
       // Zebra crossings on both approaches, outside the band: a stack of
-      // bars spanning the road's width where they meet it.
+      // bars spanning the road's width where they meet it. The bottom
+      // stack grows UP from its base, so basing it a bare 10 px below the
+      // band let its second and third bars climb back over the junction
+      // asphalt (issue #82): start it a full stack's pitch lower and all
+      // three bars sit below the cross street, mirroring the top
+      // approach's stack above it.
       final road = env.roadAt(centerDistance);
-      _drawCrosswalk(canvas, road, centerX, bandBottomLocal + 10);
+      _drawCrosswalk(
+        canvas,
+        road,
+        centerX,
+        bandBottomLocal + 10 + 2 * (_crosswalkBarHeight + _crosswalkBarGap),
+      );
       _drawCrosswalk(canvas, road, centerX, bandTopLocal - 10);
     }
   }
@@ -392,8 +425,6 @@ class RoadSegment extends PositionComponent {
     final paint = Paint()
       ..color = Colors.white.withValues(alpha: 0.85)
       ..style = PaintingStyle.fill;
-    const barHeight = 6.0;
-    const barGap = 5.0;
     // The component's local origin is its box's top-left corner (anchor
     // top-centre at roadCenterX, 200 px wide) — the same conversion the
     // road rows use (issue #33).
@@ -401,8 +432,10 @@ class RoadSegment extends PositionComponent {
     for (var i = 0; i < 3; i++) {
       canvas.drawRect(
         Rect.fromLTWH(
-            leftLocalX + 4, localY - i * (barHeight + barGap), road.width - 8,
-            barHeight),
+            leftLocalX + 4,
+            localY - i * (_crosswalkBarHeight + _crosswalkBarGap),
+            road.width - 8,
+            _crosswalkBarHeight),
         paint,
       );
     }

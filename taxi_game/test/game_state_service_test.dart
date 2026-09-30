@@ -84,6 +84,43 @@ void main() {
     expect(gameStateService.musicEnabled, isFalse);
   });
 
+  // Issue #83: a reset used to swap in `SaveData.createDefault()`, whose
+  // factory settings turn sound, music, and vibration back on — and the
+  // reset's notifyListeners then handed `true` to the composition root's
+  // audio listener, so the menu music started right after the dialog
+  // closed. Settings are preference, not progress: they ride over to the
+  // fresh save while everything below still wipes.
+  test('reset progress keeps the settings toggles off (issue #83)', () async {
+    gameStateService.addCoins(75);
+    gameStateService.completeLevel(1, 75);
+    gameStateService.toggleSound();
+    gameStateService.toggleMusic();
+    gameStateService.toggleVibration();
+
+    gameStateService.resetProgress();
+
+    // The progress itself is gone...
+    expect(gameStateService.currentLevel, 1);
+    expect(gameStateService.totalCoins, 0);
+    // ...but the toggles the player turned off stay off: the reset must
+    // not restart the menu music it silenced.
+    expect(gameStateService.soundEnabled, isFalse);
+    expect(gameStateService.musicEnabled, isFalse);
+    expect(gameStateService.vibrationEnabled, isFalse);
+
+    // Simulate an app restart: a brand-new service stack reading the same
+    // on-device store. The kept settings must be the ones the reset
+    // persisted, not defaults resurrected by the next launch.
+    final reloadedStorage = StorageService();
+    await reloadedStorage.init();
+    final reloaded = GameStateService(reloadedStorage);
+    await reloaded.loadSaveData();
+
+    expect(reloaded.soundEnabled, isFalse);
+    expect(reloaded.musicEnabled, isFalse);
+    expect(reloaded.vibrationEnabled, isFalse);
+  });
+
   group('endless personal best (issue #15)', () {
     test('a new player has no best score', () {
       expect(gameStateService.endlessBestScore, 0);

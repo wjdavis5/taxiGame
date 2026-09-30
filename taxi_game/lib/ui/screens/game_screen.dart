@@ -72,7 +72,30 @@ class _GameScreenState extends State<GameScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // The run may only end through its own surfaces (issue #81). iOS
+    // edge back-swipes and the system back button both popped this
+    // route raw: a steer that starts at the left bezel quit the shift
+    // mid-flight with no confirmation, forfeiting the at-risk score the
+    // pause menu exists to name. `canPop: false` makes the route's
+    // popDisposition `doNotPop`, which kills the Cupertino edge
+    // recognizer at pointer-down — the swipe becomes an ordinary touch
+    // the game steers with — and turns a system back into a vetoed pop
+    // that lands in [onPopInvokedWithResult] instead of the navigator.
+    // The veto routes to [TaxiGame.pauseGame]: the shift freezes behind
+    // the menu that already states the stake, and quitting becomes the
+    // deliberate act it always should have been. Every explicit exit —
+    // the pause menu's quit, the summaries' buttons — pops
+    // imperatively via `Navigator.pop`, which never consults
+    // popDisposition, so none of them is touched. [pauseGame]'s own
+    // guards keep a veto arriving while the bank primer holds the world
+    // or a summary owns the screen a no-op rather than a stacked menu.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        game.pauseGame();
+      },
+      child: Scaffold(
       // The fixed-resolution viewport letterboxes on any screen taller
       // than its 400x800 frame, and the game's world used to run under
       // the status bar through that top band (issue #45) — pickup rings
@@ -140,6 +163,7 @@ class _GameScreenState extends State<GameScreen> {
             ],
           ),
         ),
+      ),
       ),
     );
   }

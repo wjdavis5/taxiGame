@@ -362,9 +362,9 @@ class RunLengthSimulator {
     // Preset traffic (the issue #67 test seam): on the road before the
     // first tick. No RNG is spent here, so the spawner below draws the
     // same stream a preset-free run would. The ahead flag is derived at
-    // injection the way a real first touch would record it (issue #74):
-    // the cab starts at y = 0, so a preset above the start line is a car
-    // it rides behind and one below is in its rear.
+    // injection the way a real touch would record it (issue #74): the
+    // cab starts at y = 0, so a preset above the start line is a car it
+    // rides behind and one below is in its rear.
     for (final preset in presetTraffic ?? const <PresetTrafficVehicle>[]) {
       vehicles.add(_SimVehicle(
         x: preset.x,
@@ -374,7 +374,7 @@ class RunLengthSimulator {
         type: preset.type,
       )
         ..contacted = preset.contacted
-        ..aheadAtFirstContact = preset.y < 0);
+        ..aheadAtContactStart = preset.y < 0);
     }
 
     bool laneClear(double laneX, double horizon) =>
@@ -661,13 +661,13 @@ class RunLengthSimulator {
       // #58's struck-cab rulings are untouched.
       for (final v in vehicles) {
         if (!v.contacted || v.oncoming) continue;
-        // Ahead at the first touch only (issues #66 and #74), the same
-        // frozen flag the live game records: a same-direction car in
-        // the cab's rear must not pin it — however far the grind has
-        // carried it since the touch — or a slow rear-ender becomes an
-        // anchor no amount of throttle can shake off. Only a car the
-        // cab rides behind may pace it.
-        if (!v.aheadAtFirstContact) continue;
+        // Ahead at the episode's start (issues #66, #74 and #80), the
+        // same per-episode flag the live game records: a
+        // same-direction car in the cab's rear must not pin it —
+        // however far the grind has carried it since the touch — or a
+        // slow rear-ender becomes an anchor no amount of throttle can
+        // shake off. Only a car the cab rides behind may pace it.
+        if (!v.aheadAtContactStart) continue;
         final overlaps = (v.x - x).abs() < playerHalfW + v.halfW &&
             (v.y - y).abs() < playerHalfH + v.halfH;
         if (!overlaps) continue;
@@ -761,16 +761,16 @@ class RunLengthSimulator {
         v.rulingActive = true;
         final firstTouch = !v.contacted;
         v.contacted = true;
-        // Freeze the ahead/behind ruling at the first touch (issue
-        // #74), mirroring PlayerVehicle.onCollisionStart: on the
-        // positions as they stand at this first judgement — before the
-        // scrape response below mutates either body — and under the
-        // same convention (smaller y is ahead). Re-contacts never
-        // revise it, so a rear-ender that slides through a stopped cab
-        // stays a rear-ender.
-        if (firstTouch) {
-          v.aheadAtFirstContact = v.y < y;
-        }
+        // Freeze the ahead/behind ruling at the start of every contact
+        // episode (issues #74 and #80), mirroring
+        // PlayerVehicle.onCollisionStart: on the positions as they
+        // stand at this judgement — before the scrape response below
+        // mutates either body — and under the same convention (smaller
+        // y is ahead). A lifetime freeze let a stale ruling outlive an
+        // order swap (#80); per episode, a rear-ender that slides
+        // through a stopped cab still stays a rear-ender for as long
+        // as that one overlap lasts.
+        v.aheadAtContactStart = v.y < y;
 
         var axisX = x - v.x;
         var axisY = y - v.y;
@@ -967,12 +967,15 @@ class _SimVehicle {
   bool contacted = false;
 
   /// Whether this car's centre was ahead of the cab's (smaller y) at
-  /// their first touch, frozen there and then (issue #74) — mirroring
-  /// `TrafficVehicle.aheadAtFirstContact`. The pace cap paces a car
+  /// the start of their current contact episode, re-decided at every
+  /// touch (issues #74 and #80) — mirroring
+  /// `TrafficVehicle.aheadAtContactStart`. The pace cap paces a car
   /// the cab rides behind, judged where the touch happened; a
   /// rear-ender that slides through a stopped cab never qualifies,
-  /// however far ahead it ends up.
-  bool aheadAtFirstContact = false;
+  /// however far ahead it ends up within that episode. The decision is
+  /// per episode, not per lifetime, so an order swap between two cars
+  /// is judged where the new touch stands.
+  bool aheadAtContactStart = false;
 }
 
 /// What the simulated driver is doing: cruising the lanes, pulling over to

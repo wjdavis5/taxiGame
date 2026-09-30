@@ -22,7 +22,7 @@ platform :ios do
     version = ENV.fetch("DELIVER_APP_VERSION")
     build_number = ENV.fetch("DELIVER_BUILD_NUMBER")
 
-    wait_until_processed(api_key, version, build_number)
+    wait_until_processed(version, build_number)
 
     deliver(
       api_key: api_key,
@@ -55,41 +55,66 @@ platform :ios do
 end
 
 # Apple processes an upload asynchronously and a build cannot be attached to a
-# version until that finishes. Poll rather than guess at a fixed sleep:
-# processing is usually a few minutes but is not bounded by anything we control.
-def wait_until_processed(api_key, version, build_number, timeout_minutes: 45)
+# version — let alone submitted — until that finishes. Poll the target build's
+# own processing state rather than anything about which builds are listed: a
+# fresh upload appears in the Connect API within seconds of altool finishing,
+# still PROCESSING, so a wait keyed on "the build shows up" (the old
+# latest-build-number poll) races the processing and hands deliver a build it
+# cannot yet attach — which is exactly where a version-bump release died
+# (issue #79).
+#
+# The state is read as the raw string, not fastlane's `build.processed?`
+# helper: the helper is merely `processing_state != PROCESSING`, so FAILED and
+# INVALID builds count as "processed" and would sail the wait straight into a
+# submit that can never succeed. Those two states end the wait immediately
+# with the real error named — a build in them will never become submittable,
+# and 45 more minutes of polling would only bury it.
+#
+# No token plumbing: the lane's `app_store_connect_api_key` call has already
+# set `Spaceship::ConnectAPI.token` (that is its `set_spaceship_token: true`
+# default), and `Build.all` rides that global client.
+def wait_until_processed(version, build_number, timeout_minutes: 45)
   deadline = Time.now + (timeout_minutes * 60)
   target = build_number.to_s
 
-  loop do
-    latest = begin
-      latest_testflight_build_number(
-        api_key: api_key,
-        app_identifier: APP_IDENTIFIER,
-        version: version,
-        initial_build_number: 0,
-      ).to_s
-    rescue StandardError => e
-      # A build that has not finished processing may not be queryable yet;
-      # that is expected early on and is not a failure.
-      UI.important("Could not read the latest build yet: #{e.message}")
-      nil
-    end
+  # The build filter speaks the numeric App Store Connect id, not the bundle
+  # identifier — resolve it once, before the polling loop.
+  app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+  UI.user_error!("No App Store Connect app found for #{APP_IDENTIFIER}.") if app.nil?
 
-    if latest == target
+  loop do
+    states = Spaceship::ConnectAPI::Build.all(
+      app_id: app.id,
+      version: version,
+      build_number: target,
+      platform: :ios,
+    ).map(&:processing_state).uniq
+
+    if states == ["VALID"]
       UI.success("Build #{target} for #{version} has finished processing.")
       return
+    end
+    if states.include?("FAILED") || states.include?("INVALID")
+      UI.user_error!(
+        "Build #{target} for #{version} finished processing as " \
+        "#{states.join(', ')} — it cannot be submitted. Check App Store " \
+        "Connect for the processing error."
+      )
     end
 
     if Time.now > deadline
       UI.user_error!(
         "Build #{target} for #{version} was still not processed after " \
-        "#{timeout_minutes} minutes (latest seen: #{latest.inspect}). " \
+        "#{timeout_minutes} minutes (last seen: " \
+        "#{states.empty? ? 'not yet listed' : states.join(', ')}). " \
         "The upload may have been rejected — check App Store Connect."
       )
     end
 
-    UI.message("Waiting for build #{target} to process (latest: #{latest.inspect})...")
+    UI.message(
+      "Waiting for build #{target} to process " \
+      "(state: #{states.empty? ? 'not yet listed' : states.join(', ')})...",
+    )
     sleep(60)
   end
 end

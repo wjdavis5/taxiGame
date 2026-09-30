@@ -694,15 +694,21 @@ void main() {
       final car = follower(Vector2(200, -93), 60);
       game.world.add(car);
 
-      // ~1 s of frames still stopped: the touch lands in the first few
-      // (60 px/s closes the hair between the boxes almost at once),
-      // and over the full second the follower drives on through the
-      // stationary body until its centre sits past the cab's — the
+      // Frames still stopped, until the follower has driven fully
+      // through the stationary body and cleared it ahead — past the
       // exact window where a per-frame centre comparison flips its
-      // answer.
-      for (var i = 0; i < 60; i++) {
+      // answer, and past the touch itself. (Waiting only the report's
+      // ~1 s left the car mid-pass: the moment the cab then floors it
+      // it re-catches the car almost at once, and that new touch is
+      // legitimately ruled ahead — the #80 chase scenario below. The
+      // pin this test polices needs the car clear, so freedom is
+      // measurable before any choice to ride its bumper again.)
+      for (var i = 0; i < 250; i++) {
         await tester.pump(const Duration(milliseconds: 16));
+        if (car.position.y < player.position.y - 120) break;
       }
+      expect(car.position.y < player.position.y - 120, isTrue,
+          reason: 'staging: the rear-ender must be fully past and clear');
 
       // Only now does the driver answer the bump with the throttle.
       player.startAccelerating();
@@ -710,24 +716,215 @@ void main() {
       // About seven seconds of frames, watching the speed the whole
       // way through, frame by frame after the clamp has had its say.
       var maxSpeedReached = 0.0;
+      var taxiEverAhead = false;
       for (var i = 0; i < 400; i++) {
         await tester.pump(const Duration(milliseconds: 16));
         maxSpeedReached = math.max(maxSpeedReached, -player.velocity.y);
+        if (player.position.y <= car.position.y) taxiEverAhead = true;
         if (!game.isGameActive) break;
       }
 
       // The rear-end is the follower's fault, not the taxi's.
       expect(game.isGameActive, isTrue);
       // Pinned, the cab could never exceed the follower's 60; free, it
-      // runs away to its 150 top speed.
+      // runs away toward its 150 top speed — the waited-out touch
+      // holds nothing. (Once the cab deliberately rides the car's
+      // bumper again that new touch paces it, as the #80 chase test
+      // below covers; the cab never passes the car either way.)
       expect(maxSpeedReached, greaterThan(120),
           reason: 'a rear-ender the cab waited out must never pace the '
-              'cab — the ruling is frozen at the first touch, not '
-              're-derived from centres every frame');
+              'cab — the ruling is frozen at the touch, not re-derived '
+              'from centres every frame');
+      expect(taxiEverAhead, isFalse,
+          reason: 'pacing the car it catches is the cap holding, not the '
+              'pin shoving it through');
+    });
+
+    testWidgets(
+        'a car the taxi out-braked after scraping it cannot pin the cab '
+        '(issue #80)',
+        (tester) async {
+      // The stale half of the lifetime freeze: "ahead" was recorded at
+      // the FIRST touch and never revised, so a car the taxi once rode
+      // behind kept its "ahead" forever — and the day the taxi passed
+      // it and braked, the very car now in the cab's rear clamped the
+      // cab to its own slow pace on the overlap alone. The ruling must
+      // be re-decided at the start of every contact episode: a car that
+      // begins its touch behind the cab may never pace it.
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: 7,
+      );
+      await tester.pumpWidget(GameWidget(game: game));
+      // As above (issue #62): wait for the taxi's onLoad, not just the
+      // run going live — the pin scenario needs the player's hitbox
+      // registered before any contact ruling, and the sprite fetch
+      // behind it is real I/O fake-async time cannot run.
+      await tester.runAsync(() async {
+        for (var i = 0;
+            i < 300 && !(game.isGameActive && game.player.isLoaded);
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+      // One timed frame to mount the loaded taxi (see above).
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(game.isGameActive, isTrue);
+      expect(game.player.isMounted, isTrue);
+
+      // Kill the shift's own spawner so the only traffic is the car.
+      game.trafficSpawner.clear();
+      final player = game.player;
+      player.position = Vector2(200, -140);
+      player.velocity = Vector2.zero();
+      player.startAccelerating();
+
+      // Episode 1, the taxi riding behind: a sedan 160 px up the road
+      // driving away at 60 px/s. The taxi tops out at 150, so it closes
+      // at up to 90 px/s — scrape territory — and records the car as
+      // ahead at that touch, then paces its bumper (#60).
+      final car = follower(Vector2(200, -300), 60);
+      game.world.add(car);
+      for (var i = 0; i < 150; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (!game.isGameActive) break;
+      }
+      expect(game.isGameActive, isTrue, reason: 'the scrape never ends '
+          'the run, and every bit of the closing was the taxi\'s own');
+
+      // The overtake: steer a lane left (the one escape the cap leaves,
+      // staged here as a direct position write) and pull past the car
+      // at full speed.
+      player.position = Vector2(120, player.position.y);
+      for (var i = 0; i < 250; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (player.position.y < car.position.y - 120) break;
+      }
+      expect(player.position.y < car.position.y - 120, isTrue,
+          reason: 'staging: the taxi must first get cleanly ahead');
+
+      // ...then back into the car's lane and stop, and let the car
+      // collect the cab's rear: its 60 px/s against a standing body.
+      // The throttle must answer MID-GRIND — the boxes already
+      // overlapping (their combined half-heights are 46.5 px, so a
+      // centre gap under 40 is well inside) — because a cab that
+      // already has way on crosses the car's 60 before the boxes ever
+      // meet and simply never touches it again.
+      player.position = Vector2(200, player.position.y);
+      player.stopAccelerating();
+      player.velocity = Vector2.zero();
+      var touched = false;
+      for (var i = 0; i < 250; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (car.position.y - player.position.y < 40) touched = true;
+        if (touched) break;
+      }
+      expect(touched, isTrue,
+          reason: 'staging: the out-braked car must catch the cab again');
+
+      // Only now does the driver answer with the throttle. With the
+      // stale "ahead" this is the pin: the first frame the cab exceeds
+      // the car's 60 the clamp holds it there, the relative speed dies,
+      // and the frozen overlap never breaks for the rest of the run.
+      // With the ruling re-decided at this episode's start — the car
+      // touched from behind — nothing holds the cab back.
+      player.startAccelerating();
+      var maxSpeedReached = 0.0;
+      for (var i = 0; i < 400; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        maxSpeedReached = math.max(maxSpeedReached, -player.velocity.y);
+        if (!game.isGameActive) break;
+      }
+
+      // The rear-end is the out-braked car's doing, not the taxi's.
+      expect(game.isGameActive, isTrue);
+      // Pinned, the cab could never exceed the car's 60; free, it runs
+      // away to its 150 top speed.
+      expect(maxSpeedReached, greaterThan(120),
+          reason: 'a car that begins its touch behind the cab must never '
+              'pace it — however "ahead" it was at some earlier touch');
       // And it actually pulled clear: the gap opens past the grind
       // instead of freezing on the follower's bumper.
       expect(car.position.y - player.position.y, greaterThan(100),
-          reason: 'the follower must fall behind, not ride the cab');
+          reason: 'the out-braked car must fall behind, not ride the cab');
+    });
+
+    testWidgets(
+        'a past rear-ender the taxi later catches is paced, not driven '
+        'through (issue #80)',
+        (tester) async {
+      // The mirror of the pin: the same lifetime freeze ruled a car
+      // "behind" at ITS first touch and never revised it — so the day
+      // the taxi caught that car again, the pace cap skipped it and the
+      // taxi poured through the "ghost" at full closing speed, exactly
+      // the drive-through issue #60 closed for first touches. The
+      // ruling must be re-decided at the start of every contact
+      // episode: a car the taxi rides behind at THIS touch is paced.
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: 7,
+      );
+      await tester.pumpWidget(GameWidget(game: game));
+      // As above (issue #62): wait for the taxi's onLoad, not just the
+      // run going live — the drive-through scenario needs the player's
+      // hitbox registered before any contact ruling, and the sprite
+      // fetch behind it is real I/O fake-async time cannot run.
+      await tester.runAsync(() async {
+        for (var i = 0;
+            i < 300 && !(game.isGameActive && game.player.isLoaded);
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+      // One timed frame to mount the loaded taxi (see above).
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(game.isGameActive, isTrue);
+      expect(game.player.isMounted, isTrue);
+
+      // Kill the shift's own spawner so the only traffic is the car.
+      game.trafficSpawner.clear();
+      final player = game.player;
+      player.position = Vector2(200, -140);
+      player.velocity = Vector2.zero(); // stopped, hands off the stick
+
+      // Episode 1, the rear-end: a sedan in the taxi's lane, its
+      // centre 47 px behind the taxi's, driving up at 60 px/s. The
+      // closing is all the follower's doing, so the touch scrapes
+      // (#58), and the car drives on through the stopped body (#74).
+      final car = follower(Vector2(200, -93), 60);
+      game.world.add(car);
+      for (var i = 0; i < 200; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (car.position.y < player.position.y - 120) break;
+      }
+      expect(car.position.y < player.position.y - 120, isTrue,
+          reason: 'staging: the rear-ender must first be fully past and '
+              'clear');
+
+      // Now the taxi gives chase: full throttle at the 60 px/s car
+      // ahead, closing at up to 90 px/s — scrape territory again. The
+      // re-touch is a NEW episode judged with the car ahead, so the cap
+      // must hold the cab behind its bumper (#60); the stale "behind"
+      // used to skip the cap and let the cab drive straight through.
+      player.startAccelerating();
+      var taxiEverAhead = false;
+      for (var i = 0; i < 750; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (player.position.y <= car.position.y) taxiEverAhead = true;
+        if (!game.isGameActive) break;
+      }
+
+      // 90 px/s of closing is a scrape, so the run is still live...
+      expect(game.isGameActive, isTrue);
+      // ...and the cab never drew level with the car, let alone passed
+      // it: it paced the sedan instead of driving through the ghost.
+      expect(taxiEverAhead, isFalse,
+          reason: 'a car the taxi is riding behind at THIS touch must be '
+              'paced — however "behind" it was at some earlier touch');
     });
 
     test('the endless start clamps: no driving backwards past distance zero',
