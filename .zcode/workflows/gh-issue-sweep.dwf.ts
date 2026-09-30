@@ -2,16 +2,18 @@
 description: "One tick of the recurring pipeline: find open GitHub issues, plan
   and implement every fix on a single branch, make analyze + the full test suite
   pass, open one PR, wait for CI (including the iOS simulator run), perform a
-  full senior code review with a fix loop plus an independent final approval,
-  then merge, watch the iOS Release pipeline deploy to TestFlight, and close the
-  issues."
+  full senior code review with a fix loop where every fix is pushed, verified
+  on the PR and re-CI'd, plus an independent final approval, then merge exactly
+  the head CI passed, watch the iOS Release pipeline deploy to TestFlight, and
+  close the issues."
 whenToUse: "Run on a schedule (every 30 minutes) or on demand whenever you want all open GitHub issues in wjdavis5/taxiGame triaged, implemented in one PR, code-reviewed at a senior level, merged, and deployed to TestFlight automatically."
 args: {}
 */
 /* gh-issue-sweep — one tick of the recurring pipeline.
    Open GitHub issues → plan → implement on one branch → analyze + full tests →
-   PR → CI (incl. iOS simulator) → senior review + independent approval →
-   merge → TestFlight deploy → close issues.
+   PR → CI (incl. iOS simulator) → senior review + fix loop (each fix pushed,
+   head-verified and re-CI'd — issue #88) + independent approval → merge the
+   CI-green head (--match-head-commit) → TestFlight deploy → close issues.
    Runs from the repo root; the Flutter project is the taxi_game/ subdirectory.
    Flutter must run through cmd /c "cd taxi_game && flutter …" on this host. */
 
@@ -76,8 +78,22 @@ artifact.board("issues", {
 });
 
 const tail = (s: string) => (s.length > 4000 ? "...\n" + s.slice(-4000) : s);
-const flutter = (what: string, timeoutMs: number) =>
-  world.run("cmd", ["/c", "cd taxi_game && flutter " + what], { timeoutMs });
+const flutter = async (what: string, timeoutMs: number) => {
+  // The full suite's output can exceed world.run's stdout cap, which
+  // errored a whole sweep mid-gates: capture to a temp file instead and
+  // hand back only a tail, and only when the command failed.
+  const run = await world.run(
+    "cmd",
+    ["/c", "cd taxi_game && flutter " + what + " > %TEMP%\sweep_flutter.log 2>&1"],
+    { timeoutMs },
+  );
+  if (run.exitCode === 0) return { exitCode: 0, output: "" };
+  const log = await world.run(
+    "cmd",
+    ["/c", "powershell -NoProfile -Command Get-Content -Tail 200 $env:TEMP\sweep_flutter.log"],
+  );
+  return { exitCode: run.exitCode, output: log.stdout };
+};
 // The sweep runs on this Windows host, where world.run has no shell
 // built-in sleep — PowerShell's Start-Sleep is the reliable wait. Shared
 // by the CI-registration and release-run polls so they pace their probes
@@ -89,6 +105,195 @@ const sleepSeconds = (s: number) =>
     ["-NoProfile", "-Command", "Start-Sleep -Seconds " + s],
     { timeoutMs: (s + 30) * 1000 },
   );
+
+// ---- landing changes and re-CI (issue #88) ------------------------------
+// world.run reports failures as exit codes instead of throwing, so a bare
+// git push through it swallows a rejected push (network, auth,
+// non-fast-forward) as if it had succeeded. Both push sites used to
+// do exactly that: the review loop would then re-read a stale PR diff and
+// block forever on a fix that was never uploaded (the PR #84 failure), or
+// — if the reviewer judged the files on disk — the merge shipped the
+// remote head, which never had the fix. Every push now goes through
+// commitAndPush, and every newly pushed head is confirmed on the PR and
+// re-CI'd by awaitCi before anything merges against it.
+
+interface Landed {
+  ok: boolean;
+  /** False when there was nothing to commit — no new head, no CI to await. */
+  pushed: boolean;
+  /** Full local HEAD after the commit; meaningful only when ok. */
+  head: string;
+  /** Why the changes never landed; empty when ok. */
+  error: string;
+}
+
+const commitAndPush = async (message: string): Promise<Landed> => {
+  await world.run("git", ["add", "-A"]);
+  const commit = await world.run("git", ["commit", "-m", message]);
+  if (commit.exitCode !== 0) {
+    // "Nothing to commit" is the one tolerable commit failure — an empty
+    // review round — and only when the tree really is clean. Any other
+    // non-zero commit (hook, lockfile, identity) leaves changes behind
+    // that must stop the sweep, not ride along unpushed.
+    const status = await world.run("git", ["status", "--porcelain"]);
+    if (status.exitCode !== 0 || status.stdout.trim() !== "") {
+      return {
+        ok: false,
+        pushed: false,
+        head: "",
+        error:
+          "git commit exited " + commit.exitCode + " with changes still " +
+          "uncommitted, so the fixes never became a commit:\n" +
+          tail(commit.stderr || commit.stdout),
+      };
+    }
+  }
+  const head = await world.run("git", ["rev-parse", "HEAD"]);
+  if (head.exitCode !== 0) {
+    return {
+      ok: false,
+      pushed: false,
+      head: "",
+      error:
+        "git rev-parse HEAD exited " + head.exitCode + ": " + tail(head.stderr),
+    };
+  }
+  // The push runs even after a nothing-to-commit: it is a no-op then, and
+  // it also repairs a push that failed on an earlier round.
+  const push = await world.run("git", ["push", "-u", "origin", branch]);
+  if (push.exitCode !== 0) {
+    return {
+      ok: false,
+      pushed: false,
+      head: "",
+      error:
+        "git push exited " + push.exitCode + " — the commit exists only on " +
+        "this machine and the PR will not contain it:\n" +
+        tail(push.stderr || push.stdout),
+    };
+  }
+  return {
+    ok: true,
+    pushed: commit.exitCode === 0,
+    head: head.stdout.trim(),
+    error: "",
+  };
+};
+
+interface CiVerdict {
+  ok: boolean;
+  /** Why CI cannot be claimed green; empty when ok. */
+  error: string;
+}
+
+// GitHub can take a minute to register checks after a push, and
+// `gh pr checks` exits 1 printing "no checks reported" on STDERR while
+// none exist — a state to wait out, not a failure. The first live sweep
+// false-failed exactly there and left a good PR stranded. So a probe
+// only counts as a verdict when it is one: exit 0 (all green), 8
+// (pending — gh pr checks' documented extra code), or 1 naming a failed
+// check. Exit 1 with "no checks" means wait; any other exit (2
+// cancelled, 4 auth, …) is gh itself failing and must be reported with
+// its stderr — not swallowed into the watch below, where it surfaces as
+// a bogus "CI red". Probes sit 5 s apart, so registration gets ~2.5
+// minutes instead of 30 instant round trips (issue #61).
+const waitChecksRegistered = async (
+  prNumber: number,
+): Promise<{ registered: boolean; failure: string }> => {
+  let checksRegistered = false;
+  let probeFailure = "";
+  for (
+    let attempt = 0;
+    attempt < 30 && !checksRegistered && probeFailure === "";
+    attempt++
+  ) {
+    if (attempt > 0) await sleepSeconds(5);
+    const probe = await world.run(
+      "gh",
+      ["pr", "checks", String(prNumber)],
+      { timeoutMs: 60000 },
+    );
+    if (probe.exitCode === 0 || probe.exitCode === 8) {
+      checksRegistered = true;
+    } else if (
+      probe.exitCode === 1 &&
+      !(probe.stdout + probe.stderr).includes("no checks")
+    ) {
+      checksRegistered = true; // a red check — CI's verdict, judged by the watch below
+    } else if (probe.exitCode !== 1) {
+      probeFailure =
+        "gh pr checks exited " + probe.exitCode + ": " +
+        tail(probe.stderr || probe.stdout);
+    }
+  }
+  return { registered: checksRegistered, failure: probeFailure };
+};
+
+// Wait until gh books expectedHead as the PR's head, then wait for checks
+// to register and watch them to green — for that exact head. Returns ok
+// only when the watch went green on expectedHead, so callers can pin the
+// merge (gh pr merge --match-head-commit) to a head CI actually passed
+// (issue #88: the old flow CI'd the PR once, then merged whatever head
+// later review-round pushes produced).
+const awaitCi = async (
+  prNumber: number,
+  expectedHead: string,
+): Promise<CiVerdict> => {
+  // Booking check: a push that exited 0 without landing, or a commit
+  // someone else added to the branch, reads as a mismatch here instead
+  // of letting the watch below judge — and the merge later ship — the
+  // wrong head.
+  let booked = false;
+  let bookingError = "";
+  for (let attempt = 0; attempt < 30 && !booked && bookingError === ""; attempt++) {
+    if (attempt > 0) await sleepSeconds(5);
+    const view = await world.run(
+      "gh",
+      ["pr", "view", String(prNumber), "--json", "headRefOid"],
+      { timeoutMs: 60000 },
+    );
+    if (view.exitCode !== 0) {
+      bookingError =
+        "gh pr view exited " + view.exitCode + ": " + tail(view.stderr || view.stdout);
+    } else if (
+      (JSON.parse(view.stdout) as { headRefOid: string }).headRefOid === expectedHead
+    ) {
+      booked = true;
+    }
+  }
+  if (!booked) {
+    return {
+      ok: false,
+      error: bookingError !== ""
+        ? bookingError
+        : "the PR's remote head never became " + expectedHead.slice(0, 10) +
+          " after the push — the commit did not land on the PR",
+    };
+  }
+  const probe = await waitChecksRegistered(prNumber);
+  if (probe.failure !== "" || !probe.registered) {
+    return {
+      ok: false,
+      error: probe.failure !== ""
+        ? probe.failure
+        : "checks never registered on the PR after ~2.5 minutes of paced polling",
+    };
+  }
+  const checks = await world.run(
+    "gh",
+    ["pr", "checks", String(prNumber), "--watch", "--interval", "30"],
+    { timeoutMs: 2700000 },
+  );
+  if (checks.exitCode !== 0) {
+    return {
+      ok: false,
+      error:
+        "gh pr checks --watch exited " + checks.exitCode + " on head " +
+        expectedHead.slice(0, 10) + ":\n" + tail(checks.stdout + checks.stderr),
+    };
+  }
+  return { ok: true, error: "" };
+};
 
 const CODER_PERSONA =
   "You are a senior Flutter/Dart engineer implementing fixes in this repository " +
@@ -310,7 +515,7 @@ for (let round = 1; round <= 3; round++) {
   if (analyze.exitCode !== 0) {
     gatesNote = "flutter analyze round " + round;
     await coder.ask(
-      "flutter analyze failed:\n" + tail(analyze.stdout + analyze.stderr) + "\nFix the findings.",
+      "flutter analyze failed:\n" + tail(analyze.output) + "\nFix the findings.",
     );
     continue;
   }
@@ -321,7 +526,7 @@ for (let round = 1; round <= 3; round++) {
   }
   gatesNote = "flutter test round " + round;
   await coder.ask(
-    "flutter test failed:\n" + tail(tests.stdout + tests.stderr) +
+    "flutter test failed:\n" + tail(tests.output) +
     "\nFix the causes. Never delete or weaken a test to make it pass — if a test is " +
     "genuinely wrong, fix it and say why in your report.",
   );
@@ -348,9 +553,23 @@ const prBody = [
   "",
   "Gates: flutter analyze + full flutter test suite run by the workflow before this PR was opened.",
 ].join("\n");
-await world.run("git", ["add", "-A"]);
-await world.run("git", ["commit", "-m", prTitle]);
-await world.run("git", ["push", "-u", "origin", branch]);
+const landed = await commitAndPush(prTitle);
+if (!landed.ok || !landed.pushed) {
+  for (const p of toImplement) {
+    report({ issue: p.number, title: p.title, status: "failed", note: "landing the sweep branch failed" }, "issues");
+  }
+  return {
+    conclusion:
+      "The sweep implemented the fixes on " + branch + " but could not land them on the remote — " +
+      (landed.ok
+        ? "no commit was produced even though changes were detected earlier"
+        : landed.error) +
+      ". The fixes exist only on this machine; no PR was opened.",
+    findings: [],
+    verified: gatesOk ? ["flutter analyze", "flutter test"] : ["gates did not pass: " + gatesNote],
+    notCovered: ["CI, review, merge and deploy — the branch never reached the remote"],
+  } as WorkflowReport;
+}
 const pr = await world.run("gh", [
   "pr", "create", "--base", "main", "--head", branch,
   "--title", prTitle, "--body", prBody,
@@ -384,77 +603,28 @@ if (!gatesOk) {
   } as WorkflowReport;
 }
 log("PR opened: " + prUrl + " — waiting for CI");
-// GitHub can take a minute to register checks after the push, and
-// `gh pr checks` exits 1 printing "no checks reported" on STDERR while
-// none exist — a state to wait out, not a failure. The first live sweep
-// false-failed exactly there and left a good PR stranded. So a probe
-// only counts as a verdict when it is one: exit 0 (all green), 8
-// (pending — gh pr checks' documented extra code), or 1 naming a failed
-// check. Exit 1 with "no checks" means wait; any other exit (2
-// cancelled, 4 auth, …) is gh itself failing and must be reported with
-// its stderr — not swallowed into the watch below, where it surfaces as
-// a bogus "CI red". Probes sit 5 s apart, so registration gets ~2.5
-// minutes instead of 30 instant round trips (issue #61).
-let checksRegistered = false;
-let probeFailure = "";
-for (
-  let attempt = 0;
-  attempt < 30 && !checksRegistered && probeFailure === "";
-  attempt++
-) {
-  if (attempt > 0) await sleepSeconds(5);
-  const probe = await world.run(
-    "gh",
-    ["pr", "checks", String(prNumber)],
-    { timeoutMs: 60000 },
-  );
-  if (probe.exitCode === 0 || probe.exitCode === 8) {
-    checksRegistered = true;
-  } else if (
-    probe.exitCode === 1 &&
-    !(probe.stdout + probe.stderr).includes("no checks")
-  ) {
-    checksRegistered = true; // a red check — CI's verdict, judged by the watch below
-  } else if (probe.exitCode !== 1) {
-    probeFailure =
-      "gh pr checks exited " + probe.exitCode + ": " +
-      tail(probe.stderr || probe.stdout);
-  }
-}
-if (probeFailure !== "" || !checksRegistered) {
+const firstCi = await awaitCi(prNumber, landed.head);
+if (!firstCi.ok) {
   for (const p of toImplement) {
-    report(
-      { issue: p.number, title: p.title, status: "failed", note: (probeFailure !== "" ? "gh pr checks probe failed on " : "CI never registered on ") + prUrl },
-      "issues",
-    );
+    report({ issue: p.number, title: p.title, status: "failed", note: "CI did not pass on " + prUrl }, "issues");
   }
   return {
     conclusion:
-      probeFailure !== ""
-        ? "The CI probe itself failed on PR " + prUrl + " — " + probeFailure + ". The PR is left open for a human; nothing was merged."
-        : "Checks never registered on PR " + prUrl + " after ~2.5 minutes of paced polling — the PR is left open for a human; nothing was merged.",
+      "CI did not pass on PR " + prUrl + " — " + firstCi.error +
+      ". The PR is left open for a human; nothing was merged.",
     findings: [],
-    verified: ["gh pr checks polled for 30 paced attempts (registration wait)"],
-    notCovered: ["review, merge and deploy — CI never started"],
+    verified: [
+      "flutter analyze + full flutter test suite (green locally before the push)",
+      "awaitCi on head " + landed.head.slice(0, 10) +
+        ": remote-head booking, check registration, gh pr checks --watch — never reached green",
+    ],
+    notCovered: ["review, merge and deploy — blocked by CI"],
   } as WorkflowReport;
 }
-const checks = await world.run(
-  "gh",
-  ["pr", "checks", String(prNumber), "--watch", "--interval", "30"],
-  { timeoutMs: 2700000 },
-);
-if (checks.exitCode !== 0) {
-  for (const p of toImplement) {
-    report({ issue: p.number, title: p.title, status: "failed", note: "CI red on " + prUrl }, "issues");
-  }
-  return {
-    conclusion:
-      "CI failed on PR " + prUrl + " — the PR is left open for a human; nothing was merged.",
-    findings: [],
-    verified: ["gh pr checks --watch (CI on the PR, including the iOS simulator run)"],
-    notCovered: ["review, merge and deploy — blocked by red CI"],
-  } as WorkflowReport;
-}
+// The head that every later claim — re-CI, review, the merge pin, the
+// report — names as CI-green. Advanced by each review-round push that
+// re-CI'd green (issue #88).
+let verifiedHead = landed.head;
 
 // ---------------------------------------------------------------- phase 6
 phase("Senior review of the whole diff, fix what it blocks");
@@ -479,23 +649,64 @@ for (let round = 1; round <= 2 && !verdict.approved; round++) {
   );
   const reAnalyze = await flutter("analyze", 300000);
   if (reAnalyze.exitCode !== 0) {
-    await coder.ask("After the review fixes, flutter analyze regressed:\n" + tail(reAnalyze.stdout) + "\nRepair it.");
+    await coder.ask("After the review fixes, flutter analyze regressed:\n" + tail(reAnalyze.output) + "\nRepair it.");
   }
   const reTests = await flutter("test", 900000);
   if (reTests.exitCode !== 0) {
-    await coder.ask("After the review fixes, flutter test regressed:\n" + tail(reTests.stdout) + "\nRepair it.");
+    await coder.ask("After the review fixes, flutter test regressed:\n" + tail(reTests.output) + "\nRepair it.");
   }
   // Land the fixes on the PR before re-review (the PR #84 lesson):
   // without this push the reviewer reads a stale PR diff and blocks again
   // on a fix that already exists in the working tree — three blocked
-  // rounds over an uncommitted one-liner. An empty round (nothing to
-  // commit) fails the commit harmlessly and the push is a no-op.
-  await world.run("git", ["add", "-A"]);
-  await world.run(
-    "git",
-    ["commit", "-m", "fix: address senior-review round " + round + " (issue sweep)"],
+  // rounds over an uncommitted one-liner. Since issue #88 the push is
+  // checked and the new head is re-CI'd before anything merges: a
+  // rejected push stops the sweep honestly instead of leaving the re-
+  // review to read a diff that lacks the fix, and CI runs on the exact
+  // head the reviewer judges and the merge later pins. An empty round
+  // (nothing to commit) pushes no new head, so verifiedHead's green CI
+  // still covers the head under re-review.
+  const landedFix = await commitAndPush(
+    "fix: address senior-review round " + round + " (issue sweep)",
   );
-  await world.run("git", ["push", "origin", branch]);
+  if (!landedFix.ok) {
+    for (const p of toImplement) {
+      report({ issue: p.number, title: p.title, status: "failed", note: "pushing the review fixes failed on " + prUrl }, "issues");
+    }
+    return {
+      conclusion:
+        "The sweep stopped before merging: the review-round fixes could not be pushed to PR " + prUrl +
+        " — " + landedFix.error + " The fixes exist only on this machine; the PR is left open on head " +
+        verifiedHead.slice(0, 10) + " (the CI-green head, which does not include these fixes) for a human.",
+      findings: [...verdict.blocking],
+      verified: [
+        "flutter analyze + full flutter test suite (green locally after the review fixes)",
+        "gh pr checks --watch — green CI on head " + verifiedHead.slice(0, 10) +
+          ", which predates the unpushed fixes",
+      ],
+      notCovered: ["re-review, merge and deploy — the fixes never reached the PR"],
+    } as WorkflowReport;
+  }
+  if (landedFix.pushed) {
+    const fixCi = await awaitCi(prNumber, landedFix.head);
+    if (!fixCi.ok) {
+      for (const p of toImplement) {
+        report({ issue: p.number, title: p.title, status: "failed", note: "CI did not pass on the review-fix head of " + prUrl }, "issues");
+      }
+      return {
+        conclusion:
+          "The sweep stopped before merging: CI on the review-fix head " + landedFix.head.slice(0, 10) +
+          " of PR " + prUrl + " did not pass — " + fixCi.error +
+          " The PR is left open on that head for a human; nothing was merged.",
+        findings: [...verdict.blocking],
+        verified: [
+          "flutter analyze + full flutter test suite (green locally — CI caught what they could not)",
+          "gh pr checks --watch on the review-fix head " + landedFix.head.slice(0, 10) + " — not green",
+        ],
+        notCovered: ["re-review of the fix head, merge and deploy — blocked by CI"],
+      } as WorkflowReport;
+    }
+    verifiedHead = landedFix.head;
+  }
   verdict = await reviewAsk(reviewer, false);
 }
 const finalGates = await flutter("analyze", 300000);
@@ -508,9 +719,7 @@ if (!verdict.approved || !gatesGreen || !fresh.approved) {
     ? "the senior reviewer did not approve: " + verdict.summary
     : !gatesGreen
       ? "gates were not green after the review fixes: " +
-        tail((finalGates.exitCode !== 0
-                ? finalGates.stdout + finalGates.stderr
-                : finalTests.stdout + finalTests.stderr))
+        tail(finalGates.exitCode !== 0 ? finalGates.output : finalTests.output)
       : "the independent reviewer did not approve: " + fresh.summary;
   for (const p of toImplement) {
     report({ issue: p.number, title: p.title, status: "failed", note: "review blocked on " + prUrl }, "issues");
@@ -531,17 +740,25 @@ log("Review approved: " + fresh.summary);
 
 // ---------------------------------------------------------------- phase 7
 phase("Merge, deploy to TestFlight, and close the issues");
+// The merge is pinned to the exact head CI and both reviews passed
+// (issue #88): awaitCi confirmed gh books this sha as the PR head and
+// watched it green, and nothing commits locally after that, so a
+// mismatch means the branch moved some other way — and gh refuses the
+// merge rather than shipping an untested head.
 const merge = await world.run("gh", [
   "pr", "merge", String(prNumber), "--squash", "--delete-branch", "--subject", prTitle,
+  "--match-head-commit", verifiedHead,
 ]);
 if (merge.exitCode !== 0) {
   return {
     conclusion:
-      "Review approved but gh pr merge failed — PR " + prUrl + " is open with green CI and approvals; a human should merge it.\n" + tail(merge.stderr),
+      "Review approved but gh pr merge failed — PR " + prUrl + " is open with green CI and both approvals on head " +
+      verifiedHead.slice(0, 10) + "; the merge was pinned to that head (--match-head-commit), so if the branch has " +
+      "moved since, the new head has had neither CI nor review. A human should merge it.\n" + tail(merge.stderr),
     findings: [],
     verified: [
       "flutter analyze + full flutter test suite (green)",
-      "gh pr checks --watch (green CI)",
+      "gh pr checks --watch — green CI on head " + verifiedHead.slice(0, 10),
       "senior review approved",
       "independent final review approved",
     ],
@@ -685,7 +902,8 @@ return {
   verified: [
     "flutter analyze — clean",
     "flutter test — full suite green",
-    "gh pr checks --watch — green CI on the PR (Android + unsigned iOS + the iOS simulator run)",
+    "gh pr checks --watch — green CI on head " + verifiedHead.slice(0, 10) +
+      " (analyze, the full test suite, and the unsigned iOS build) — the head the merge was pinned to (--match-head-commit, issue #88)",
     "senior review approved: " + verdict.summary,
     "independent final review approved: " + fresh.summary,
     deployed

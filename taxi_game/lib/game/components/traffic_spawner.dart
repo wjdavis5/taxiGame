@@ -5,6 +5,7 @@ import '../taxi_game.dart';
 import 'traffic_vehicle.dart';
 import '../../models/traffic_pattern.dart';
 import '../systems/difficulty_curve.dart';
+import '../systems/run_environment.dart';
 
 /// Manages spawning of traffic vehicles based on patterns
 class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
@@ -62,10 +63,11 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   /// spawn holds half of this inside the street so the vehicle
   /// materialises entirely on it, and a same-direction path terminates
   /// this far below the end so the vehicle despawns on arrival before
-  /// any part of it crosses the barrier.
-  static double get longestTrafficBodyLength => TrafficVehicleType.values
-      .map((type) => type.size.y)
-      .reduce(max);
+  /// any part of it crosses the barrier. Derived from the same body
+  /// table [RunEnvironment.longestTrafficHalfLength] halves for the
+  /// endless-road containment span (issue #87).
+  static double get longestTrafficBodyLength =>
+      RunEnvironment.longestTrafficHalfLength * 2;
 
   /// Factory constructors for common patterns
   factory TrafficSpawner.light() => TrafficSpawner(pattern: TrafficPattern.light);
@@ -114,7 +116,6 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   void _spawnVehicleInLane(TrafficLaneConfig laneConfig) {
     // Calculate spawn position (ahead of player/camera)
     final spawnY = game.camera.viewfinder.position.y - spawnDistanceAhead;
-    final spawnX = laneConfig.laneX;
 
     // The level course ends (issue #31): nothing materialises past its
     // end, and whatever spawns near it stays fully on the street — half
@@ -135,10 +136,45 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     // clearance reads true distance (issue #30): world y folds back
     // toward the origin as the run deepens.
     final env = game.environment;
+    var spawnX = laneConfig.laneX;
     if (env != null) {
       final spawnDistance = max(0.0, game.worldShift - spawnY);
+
+      // The lane x belongs to the road at the spawn distance, not the
+      // one under the taxi (issue #87): the profile was laid out over
+      // roadAt(runDistance) — the difficulty pressure stays there — but
+      // the car materialises 500 px ahead, where an avenue may already
+      // have narrowed. Lane px do not survive a width change; lane
+      // fractions do, so this recovers the fraction from the taxi's
+      // road and re-lays it on the road that actually exists at the
+      // spawn. Level mode has no living road — fixed lanes on a fixed
+      // street — and keeps its lane x untouched.
+      spawnX = env.roadAt(spawnDistance).xAtFraction(
+          env.roadAt(_distanceOf!()).fractionOf(laneConfig.laneX));
+
       if (env.isIntersectionAt(spawnDistance)) return;
       if (env.isLaneBlockedAt(spawnDistance, spawnX)) return;
+
+      // A straight path never re-reads the road as it drives, so the
+      // body has to hold this lane for the whole span its waypoints
+      // cover — or the next narrowing would put it on the sidewalk
+      // mid-drive, the exact defect the remap above fixes at the spawn
+      // point (issue #87). Checked against the widest body any spawn
+      // can roll (the bus): a lane fits everyone or spawns no one.
+      // Like the clearances above, this runs after the roll, consuming
+      // no RNG, so the seed's stream is untouched.
+      final (spanFrom, spanTo) = RunEnvironment.trafficPathSpan(
+        spawnDistance,
+        oncoming: laneConfig.oncoming,
+      );
+      if (!env.laneHoldsOnRoad(
+        spanFrom,
+        spanTo,
+        spawnX,
+        RunEnvironment.widestTrafficHalfWidth,
+      )) {
+        return;
+      }
     }
 
     // Generate random speed within range. Same-direction traffic drives
