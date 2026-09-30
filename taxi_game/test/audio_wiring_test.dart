@@ -86,6 +86,20 @@ void main() {
     expect(audio.attemptedPlays['scrape'], 1);
   });
 
+  test('a grind plays the scrape sound once per cooldown, not per frame',
+      () async {
+    final game = await mountGame(endlessGame());
+
+    // A grind reports a scrape on every contact frame (issue #49).
+    for (var i = 0; i < 30; i++) {
+      game.onScrape(coneScrape());
+    }
+
+    expect(audio.attemptedPlays['scrape'], 1,
+        reason: 'one sound per frame flooded the audio platform channel; '
+            'the sound rides the scrape marker cooldown (0.4 s)');
+  });
+
   test('a muted service routes nothing, loudly or quietly', () async {
     audio.setSoundEnabled(false);
     final game = await mountGame(endlessGame());

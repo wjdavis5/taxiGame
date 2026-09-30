@@ -344,7 +344,8 @@ class TaxiGame extends FlameGame
   /// (issue #6 contact legibility). Cleared whenever a level loads.
   CrashReport? lastImpact;
 
-  /// Rate-limits scrape feedback so a jittering grind cannot spam markers.
+  /// Rate-limits scrape feedback so a jittering grind cannot spam markers,
+  /// or the scrape sound (issue #49).
   double _scrapeMarkerCooldown = 0;
 
   // --- Impact juice (issue #7) -------------------------------------------
@@ -1324,11 +1325,12 @@ class TaxiGame extends FlameGame
       ImpactFx.scrapeShakeMagnitude,
       duration: ImpactFx.scrapeShakeDuration,
     );
-    // Sheet-metal scrape sound under the jolt (issue #4).
-    audio?.playScrapeSound();
-
     if (_scrapeMarkerCooldown <= 0) {
       _scrapeMarkerCooldown = 0.4;
+      // Sheet-metal scrape sound under the jolt (issue #4). On the marker's
+      // cooldown (issue #49): a grind reports a scrape every frame, and one
+      // sound per frame would flood the audio platform channel.
+      audio?.playScrapeSound();
       world.add(ScrapeMarker(
         position: report.contactPoint.clone(),
         vehicleKind: report.vehicleKind,

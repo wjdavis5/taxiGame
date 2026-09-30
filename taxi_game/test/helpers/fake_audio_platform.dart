@@ -58,50 +58,103 @@ class FakeAudioPlatform {
 /// reports the source as prepared (the real platform emits that event once
 /// the native player has buffered; without it `AudioPlayer.play` never
 /// returns). Player-level `setAudioContext` calls are recorded (issue #39).
+///
+/// Issue #49 needs more than "it worked": a real device answers slowly, so
+/// [latency] delays the calls that are slow on iOS (`create`, loading a
+/// source, `resume`), [failing] makes named calls throw, and every call is
+/// recorded so tests can count players created and disposed, volumes sent,
+/// and platform traffic.
 class FakeAudioplayersPlatform extends AudioplayersPlatformInterface {
   final Map<String, StreamController<AudioEvent>> _events = {};
 
   /// Every context handed to [setAudioContext], in order.
   final List<AudioContext> audioContexts = [];
 
+  /// Every platform call, by method name, in order.
+  final List<String> calls = [];
+
+  /// Player ids, in the order [create] and [dispose] saw them.
+  final List<String> created = [];
+  final List<String> disposed = [];
+
+  /// Every volume handed to [setVolume], in order.
+  final List<double> volumes = [];
+
+  /// How long `create`, `setSourceUrl` and `resume` take to answer. Zero
+  /// answers at once, as the Simulator effectively does.
+  Duration latency = Duration.zero;
+
+  /// Method names that throw a [PlatformException] instead of answering.
+  final Set<String> failing = {};
+
+  int count(String method) => calls.where((c) => c == method).length;
+
   StreamController<AudioEvent> _controllerFor(String playerId) =>
       _events.putIfAbsent(playerId, StreamController<AudioEvent>.broadcast);
 
+  Future<void> _call(String method, {bool slow = false}) async {
+    calls.add(method);
+    if (slow && latency > Duration.zero) {
+      await Future<void>.delayed(latency);
+    }
+    if (failing.contains(method)) {
+      throw PlatformException(code: method, message: 'simulated failure');
+    }
+  }
+
+  /// Ends [playerId]'s current playback, as the native player does when a
+  /// one-shot reaches its end.
+  void complete(String playerId) {
+    _controllerFor(playerId)
+        .add(const AudioEvent(eventType: AudioEventType.complete));
+  }
+
   @override
-  Future<void> create(String playerId) async {}
+  Future<void> create(String playerId) async {
+    await _call('create', slow: true);
+    created.add(playerId);
+  }
 
   @override
   Future<void> dispose(String playerId) async {
+    await _call('dispose');
+    disposed.add(playerId);
     final controller = _events.remove(playerId);
     await controller?.close();
   }
 
   @override
-  Future<void> pause(String playerId) async {}
+  Future<void> pause(String playerId) => _call('pause');
 
   @override
-  Future<void> stop(String playerId) async {}
+  Future<void> stop(String playerId) => _call('stop');
 
   @override
-  Future<void> resume(String playerId) async {}
+  Future<void> resume(String playerId) => _call('resume', slow: true);
 
   @override
-  Future<void> release(String playerId) async {}
+  Future<void> release(String playerId) => _call('release');
 
   @override
-  Future<void> seek(String playerId, Duration position) async {}
+  Future<void> seek(String playerId, Duration position) => _call('seek');
 
   @override
-  Future<void> setBalance(String playerId, double balance) async {}
+  Future<void> setBalance(String playerId, double balance) =>
+      _call('setBalance');
 
   @override
-  Future<void> setVolume(String playerId, double volume) async {}
+  Future<void> setVolume(String playerId, double volume) async {
+    await _call('setVolume');
+    volumes.add(volume);
+  }
 
   @override
-  Future<void> setReleaseMode(String playerId, ReleaseMode releaseMode) async {}
+  Future<void> setReleaseMode(String playerId, ReleaseMode releaseMode) =>
+      _call('setReleaseMode');
 
   @override
-  Future<void> setPlaybackRate(String playerId, double playbackRate) async {}
+  Future<void> setPlaybackRate(String playerId, double playbackRate) =>
+      _call('setPlaybackRate');
 
   @override
   Future<void> setSourceUrl(
@@ -110,6 +163,7 @@ class FakeAudioplayersPlatform extends AudioplayersPlatformInterface {
     bool? isLocal,
     String? mimeType,
   }) async {
+    await _call('setSourceUrl', slow: true);
     _controllerFor(playerId).add(
       const AudioEvent(eventType: AudioEventType.prepared, isPrepared: true),
     );
@@ -120,22 +174,30 @@ class FakeAudioplayersPlatform extends AudioplayersPlatformInterface {
     String playerId,
     Uint8List bytes, {
     String? mimeType,
-  }) async {}
+  }) =>
+      _call('setSourceBytes');
 
   @override
   Future<void> setAudioContext(String playerId, AudioContext audioContext) {
     audioContexts.add(audioContext);
-    return Future.value();
+    return _call('setAudioContext');
   }
 
   @override
-  Future<void> setPlayerMode(String playerId, PlayerMode playerMode) async {}
+  Future<void> setPlayerMode(String playerId, PlayerMode playerMode) =>
+      _call('setPlayerMode');
 
   @override
-  Future<int?> getDuration(String playerId) async => null;
+  Future<int?> getDuration(String playerId) async {
+    await _call('getDuration');
+    return null;
+  }
 
   @override
-  Future<int?> getCurrentPosition(String playerId) async => null;
+  Future<int?> getCurrentPosition(String playerId) async {
+    await _call('getCurrentPosition');
+    return null;
+  }
 
   @override
   Future<void> emitLog(String playerId, String message) async {}
@@ -161,11 +223,16 @@ class FakeGlobalAudioplayersPlatform
   /// OS refuses to configure.
   bool failSetGlobalAudioContext = false;
 
+  /// While set, [setGlobalAudioContext] waits for it: a session that is
+  /// slow to configure (issue #49: nothing may play before it lands).
+  Completer<void>? hold;
+
   @override
   Future<void> init() async {}
 
   @override
   Future<void> setGlobalAudioContext(AudioContext ctx) async {
+    await hold?.future;
     if (failSetGlobalAudioContext) {
       throw PlatformException(
         code: 'audio_context',

@@ -78,16 +78,35 @@ class AudioService {
     iOS: AudioContextIOS(category: AVAudioSessionCategory.ambient),
   );
 
-  /// The context to hand every platform call, or null off iOS — which makes
-  /// flame_audio apply its own default, preserving non-iOS behavior.
-  ///
-  /// This must ride *every* play call, not just startup: flame_audio
-  /// re-applies its own context (iOS `.playback` + `.mixWithOthers`) on each
-  /// play when none is given, and on iOS even a player-level context sets
-  /// the *global* session — one unguarded play would flip the session back
-  /// to ignoring the Ring/Silent switch.
+  /// The session context [initialize] claims, or null off iOS — which makes
+  /// flame_audio's BGM apply its own default, preserving non-iOS behavior.
   AudioContext? get _platformContext =>
       defaultTargetPlatform == TargetPlatform.iOS ? _ambientContext : null;
+
+  /// flame_audio's own per-player default: mix with others, never take
+  /// audio focus.
+  static final AudioContext _mixWithOthersContext = AudioContextConfig(
+    focus: AudioContextConfigFocus.mixWithOthers,
+  ).build();
+
+  /// The context each new player gets, once, when it is created — off iOS
+  /// only.
+  ///
+  /// On iOS a player-level context *is* the global session:
+  /// audioplayers_darwin answers it with `setCategory` + `setActive` on the
+  /// main thread. [initialize] already claimed that session as ambient, so
+  /// re-applying it on every play (as this service used to) only burned
+  /// main-thread time (issue #49). Off iOS it is the mix-with-others default
+  /// flame_audio applied to every player it made, so Android keeps doing
+  /// exactly what it did.
+  AudioContext? get _playerContext =>
+      defaultTargetPlatform == TargetPlatform.iOS ? null : _mixWithOthersContext;
+
+  /// Completes once [initialize] has claimed the iOS session. New players
+  /// wait for it, so nothing ever plays under the plugin's launch-time
+  /// `.playback` default — the guarantee issue #39 used to buy by
+  /// re-applying the context on every play.
+  Future<void>? _sessionReady;
 
   bool _soundEnabled = true;
   bool _musicEnabled = true;
@@ -99,14 +118,53 @@ class AudioService {
   /// Engine loop state. The running *want* is re-asserted every frame by the
   /// game, so pause, crash stalls, and lifecycle changes only ever flip the
   /// want off — the next live frame brings the engine back.
+  ///
+  /// Issue #49: the loop has exactly **one** native player for the life of
+  /// the service. It is created once, then only paused and resumed. On a
+  /// device, creating a player takes longer than a frame. The old code
+  /// started a fresh player on every frame of that wait and threw each one
+  /// away, about 120 AVPlayers a second, until iOS ran out of threads and
+  /// the watchdog killed the app.
   AudioPlayer? _enginePlayer;
   bool _engineWanted = false;
   double _engineIntensity = 0;
   bool _suspended = false;
 
-  /// Guards the async engine start against rapid toggles: a superseded
-  /// start disposes its player instead of adopting it.
-  int _engineGeneration = 0;
+  /// A start is in flight: no second one may begin until it lands.
+  bool _engineStarting = false;
+
+  /// What the adopted player was last told: playing (true) or paused. The
+  /// per-frame re-assertion compares against this and, in the steady state,
+  /// makes no platform call at all.
+  bool _engineAudible = false;
+
+  /// The engine volume last sent, in [_engineVolumeStep] units. Frame-rate
+  /// intensity updates only reach the platform when this changes.
+  int _engineSentStep = -1;
+
+  /// Engine volume resolution. 0.02 is inaudible as a step, and it caps a
+  /// full idle-to-redline sweep at 34 `setVolume` calls.
+  static const double _engineVolumeStep = 0.02;
+
+  /// After a failed start, no retry before this time. Consecutive failures
+  /// double the wait (2 s up to 64 s), so a platform that keeps failing
+  /// costs one attempt now and then, not one attempt per frame.
+  DateTime? _engineRetryAfter;
+  int _engineStartFailures = 0;
+
+  /// Bumped by [dispose]: a player that finishes preparing after that is
+  /// disposed rather than adopted.
+  int _epoch = 0;
+
+  /// One-shot voices, per sound name (issue #49). Each sound owns at most
+  /// [_voicesPerSound] players, created on first use and replayed from then
+  /// on. The old path made a new player for every play and never disposed
+  /// it, one leaked AVPlayer per pickup, coin, click, and scrape.
+  final Map<String, _Voices> _voices = <String, _Voices>{};
+
+  /// Two voices let a sound overlap its own tail (coin after coin) without
+  /// the pool ever growing past a fixed, small native footprint.
+  static const int _voicesPerSound = 2;
 
   /// The sounds playback was attempted for, since construction (issue #4).
   /// Gated calls never register — tests assert against this to check the
@@ -119,12 +177,18 @@ class AudioService {
   /// sound cache. Safe to call twice; safe when no plugin exists (tests) —
   /// everything below swallows its failures.
   Future<void> initialize() async {
-    await _applyIosAudioContext();
+    final sessionReady = _sessionReady = _applyIosAudioContext();
+    await sessionReady;
+    // The music never reads its position, so it must not poll for it: the
+    // default updater asks the platform every frame while playing (#49).
+    FlameAudio.bgm.audioPlayer.positionUpdater = null;
     try {
       await FlameAudio.bgm.initialize(audioContext: _platformContext);
     } catch (_) {}
     try {
-      await FlameAudio.audioCache.loadAll(soundFiles.values.toList());
+      // The engine loop is warmed with the rest (issue #49): an unwarmed
+      // first start also has to copy the asset into the cache.
+      await FlameAudio.audioCache.loadAll([...soundFiles.values, engineLoop]);
     } catch (_) {}
   }
 
@@ -145,28 +209,116 @@ class AudioService {
   @visibleForTesting
   bool get isMusicWanted => _musicWanted && _musicEnabled && !_suspended;
 
-  /// Whether the engine loop player currently exists (test observability —
-  /// there is nothing audible to assert against under flutter test).
+  /// Whether the engine loop is running: its player exists and is not paused
+  /// (test observability — there is nothing audible to assert against under
+  /// flutter test).
   @visibleForTesting
-  bool get isEngineLoopActive => _enginePlayer != null;
+  bool get isEngineLoopActive => _enginePlayer != null && _engineAudible;
+
+  // --- players --------------------------------------------------------------
+
+  /// Creates one native player with [file] loaded and ready to resume, or
+  /// returns null if any step fails. A failed player is disposed here, so
+  /// a half-made player can never leak (issue #49).
+  Future<AudioPlayer?> _preparePlayer(
+    String file, {
+    required ReleaseMode releaseMode,
+    required double volume,
+    void Function(Object error)? onError,
+  }) async {
+    await _sessionReady;
+    final player = AudioPlayer()
+      ..audioCache = FlameAudio.audioCache
+      // Nothing here reads playback position. The default updater would
+      // ask the platform for it on every frame the player is playing.
+      ..positionUpdater = null;
+    try {
+      final context = _playerContext;
+      if (context != null) await player.setAudioContext(context);
+      await player.setReleaseMode(releaseMode);
+      await player.setVolume(volume);
+      await player.setSource(AssetSource(file));
+      return player;
+    } catch (error) {
+      onError?.call(error);
+      unawaited(_disposeQuietly(player));
+      return null;
+    }
+  }
+
+  static Future<void> _disposeQuietly(AudioPlayer player) async {
+    try {
+      await player.dispose();
+    } catch (_) {}
+  }
+
+  static Future<void> _quietly(Future<void> Function() call) async {
+    try {
+      await call();
+    } catch (_) {}
+  }
 
   // --- one-shot sounds ------------------------------------------------------
 
-  /// Plays the one-shot named [soundName] (see [_soundFiles]). Unknown names
+  /// Plays the one-shot named [soundName] (see [soundFiles]). Unknown names
   /// are ignored rather than guessed at. Fire and forget.
+  ///
+  /// Plays through the sound's voice pool: an idle voice is replayed; if
+  /// every voice is busy and the pool is not full, a new voice is made for
+  /// this play; if the pool is full, the voice after the last one used is
+  /// restarted. A play that arrives while the pool's only voices are still
+  /// being created is dropped, which only happens in the sound's first few
+  /// milliseconds.
   void playSound(String soundName, {double? volume}) {
     if (!_soundEnabled) return;
     final file = soundFiles[soundName];
     if (file == null) return;
     attemptedPlays.update(soundName, (n) => n + 1, ifAbsent: () => 1);
+    final level = volume ?? _defaultVolumes[soundName] ?? 1.0;
+    final voices = _voices.putIfAbsent(soundName, _Voices.new);
+
+    AudioPlayer? idle;
+    for (final voice in voices.ready) {
+      if (voice.state != PlayerState.playing) {
+        idle = voice;
+        break;
+      }
+    }
+    if (idle == null &&
+        voices.ready.length + voices.creating < _voicesPerSound) {
+      _addVoice(voices, file, level);
+      return;
+    }
+    final voice = idle ??
+        (voices.ready.isEmpty
+            ? null
+            : voices.ready[voices.next++ % voices.ready.length]);
+    if (voice == null) return;
+    unawaited(_quietly(() async {
+      await voice.stop();
+      if (voice.volume != level) await voice.setVolume(level);
+      await voice.resume();
+    }));
+  }
+
+  /// Grows [voices] by one player, which plays as soon as it is ready.
+  void _addVoice(_Voices voices, String file, double level) {
+    voices.creating++;
+    final epoch = _epoch;
     unawaited(() async {
-      try {
-        await FlameAudio.play(
-          file,
-          volume: volume ?? _defaultVolumes[soundName] ?? 1.0,
-          audioContext: _platformContext,
-        );
-      } catch (_) {}
+      final player = await _preparePlayer(
+        file,
+        releaseMode: ReleaseMode.stop,
+        volume: level,
+      );
+      if (epoch != _epoch) {
+        if (player != null) unawaited(_disposeQuietly(player));
+        return;
+      }
+      voices.creating--;
+      if (player == null) return;
+      voices.ready.add(player);
+      await _quietly(player.resume);
     }());
   }
 
@@ -194,14 +346,16 @@ class AudioService {
   // --- engine loop ----------------------------------------------------------
 
   /// Sets whether the engine should be running (the taxi is live on the
-  /// road). Idempotent; safe from every frame.
+  /// road). Idempotent and safe from every frame: once the loop exists, a
+  /// call that changes nothing makes no platform call (issue #49).
   void setEngineRunning(bool running) {
     _engineWanted = running;
     _syncEngine();
   }
 
   /// Speed 0..1 — scales the engine from idle to revved. Cheap enough to
-  /// call every frame; only touches the player's volume.
+  /// call every frame: the platform only hears about it when the volume
+  /// moves by a whole [_engineVolumeStep].
   void setEngineIntensity(double intensity) {
     _engineIntensity = intensity.clamp(0.0, 1.0);
     _applyEngineVolume();
@@ -210,59 +364,68 @@ class AudioService {
   /// Idle hum under a stopped taxi, up to a full rev.
   double get _engineVolume => 0.22 + 0.68 * _engineIntensity;
 
+  int get _engineVolumeSteps => (_engineVolume / _engineVolumeStep).round();
+
   void _applyEngineVolume() {
     final player = _enginePlayer;
     if (player == null) return;
-    unawaited(() async {
-      try {
-        await player.setVolume(_engineVolume);
-      } catch (_) {}
-    }());
+    final steps = _engineVolumeSteps;
+    if (steps == _engineSentStep) return;
+    _engineSentStep = steps;
+    unawaited(_quietly(() => player.setVolume(steps * _engineVolumeStep)));
   }
 
   void _syncEngine() {
-    final gen = ++_engineGeneration;
     final want = _engineWanted && _soundEnabled && !_suspended;
-    if (want) {
-      if (_enginePlayer != null) {
-        _applyEngineVolume();
+    final player = _enginePlayer;
+    if (player == null) {
+      if (want) _startEngine();
+      return;
+    }
+    if (want) _applyEngineVolume();
+    if (want == _engineAudible) return;
+    _engineAudible = want;
+    unawaited(_quietly(want ? player.resume : player.pause));
+  }
+
+  /// Creates the one engine player. At most one start is ever in flight,
+  /// and a failed one backs off before the next try. When the player is
+  /// ready it is adopted paused, and [_syncEngine] then applies whatever
+  /// the game wants *by then*.
+  void _startEngine() {
+    if (_engineStarting) return;
+    final retryAfter = _engineRetryAfter;
+    if (retryAfter != null && DateTime.now().isBefore(retryAfter)) return;
+    _engineStarting = true;
+    final epoch = _epoch;
+    final steps = _engineVolumeSteps;
+    unawaited(() async {
+      final player = await _preparePlayer(
+        engineLoop,
+        releaseMode: ReleaseMode.loop,
+        volume: steps * _engineVolumeStep,
+        onError: (error) =>
+            debugPrint('[audio] engine loop failed to start: $error'),
+      );
+      if (epoch != _epoch) {
+        if (player != null) unawaited(_disposeQuietly(player));
         return;
       }
-      unawaited(() async {
-        AudioPlayer? player;
-        try {
-          player = await FlameAudio.loop(
-            engineLoop,
-            volume: _engineVolume,
-            audioContext: _platformContext,
-          );
-        } catch (_) {
-          return;
-        }
-        if (gen != _engineGeneration) {
-          // Superseded while starting: never adopt, never leak.
-          try {
-            await player.stop();
-            await player.dispose();
-          } catch (_) {}
-          return;
-        }
-        _enginePlayer = player;
-        debugPrint('[audio] engine loop started');
-      }());
-    } else {
-      final player = _enginePlayer;
-      _enginePlayer = null;
-      if (player != null) {
-        debugPrint('[audio] engine loop stopped');
-        unawaited(() async {
-          try {
-            await player.stop();
-            await player.dispose();
-          } catch (_) {}
-        }());
+      _engineStarting = false;
+      if (player == null) {
+        _engineStartFailures++;
+        final backoff = 1 << _engineStartFailures.clamp(1, 6);
+        _engineRetryAfter = DateTime.now().add(Duration(seconds: backoff));
+        return;
       }
-    }
+      _engineStartFailures = 0;
+      _engineRetryAfter = null;
+      _enginePlayer = player;
+      _engineAudible = false;
+      _engineSentStep = steps;
+      debugPrint('[audio] engine loop started');
+      _syncEngine();
+    }());
   }
 
   // --- settings -------------------------------------------------------------
@@ -327,17 +490,21 @@ class AudioService {
     }
   }
 
-  /// Releases the engine player and the BGM observer. The service is an
-  /// app-lifetime singleton; this exists for tests and hot restarts.
+  /// Releases the engine player, every one-shot voice, and the BGM
+  /// observer. The service is an app-lifetime singleton; this exists for
+  /// tests and hot restarts.
   Future<void> dispose() async {
-    _engineGeneration++;
-    final player = _enginePlayer;
+    _epoch++;
+    _engineStarting = false;
+    _engineAudible = false;
+    final engine = _enginePlayer;
+    final players = [
+      if (engine != null) engine,
+      for (final voices in _voices.values) ...voices.ready,
+    ];
     _enginePlayer = null;
-    if (player != null) {
-      try {
-        await player.dispose();
-      } catch (_) {}
-    }
+    _voices.clear();
+    await Future.wait(players.map(_disposeQuietly));
     try {
       await FlameAudio.bgm.dispose();
     } catch (_) {}
@@ -355,6 +522,14 @@ class AudioService {
   void playLevelCompleteSound() => playSound('level_complete');
   void playLevelFailedSound() => playSound('level_failed');
   void playBankedJingle() => playSound('banked');
+}
+
+/// One sound's voice pool: the players ready to replay, how many more are
+/// still being created, and a round-robin cursor for when all are busy.
+class _Voices {
+  final List<AudioPlayer> ready = <AudioPlayer>[];
+  int creating = 0;
+  int next = 0;
 }
 
 /// Best-effort read of the [AudioService] above [context]: null when no
