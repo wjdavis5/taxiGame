@@ -21,14 +21,60 @@ void main() {
     await storage.init();
     final gameState = GameStateService(storage);
 
+    // Sound is gated off at the service — the documented no-platform path
+    // (playSound's first line). Every _MenuButton wraps its onPressed in
+    // playButtonSound(), and a live voice pool reaches the audioplayers
+    // plugin, which does not exist under flutter test. The old fake-async
+    // settles never yielded a real event-loop turn, so the plugin's error
+    // response never made it back into the test and the latent
+    // MissingPluginException stayed invisible; the real 2 ms turns
+    // untilCreditsSettles polls with (issue #77) are exactly what lets it
+    // arrive. Nothing in this file asserts about sound.
+    final audio = AudioService()..setSoundEnabled(false);
+
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<GameStateService>.value(value: gameState),
-        Provider<AudioService>.value(value: AudioService()),
+        Provider<AudioService>.value(value: audio),
         Provider<StorageService>.value(value: storage),
       ],
       child: const MaterialApp(home: MainMenuScreen()),
     );
+  }
+
+  /// Waits until [done] holds, alternating a real 2 ms event-loop turn
+  /// with a 100 ms frame pump, and fails loudly at a 5 s deadline.
+  ///
+  /// `pumpAndSettle` drained this file cleanly in isolation but raced the
+  /// suite's real async work under full-suite parallel load: four tests
+  /// here reported '(did not complete)' on one loaded run and the file
+  /// passed 7/7 the moment it ran alone (issue #77) — the same flake class
+  /// #46's `untilShareSettles` and #69's `untilQuiet` already fixed by
+  /// polling the actual settled condition to a deadline instead of
+  /// betting on a fixed drain. Deadline polling is load-immune by
+  /// construction: quick runs exit on an early check, slow ones keep
+  /// stepping, and a genuine hang fails here by name instead of as the
+  /// runner's anonymous '(did not complete)'.
+  ///
+  /// The 100 ms step is what moves a route transition forward — a
+  /// zero-duration pump would leave a 300 ms push/pop forever mid-flight —
+  /// and the 2 ms delay inside [WidgetTester.runAsync] is a real
+  /// event-loop turn, exactly the thing a loaded machine defers and a
+  /// bare pump never yields to.
+  Future<void> untilCreditsSettles(
+    WidgetTester tester,
+    bool Function() done,
+  ) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!done()) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('timed out waiting for the credits screen to settle');
+      }
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 2)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+    }
   }
 
   group('credits content', () {
@@ -82,7 +128,12 @@ void main() {
 
       await tester.ensureVisible(button);
       await tester.tap(button);
-      await tester.pumpAndSettle();
+      // Settled when the pushed route has actually built the credits
+      // screen, not after a guessed drain.
+      await untilCreditsSettles(
+        tester,
+        () => tester.any(find.byType(CreditsScreen)),
+      );
 
       expect(find.byType(CreditsScreen), findsOneWidget);
     });
@@ -94,10 +145,18 @@ void main() {
       final button = find.byKey(const ValueKey('credits_button'));
       await tester.ensureVisible(button);
       await tester.tap(button);
-      await tester.pumpAndSettle();
+      await untilCreditsSettles(
+        tester,
+        () => tester.any(find.byType(CreditsScreen)),
+      );
 
       await tester.tap(find.byKey(const ValueKey('credits_back_button')));
-      await tester.pumpAndSettle();
+      // Settled when the pop has actually removed the credits route —
+      // what the findsNothing assertion below needs to be true.
+      await untilCreditsSettles(
+        tester,
+        () => !tester.any(find.byType(CreditsScreen)),
+      );
 
       expect(find.byType(CreditsScreen), findsNothing);
       expect(find.byType(MainMenuScreen), findsOneWidget);
@@ -115,7 +174,12 @@ void main() {
       addTearDown(tester.view.reset);
 
       await tester.pumpWidget(const MaterialApp(home: CreditsScreen()));
-      await tester.pumpAndSettle();
+      // Frame-quiet — the very condition pumpAndSettle waits on — polled
+      // to a deadline so a loaded machine can take as long as it needs.
+      await untilCreditsSettles(
+        tester,
+        () => !tester.binding.hasScheduledFrame,
+      );
 
       expect(tester.takeException(), isNull);
     });
@@ -127,12 +191,21 @@ void main() {
       addTearDown(tester.view.reset);
 
       await tester.pumpWidget(const MaterialApp(home: CreditsScreen()));
-      await tester.pumpAndSettle();
+      await untilCreditsSettles(
+        tester,
+        () => !tester.binding.hasScheduledFrame,
+      );
 
       expect(find.byType(ListView), findsOneWidget);
 
       await tester.drag(find.byType(ListView), const Offset(0, -200));
-      await tester.pumpAndSettle();
+      // The drag hands the list a ballistic activity; settled once it has
+      // gone frame-quiet again, so the post-scroll layout is what the
+      // takeException check reads.
+      await untilCreditsSettles(
+        tester,
+        () => !tester.binding.hasScheduledFrame,
+      );
 
       expect(tester.takeException(), isNull);
     });
