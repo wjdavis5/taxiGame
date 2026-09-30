@@ -158,8 +158,12 @@ class VirtualStick extends PositionComponent
     // [_knobOffset] starts zeroed at drag start.
     _knobOffset!.add(event.canvasDelta);
     final offset = _knobOffset!.clone();
-    // A crash can end the run under a held thumb; the freeze already
-    // released us — keep tracking the pointer but feed nothing.
+    // A stall or a pause under a held thumb: ownership survives (the
+    // crash stall suspends rather than releases, issue #91), the offset
+    // keeps tracking so the resume reads where the thumb really is, and
+    // feeding waits for a live, unpaused world. A run that *ended* under
+    // the thumb released us outright, so its stale pointer never gets
+    // past the guard above.
     if (!game.isGameActive || game.paused) return;
     _apply(resolve(offset));
   }
@@ -172,12 +176,40 @@ class VirtualStick extends PositionComponent
   }
 
   /// Ends the touch and zeroes the inputs it was feeding. Also called by
-  /// [TaxiGame._freezePlayer] when the run ends under the thumb.
+  /// [TaxiGame._freezePlayer] when the run *ends* under the thumb — the
+  /// terminal endings' halt, never the crash stall, which [suspend]s
+  /// instead so the held thumb survives it (issue #91).
   void release() {
     _activePointerId = null;
     _origin = null;
     _knobOffset = null;
     _apply(StickInput.zero);
+  }
+
+  /// Zeroes the fed inputs but keeps the touch: ownership
+  /// ([_activePointerId]), the origin, and the tracked offset all
+  /// survive, so [resume] — or the next [onDragUpdate] from the same
+  /// pointer — drives again without a re-press. A non-fatal crash's
+  /// stall suspends rather than releases (issue #91): the shift resumes
+  /// 1.2 s later under a thumb that never lifted, and the release the
+  /// stall used to do is exactly what made the stick dead through it —
+  /// the pointer id was gone, so [onDragUpdate]'s guard dropped every
+  /// event from the held thumb until it lifted and landed again.
+  void suspend() {
+    _apply(StickInput.zero);
+  }
+
+  /// Re-feeds the offset a suspended thumb is holding (issue #91): a
+  /// dead-still thumb emits no drag updates, so without this the cab
+  /// would sit still after the stall until the thumb next moved — right
+  /// when the player most needs it moving. Idempotent on a live stick
+  /// (the same offset resolves to the same input), a no-op with no
+  /// owning thumb, and — like every entry point that feeds — it stays
+  /// silent unless the shift is live and unpaused.
+  void resume() {
+    if (_activePointerId == null || _knobOffset == null) return;
+    if (!game.isGameActive || game.paused) return;
+    _apply(resolve(_knobOffset!));
   }
 
   void _apply(StickInput input) {

@@ -5,10 +5,15 @@ name: iOS Release
 # Two stages of delivery:
 #   - Every push to main uploads a build to TestFlight.
 #   - App Store review submission fires only while App Store Connect shows no
-#     submitted/handled version matching the `version:` string in pubspec.yaml.
-#     Apple will not accept two submissions for the same version string, so
-#     "submit on every push" cannot be literal — the version's state on
-#     Apple's side is the signal that a release is intended. That decision is
+#     unfinished review submission for the app and no submitted/handled
+#     version matching the `version:` string in pubspec.yaml. Apple will not
+#     accept two submissions for the same version string, so "submit on every
+#     push" cannot be literal — the state on Apple's side is the signal that
+#     a release is intended. The gate (tools/asc_version_state.rb) asks two
+#     sources and fails closed: an answer it cannot trust (non-200, an empty
+#     version list, page-limit truncation) fails the run rather than guessing
+#     either way, because a false "no version yet" tried to submit over a
+#     live review in the build-1074 run (issue #93). That decision is
 #     idempotent and self-healing: a bump whose own run fails before the
 #     Submit step is picked up by the next push, where the old git-diff gate
 #     logged the version as unchanged and shipped TestFlight only forever
@@ -121,22 +126,32 @@ jobs:
           # Empty on a push event; "true" only when dispatched with the box ticked.
           manual="${{ inputs.submit_for_review }}"
 
-          # The states Apple still considers editable: the version record
-          # exists but carries no live submission, so submitting it is legal —
-          # and after a rejection (REJECTED, METADATA_REJECTED,
-          # INVALID_BINARY) resubmitting the same string is the standard
-          # path. Every other state has, or may have, a live submission:
-          # DEVELOPER_REJECTED is an explicit human withdrawal, and a state
-          # this list has never seen is treated the same way rather than
-          # guessed at.
-          editable_states="PREPARE_FOR_SUBMISSION REJECTED METADATA_REJECTED INVALID_BINARY"
+          # The states Apple still considers editable AND whose resubmission
+          # needs no human decision: the version record exists but carries no
+          # live submission. INVALID_BINARY is Apple rejecting the artifact
+          # itself, so the fix is a new build and the next push resubmits —
+          # mechanical recovery. REJECTED and METADATA_REJECTED are
+          # deliberately absent (#93): they mean a person at Apple sent
+          # reasons someone must read and act on, and this repo's automation
+          # pushes about hourly, so auto-resubmitting would fire unaddressed
+          # rejections at Apple on every push. Those resubmit only through a
+          # deliberate human act: a version bump, or the manual dispatch
+          # below. DEVELOPER_REJECTED stays out for the same class of reason
+          # — an explicit human withdrawal — and a state this list has never
+          # seen is treated the same way rather than guessed at.
+          editable_states="PREPARE_FOR_SUBMISSION INVALID_BINARY"
 
           # Apple's own record decides, not the git diff (issue #89). A diff
           # against the previous commit misses any bump whose own run died
           # before the Submit step — and its replacement run, and a
           # multi-commit push whose bump is not the last commit — logging
           # the version as unchanged and shipping TestFlight only forever.
-          # The script exits 1 on any API failure and `set -e` fails the
+          # The script's verdicts: REVIEW_IN_FLIGHT — an unfinished
+          # reviewSubmission for the app, whatever the version records said
+          # (#93); NONE — no version record and no active submission; or the
+          # matching records' appStoreStates. It exits 1 on any failure,
+          # including answers it cannot trust (an empty version list is a
+          # broken answer, not "no version yet"), and `set -e` fails the
           # run: defaulting to TestFlight-only on a query failure is exactly
           # the silent drop this gate exists to prevent.
           states="$(ruby tools/asc_version_state.rb "$current")"
@@ -145,6 +160,12 @@ jobs:
           if [ "$manual" = "true" ]; then
             submit=true
             echo "Manual dispatch: submitting $current for App Store review."
+          elif [ "$states" = "REVIEW_IN_FLIGHT" ]; then
+            # Checked before NONE: the second source overrides everything a
+            # version record could say, because a live submission blocks a
+            # new one no matter what state the (possibly incomplete) version
+            # list reported.
+            echo "App Store Connect has an unfinished review submission for this app: TestFlight only."
           elif [ "$states" = "NONE" ]; then
             submit=true
             echo "$current has no App Store Connect version yet: submitting for review."

@@ -1403,7 +1403,11 @@ class TaxiGame extends FlameGame
   /// for the spent life to register — then hands the shift back.
   void _stallAfterCrash() {
     isGameActive = false;
-    _freezePlayer();
+    // Suspend, not release (issue #91): the thumb that caused the crash
+    // is usually still down, and the shift resumes under it — it must
+    // keep owning the stick through the stall to drive the moment the
+    // world moves again.
+    _freezePlayer(releaseStick: false);
     _crashStallRemaining = crashStallSeconds;
   }
 
@@ -1412,6 +1416,11 @@ class TaxiGame extends FlameGame
   void _resumeAfterCrashStall() {
     _crashStallRemaining = 0;
     isGameActive = true;
+    // The held thumb drives immediately (issue #91): a still thumb emits
+    // no drag updates, so the resume re-feeds the offset it holds rather
+    // than waiting for the next move — the cab would otherwise sit dead
+    // through exactly the moment the player needs it moving.
+    _virtualStick?.resume();
   }
 
   /// The third crash: the shift ends and everything unbanked is forfeit
@@ -1771,25 +1780,43 @@ class TaxiGame extends FlameGame
     camera.viewport.position = base + _appliedShakeOffset;
   }
 
-  void _freezePlayer() {
-    // A dead stick zeroes its own inputs on release (issue #29); the
-    // explicit zeroes cover a run ending without a touch at all.
-    _virtualStick?.release();
+  /// Stops the player's inputs. Terminal endings take the default and
+  /// [VirtualStick.release] the stick (`releaseStick: true`): the run is
+  /// over, so a thumb still on the screen must own nothing afterwards.
+  /// The crash stall passes `releaseStick: false` and suspends instead
+  /// (issue #91): the shift resumes 1.2 s later under a thumb that never
+  /// lifted, and a release there cleared the stick's pointer id — every
+  /// drag update from the held thumb was then dropped by its guard, and
+  /// the cab sat dead until the thumb lifted and landed again.
+  void _freezePlayer({bool releaseStick = true}) {
+    // The stick zeroes its own inputs on release or suspension (issues
+    // #29, #91); the explicit zeroes below cover a freeze without a
+    // touch at all.
+    if (releaseStick) {
+      _virtualStick?.release();
+    } else {
+      _virtualStick?.suspend();
+    }
     player.stopAccelerating();
     player.setThrottle(0);
     player.setSteering(0);
-    // The run is over; the windshield effect ends with it (issue #7).
+    // The inputs are over either way; the windshield effect ends with
+    // them (issue #7), and update() re-intensifies it the moment the
+    // stall hands the world back.
     _speedLines?.intensity = 0;
   }
 
   /// A terminal ending's freeze: on top of the dead stick
-  /// ([_freezePlayer]) the body stops dead. [update] keeps ticking the
-  /// world under an end-of-run panel, and a cab that had only lost its
-  /// inputs kept coasting on its last velocity — rolling into the
-  /// drop-off the wreck had come up just short of and "delivering" a
-  /// fare the ending had already forfeited (issue #71). The crash stall
-  /// deliberately keeps [_freezePlayer] alone: the shift resumes there,
-  /// and the cab's momentum is part of what it resumes with.
+  /// ([_freezePlayer], which releases — the run is over) the body stops
+  /// dead. [update] keeps ticking the world under an end-of-run panel,
+  /// and a cab that had only lost its inputs kept coasting on its last
+  /// velocity — rolling into the drop-off the wreck had come up just
+  /// short of and "delivering" a fare the ending had already forfeited
+  /// (issue #71). The crash stall keeps to a plain [_freezePlayer] —
+  /// suspending the stick instead of releasing it (issue #91) and
+  /// leaving the body's momentum alone: the shift resumes there, and
+  /// both the thumb that held on and the cab's motion are part of what
+  /// it resumes with.
   void _haltPlayerForShiftEnd() {
     _freezePlayer();
     player.velocity = Vector2.zero();

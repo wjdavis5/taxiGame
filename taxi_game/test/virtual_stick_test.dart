@@ -1,6 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
-import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/virtual_stick.dart';
@@ -11,7 +13,10 @@ import 'package:taxi_game/services/storage_service.dart';
 
 /// The one-thumb relative-drag virtual stick (issue #29): the response
 /// curve's rules (dead zone, amplification, clamp, axis independence)
-/// and the event-driven wiring that feeds the taxi.
+/// and the event-driven wiring that feeds the taxi — including the crash
+/// stall's suspension of it (issue #91): a thumb held through a
+/// non-fatal crash keeps owning the stick, so the shift resumes under a
+/// thumb that drives instead of one that must lift and land again.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -135,20 +140,39 @@ void main() {
       await gameState.loadSaveData();
     });
 
-    /// Mounts an endless run headlessly (the endless-run test pattern:
+    /// Mounts [mounted] headlessly (the endless-run test pattern:
     /// [Game.mount] is what GameWidget calls in production).
-    Future<void> mountRun() async {
-      game = TaxiGame(
-        levelLoader: LevelLoaderService(),
-        gameState: gameState,
-        endlessSeed: 42,
-      );
+    Future<void> mountGame(TaxiGame mounted) async {
+      game = mounted;
       game.onGameResize(Vector2(400, 800));
       await game.onLoad();
       // ignore: invalid_use_of_internal_member
       game.mount();
       await game.ready();
       stick = game.virtualStick!;
+    }
+
+    /// The mounted endless shift these tests drive. Headless games have
+    /// no overlay builder map; the crash flow adds 'shiftWrecked' at the
+    /// third endless crash, so a stand-in is registered as GameScreen
+    /// does (the three-strikes test pattern).
+    Future<void> mountRun() => mountGame(TaxiGame(
+          levelLoader: LevelLoaderService(),
+          gameState: gameState,
+          endlessSeed: 42,
+        )..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink()));
+
+    /// Advances game time by [seconds], in clamped frames (issue #36): no
+    /// single frame may consume more than [TaxiGame.maxUpdateDelta], so
+    /// fast-forwarding the crash stall means many small frames — exactly
+    /// the invariant the live game runs under.
+    void advanceGameTime(double seconds) {
+      var remaining = seconds;
+      while (remaining > 0) {
+        final step = math.min(remaining, TaxiGame.maxUpdateDelta);
+        game.update(step);
+        remaining -= step;
+      }
     }
 
     /// A touch that starts at (200, 600) — lower half of the 400x800
@@ -299,7 +323,8 @@ void main() {
       expect(game.player.throttleInput, 0);
     });
 
-    test('a crash under a held thumb releases the stick', () async {
+    test('a crash under a held thumb suspends the stick, not kills it '
+        '(issue #91)', () async {
       await mountRun();
 
       stick.onDragStart(touchDown());
@@ -308,13 +333,138 @@ void main() {
 
       game.onCrash(); // one life down, the world stalls
 
-      expect(stick.isActive, isFalse);
+      // The frozen cab must not keep driving on the thumb's inputs — but
+      // unlike a run *ending*, the thumb keeps ownership: the shift
+      // resumes in 1.2 s under this same pointer. The release the stall
+      // used to do cleared the pointer id, and the stick then sat dead
+      // until the thumb lifted and landed again.
+      expect(stick.isActive, isTrue,
+          reason: 'a stall is not an ending; the thumb keeps the stick');
       expect(game.player.steeringInput, 0);
       expect(game.player.throttleInput, 0);
-      // Updates from the stale touch stay dead through the stall.
+
+      // Through the stall the offset keeps tracking but nothing is fed:
+      // the events are the thumb's, the world is not listening yet.
       stick.onDragUpdate(glide(const Offset(72, -144)));
       expect(game.player.steeringInput, 0);
       expect(game.player.throttleInput, 0);
+    });
+
+    test('a thumb held dead still through the stall drives at the resume '
+        '(issue #91)', () async {
+      await mountRun();
+
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      expect(game.player.throttleInput, greaterThan(0));
+
+      game.onCrash();
+      // No drag update at all from here on: the thumb simply holds where
+      // it was. A still thumb emits no events, so the resume itself must
+      // re-feed the offset it holds.
+      advanceGameTime(TaxiGame.crashStallSeconds + 0.01);
+
+      expect(game.isGameActive, isTrue, reason: 'the stall has expired');
+      expect(game.player.throttleInput, greaterThan(0),
+          reason: 'the held offset drives the moment the world moves '
+              'again, without waiting for a move event');
+      expect(game.player.steeringInput, 0, reason: 'the glide was pure up');
+    });
+
+    test('a drag update from the held thumb drives after the stall '
+        '(issue #91)', () async {
+      await mountRun();
+
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      game.onCrash();
+      advanceGameTime(TaxiGame.crashStallSeconds + 0.01);
+
+      // The report's exact repro: one drag update from the same pointer
+      // after the stall — dropped entirely by the pointer guard before
+      // the fix, because the stall had released the stick's ownership.
+      stick.onDragUpdate(glide(const Offset(-60, 0)));
+
+      expect(game.player.steeringInput, -1.0,
+          reason: 'the diagonal past the rim is full left lock');
+      expect(game.player.throttleInput, greaterThan(0));
+    });
+
+    test('the third crash still releases the stick for good (issue #91)',
+        () async {
+      await mountRun();
+
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      expect(game.player.throttleInput, greaterThan(0));
+
+      game.onCrash();
+      advanceGameTime(TaxiGame.crashStallSeconds + 0.01);
+      expect(stick.isActive, isTrue, reason: 'one crash is survivable');
+      game.onCrash();
+      advanceGameTime(TaxiGame.crashStallSeconds + 0.01);
+      expect(stick.isActive, isTrue, reason: 'two crashes are survivable');
+
+      game.onCrash(); // the third: the shift ends as a wreck
+
+      expect(game.isGameActive, isFalse, reason: 'the shift is over');
+      expect(stick.isActive, isFalse,
+          reason: 'a terminal ending drops the thumb — the run will not '
+              'resume, so the stick must not pretend it will');
+      expect(game.player.throttleInput, 0);
+      stick.onDragUpdate(glide(const Offset(72, -144)));
+      expect(game.player.throttleInput, 0,
+          reason: 'the stale pointer feeds nothing after a release');
+    });
+
+    test('a level fail still releases the stick (issue #91)', () async {
+      // The tutorial ladder's terminal path shares the endless endings'
+      // halt; pin it in level mode too, where the crash routes through
+      // onLevelFailed instead of the three-strike flow.
+      await mountGame(TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+      )..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink()));
+
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      expect(game.player.throttleInput, greaterThan(0));
+
+      game.onLevelFailed();
+
+      expect(stick.isActive, isFalse,
+          reason: 'the level\'s terminal ending releases the stick');
+      expect(game.player.throttleInput, 0);
+      stick.onDragUpdate(glide(const Offset(72, -144)));
+      expect(game.player.throttleInput, 0,
+          reason: 'the stale pointer feeds nothing after a release');
+    });
+
+    test('suspend zeroes and resume re-feeds, and only a live game is fed',
+        () async {
+      await mountRun();
+
+      // Without an owning thumb, resume is a no-op — not a crash on the
+      // absent offset.
+      stick.resume();
+      expect(game.player.throttleInput, 0);
+
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      expect(game.player.throttleInput, greaterThan(0));
+
+      // Paused: suspension zeroes, and the resume must not re-feed —
+      // the same gate every feeding entry point carries.
+      game.paused = true;
+      stick.suspend();
+      expect(game.player.throttleInput, 0);
+      stick.resume();
+      expect(game.player.throttleInput, 0, reason: 'paused feeds nothing');
+
+      game.paused = false;
+      stick.resume();
+      expect(game.player.throttleInput, greaterThan(0),
+          reason: 'the live game re-feeds the held offset');
     });
 
     test('the ring fades out after release and in while held', () async {
