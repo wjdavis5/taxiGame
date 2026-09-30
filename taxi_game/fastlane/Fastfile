@@ -83,11 +83,18 @@ def wait_until_processed(version, build_number, timeout_minutes: 45)
   UI.user_error!("No App Store Connect app found for #{APP_IDENTIFIER}.") if app.nil?
 
   loop do
+    # The platform must be fastlane's own wire constant, never `:ios`:
+    # Build.all applies the platform *after* fetching, comparing raw
+    # (`build.pre_release_version.platform == platform`, no normalization),
+    # and the API reports the uppercase String "IOS" — a lowercase Symbol
+    # matches nothing, every build filters out client-side, and the wait
+    # starves to the 45-minute timeout with "not yet listed" (the review
+    # finding that blocked this PR).
     states = Spaceship::ConnectAPI::Build.all(
       app_id: app.id,
       version: version,
       build_number: target,
-      platform: :ios,
+      platform: Spaceship::ConnectAPI::Platform::IOS,
     ).map(&:processing_state).uniq
 
     if states == ["VALID"]
