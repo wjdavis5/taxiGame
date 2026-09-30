@@ -68,3 +68,7 @@ __azurite_db_blob_extent__.json
 # Transient dynamic-workflow drafts (the saved definitions in
 # .zcode/workflows/ ARE committed; drafts are machine-owned scratch.)
 .zcode/workflow-drafts/
+
+# Windows artifact: a Git Bash redirect to "> nul" creates a real file
+# with the reserved name; never let it trip a clean-tree check.
+/nul
