@@ -815,7 +815,8 @@ void main() {
       // Frames still stopped, until the bus's centre is 20 px past the
       // cab's: out of the containment stretch (which ends at 17.5 px
       // of centre gap) but still well inside the overlap (which runs
-      // to 46.5) — squarely the window where the split episode had
+      // to 62.5 — the bus's half-hitbox 40 plus the cab's 22.5) —
+      // squarely the window where the split episode had
       // already re-ruled the bus "ahead" while the shove continued.
       for (var i = 0; i < 150; i++) {
         await tester.pump(const Duration(milliseconds: 16));
