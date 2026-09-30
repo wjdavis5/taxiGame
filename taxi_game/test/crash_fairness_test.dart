@@ -567,6 +567,83 @@ void main() {
           reason: 'the taxi must pace a scraped car, not pass through it');
     });
 
+    testWidgets(
+        'a rear-ended taxi is not pinned to the follower\'s speed '
+        '(issue #66)',
+        (tester) async {
+      // The report's mirror of #60: a same-direction car ran into the
+      // taxi's rear, and from then on full throttle could not pull
+      // away. The pace cap fired on the overlap alone, with no
+      // ahead/behind test, so the car stuck in the cab's rear clamped
+      // the cab to that car's pace — a slow rear-ender became a rolling
+      // anchor only steering could shake off. The cap must pace a car
+      // the taxi rides BEHIND; traffic behind may never hold it back.
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: 7,
+      );
+      await tester.pumpWidget(GameWidget(game: game));
+      // As above (issue #62): wait for the taxi's onLoad, not just the
+      // run going live — the sprite fetch behind it is real I/O
+      // fake-async time cannot run.
+      await tester.runAsync(() async {
+        for (var i = 0;
+            i < 300 && !(game.isGameActive && game.player.isLoaded);
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+      // One timed frame to mount the loaded taxi (see above).
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(game.isGameActive, isTrue);
+      expect(game.player.isMounted, isTrue);
+
+      // Kill the shift's own spawner so the only traffic is the car.
+      game.trafficSpawner.clear();
+      final player = game.player;
+      player.position = Vector2(200, -140);
+      // Already rolling at 60 px/s: the follower is faster, so it still
+      // catches and touches the cab, but the cab clears the follower's
+      // 120 within a couple of tenths — before the follower can travel
+      // the half-car-length of overlap and become a car *ahead*. The
+      // pin this test polices is a car stuck in the cab's rear.
+      player.velocity = Vector2(0, -60);
+      player.startAccelerating();
+
+      // A sedan in the taxi's lane, its centre 47 px behind the taxi's
+      // — a hair outside the boxes — driving up at 120 px/s. The cab is
+      // accelerating away, so every bit of the closing is the
+      // follower's own doing: the ruling is a scrape whatever the
+      // closing (#58), and the run must stay live.
+      final car = follower(Vector2(200, -93), 120);
+      game.world.add(car);
+
+      // About five seconds of frames: enough to touch, and — with the
+      // ahead-only cap — pull clean away at full speed. Watch the
+      // speed the whole way through, frame by frame after the clamp
+      // has had its say in each.
+      var maxSpeedReached = 0.0;
+      for (var i = 0; i < 300; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        maxSpeedReached = math.max(maxSpeedReached, -player.velocity.y);
+        if (!game.isGameActive) break;
+      }
+
+      // The rear-end is the follower's fault, not the taxi's.
+      expect(game.isGameActive, isTrue);
+      // Full throttle beats the follower's 120 once the touch is behind
+      // it: the cab is never again clamped to a car in its own rear.
+      expect(maxSpeedReached, greaterThan(120),
+          reason: 'the cab must outrun a rear-ender at full throttle, '
+              'not pace it');
+      // And it actually pulled clear: the gap opens past the touch
+      // instead of freezing on the follower's bumper.
+      expect(car.position.y - player.position.y, greaterThan(100),
+          reason: 'the follower must fall behind, not ride the cab');
+    });
+
     test('the endless start clamps: no driving backwards past distance zero',
         () async {
       final game = TaxiGame(

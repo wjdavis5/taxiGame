@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:meta/meta.dart';
+
 import '../../data/vehicle_catalog.dart';
 import '../../models/traffic_pattern.dart';
 import '../components/player_vehicle.dart' show PlayerVehicle;
@@ -140,6 +142,46 @@ class HazardWindow {
   double get deathRate => aliveAtStart == 0 ? 0.0 : deaths / aliveAtStart;
 }
 
+/// One car placed on the road before the first tick (issue #67's test
+/// seam). The RNG spawner is left untouched — its stream stays
+/// byte-identical to a run without presets — so a scenario built from
+/// these is fully deterministic: same positions, same speeds, same
+/// rulings, every run. The only way to construct a specific contact
+/// against a driver that otherwise meets nothing but random traffic.
+@visibleForTesting
+class PresetTrafficVehicle {
+  const PresetTrafficVehicle({
+    required this.x,
+    required this.y,
+    required this.speed,
+    this.oncoming = false,
+    this.type = TrafficVehicleType.sedan,
+    this.contacted = false,
+  });
+
+  /// Lane position in px — the same x a spawn draws from its lane config.
+  final double x;
+
+  /// World y at the first tick — the cab starts at 0 and drives toward
+  /// -y, so negative places the car ahead of it.
+  final double y;
+
+  /// Forward speed in px/s, the magnitude a spawn would draw.
+  final double speed;
+
+  /// Oncoming (down-screen) traffic when true, as the lane configs mark.
+  final bool oncoming;
+
+  /// The body type — sizes the hitbox by the same scale factor a spawn
+  /// uses.
+  final TrafficVehicleType type;
+
+  /// Places the car as already ruled-on — one touch spent, the state a
+  /// real run reaches through its first scrape. The premise of every
+  /// re-contact scenario.
+  final bool contacted;
+}
+
 /// A headless Monte-Carlo estimate of endless run length (issue #18).
 ///
 /// The game ships with no analytics, and issue #17's on-device stats screen
@@ -192,6 +234,7 @@ class RunLengthSimulator {
     this.lookaheadSeconds = 1.25,
     this.misjudgeRate = 0.03,
     this.dt = 1 / 60,
+    this.presetTraffic,
   });
 
   /// RNG seed for the run's traffic. Same seed, same run.
@@ -206,6 +249,14 @@ class RunLengthSimulator {
   /// player of [seed] meets: the same widths, rain, fog, night, works,
   /// and junctions, with their difficulty fold applied.
   final RunEnvironment? environment;
+
+  /// Test seam (issue #67): traffic standing on the road before the
+  /// first tick, instead of everything being drawn from the seed.
+  /// Production callers leave it null and the run is entirely
+  /// seed-drawn; a scenario passes its furniture here and stays
+  /// deterministic because the spawner's RNG stream is never touched.
+  @visibleForTesting
+  final List<PresetTrafficVehicle>? presetTraffic;
 
   /// How often the driver re-reads the road, in seconds. The human lag the
   /// whole estimate rides on.
@@ -307,6 +358,19 @@ class RunLengthSimulator {
     var survived = false;
 
     final vehicles = <_SimVehicle>[];
+
+    // Preset traffic (the issue #67 test seam): on the road before the
+    // first tick. No RNG is spent here, so the spawner below draws the
+    // same stream a preset-free run would.
+    for (final preset in presetTraffic ?? const <PresetTrafficVehicle>[]) {
+      vehicles.add(_SimVehicle(
+        x: preset.x,
+        y: preset.y,
+        speed: preset.speed,
+        oncoming: preset.oncoming,
+        type: preset.type,
+      )..contacted = preset.contacted);
+    }
 
     bool laneClear(double laneX, double horizon) =>
         _nearestThreatTime(vehicles, laneX, x, y, speed,
@@ -572,6 +636,39 @@ class RunLengthSimulator {
         if (followCap != null && speed > followCap) speed = followCap;
       }
 
+      // Pacing a contacted same-direction car (issue #60), clamped in
+      // the live frame's order (issue #67): PlayerVehicle.update runs
+      // the speed update, then _capSpeedToScrapedTraffic, then
+      // position += velocity * dt — the clamp reads the overlap as it
+      // stands *before* this frame's move, exactly as written here.
+      // While the body overlaps a contacted same-direction car ahead
+      // of it, it matches that car's pace until it steers clear: the
+      // cab cannot
+      // spend a frame of acceleration creeping into the car ahead (the
+      // old post-move clamp let exactly one acceleration step through
+      // every frame, so the cab ground through paced cars at accel*dt
+      // px/s), and a re-contact's first frame is judged at the speed
+      // the cab actually arrives at — the cap cannot mask it, because
+      // the boxes only begin to overlap after this frame's move. A
+      // re-contact closing over the crash threshold therefore still
+      // spends a life, exactly as PlayerVehicle.onCollisionStart rules
+      // it. Oncoming cars never pace the cab, so #42's bulldoze and
+      // #58's struck-cab rulings are untouched.
+      for (final v in vehicles) {
+        if (!v.contacted || v.oncoming) continue;
+        // Ahead only (issue #66), the same convention as
+        // _nearestThreatTime: a same-direction car in the cab's rear
+        // must not pin it, or a slow rear-ender becomes an anchor no
+        // amount of throttle can shake off. Only a car the cab rides
+        // behind may pace it.
+        if (v.y >= y) continue;
+        final overlaps = (v.x - x).abs() < playerHalfW + v.halfW &&
+            (v.y - y).abs() < playerHalfH + v.halfH;
+        if (!overlaps) continue;
+        final pace = -v.vy;
+        if (speed > pace) speed = pace;
+      }
+
       // Lateral: travel toward the navigation target at full steering
       // lock — the kerb while stopping or boarding, otherwise the
       // driver's intended lane.
@@ -648,16 +745,12 @@ class RunLengthSimulator {
           continue;
         }
 
-        // Pacing (issue #60): while the body overlaps a contacted
-        // same-direction car it can no longer drive through the ghost —
-        // it matches the car's pace until it steers clear. Oncoming cars
-        // never pace it, so #42's bulldoze and #58's struck-cab rulings
-        // are untouched.
-        if (v.contacted && !v.oncoming) {
-          final pace = -v.vy;
-          if (speed > pace) speed = pace;
-        }
-
+        // The #60 pace cap used to live here, clamping the speed ahead
+        // of the ruling in the same iteration — so a same-lane
+        // re-contact was always judged at the pace it was about to be
+        // held to and could never crash (issue #67). It now runs before
+        // the move, in the live frame's order; see the pacing block
+        // above the lateral move.
         if (v.rulingActive) continue;
         v.rulingActive = true;
         final firstTouch = !v.contacted;
