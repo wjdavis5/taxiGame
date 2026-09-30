@@ -485,6 +485,17 @@ for (let round = 1; round <= 2 && !verdict.approved; round++) {
   if (reTests.exitCode !== 0) {
     await coder.ask("After the review fixes, flutter test regressed:\n" + tail(reTests.stdout) + "\nRepair it.");
   }
+  // Land the fixes on the PR before re-review (the PR #84 lesson):
+  // without this push the reviewer reads a stale PR diff and blocks again
+  // on a fix that already exists in the working tree — three blocked
+  // rounds over an uncommitted one-liner. An empty round (nothing to
+  // commit) fails the commit harmlessly and the push is a no-op.
+  await world.run("git", ["add", "-A"]);
+  await world.run(
+    "git",
+    ["commit", "-m", "fix: address senior-review round " + round + " (issue sweep)"],
+  );
+  await world.run("git", ["push", "origin", branch]);
   verdict = await reviewAsk(reviewer, false);
 }
 const finalGates = await flutter("analyze", 300000);
