@@ -35,9 +35,21 @@ class RoadGeometry {
   double get leftX => centerX - width / 2;
   double get rightX => centerX + width / 2;
 
+  /// The lane-fraction of a world x on this road — the inverse of
+  /// [xAtFraction]. Fractions, not px, are what survive a width change:
+  /// the spawner re-lays a lane onto the road that exists at the spawn
+  /// distance by asking the taxi's road for the fraction and the spawn
+  /// road for the x back (issue #87 — lane px from the taxi's road put
+  /// cars on the sidewalk wherever an avenue narrowed).
+  double fractionOf(double x) => (x - leftX) / width;
+
+  /// The world x at lane-fraction [f] of this road (0 = left edge, 1 =
+  /// right edge) — how [laneXs] lays a profile's lanes onto the width.
+  double xAtFraction(double f) => leftX + f * width;
+
   /// World x of every lane centre, left to right.
   List<double> get laneXs => profile.laneFractions
-      .map((f) => leftX + f * width)
+      .map(xAtFraction)
       .toList(growable: false);
 
   int get laneCount => profile.laneCount;
@@ -281,6 +293,75 @@ class RunEnvironment {
   /// Where a passenger waits on the right kerb at [distance].
   double rightCurbXAt(double distance) =>
       roadAt(distance).rightX + curbOffset;
+
+  // --- Traffic containment (issue #87) -------------------------------------
+
+  /// Half the length of the longest traffic body any lane can spawn —
+  /// the pad that keeps a vehicle centred at either end of its path
+  /// fully on the road, the same clearance the level course's end keeps
+  /// from its barrier.
+  static final double longestTrafficHalfLength = TrafficVehicleType.values
+      .map((type) => type.size.y)
+      .reduce(math.max) / 2;
+
+  /// The distance span a straight traffic path spawning at
+  /// [spawnDistance] covers: oncoming lanes run 1500 px down-screen and
+  /// same-direction lanes 3000 px up (the spawner's waypoint steps), each
+  /// end padded by half the longest body. The span whose every distance
+  /// [laneHoldsOnRoad] must clear before a spawn is allowed — one
+  /// authority shared by the live spawner and the run simulator, so the
+  /// two can never disagree about which road a car has to fit.
+  static (double, double) trafficPathSpan(
+    double spawnDistance, {
+    required bool oncoming,
+  }) {
+    final pad = longestTrafficHalfLength;
+    return oncoming
+        ? (spawnDistance - 1500 - pad, spawnDistance + pad)
+        : (spawnDistance - pad, spawnDistance + 3000 + pad);
+  }
+
+  /// Whether the body band [laneX − [halfWidth], laneX + [halfWidth]]
+  /// stays fully on the road at every distance in [[from], [to]] — the
+  /// question a fixed-x traffic path has to answer once, at spawn,
+  /// because nothing re-reads the road as the car drives (issue #87).
+  ///
+  /// Exact, not sampled: the band holds at a distance iff the width
+  /// there clears a fixed bar (each edge condition is width ≥ a
+  /// constant, since every geometry shares one centre), and width(d) is
+  /// monotone within each taper and constant between tapers — so the
+  /// tightest points of the whole span are its two ends plus the ends
+  /// of every taper it reaches.
+  bool laneHoldsOnRoad(
+    double from,
+    double to,
+    double laneX,
+    double halfWidth,
+  ) {
+    bool holdsAt(double d) {
+      final road = roadAt(d);
+      return laneX - halfWidth >= road.leftX &&
+          laneX + halfWidth <= road.rightX;
+    }
+
+    final a = math.max(0.0, from); // behind the start line: standard road
+    final b = math.max(a, to);
+    if (!holdsAt(a) || !holdsAt(b)) return false;
+
+    // Every taper end inside the span. Segment i's taper runs
+    // [segmentStart, segmentStart + taperLength]; between tapers the
+    // width is constant, so each stretch's narrowest point is one of its
+    // endpoints — named here, or [a]/[b] above.
+    final first = (a / geometrySegmentLength).floor();
+    final last = (b / geometrySegmentLength).floor();
+    for (var i = first; i <= last; i++) {
+      final segmentStart = i * geometrySegmentLength;
+      for (final d in [segmentStart, segmentStart + taperLength]) {
+        if (d > a && d < b && !holdsAt(d)) return false;
+      }
+    }
+    return true;
+  }
 
   // --- Weather ------------------------------------------------------------
 

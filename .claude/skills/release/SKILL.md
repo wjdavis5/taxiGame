@@ -7,20 +7,33 @@ description: Ship a Cab Hustle release. Bumps the version, pushes to main, watch
 
 Ships an iOS release of Cab Hustle through the GitHub Actions pipeline. The
 user never handles an `.ipa` — pushing to `main` builds, signs, uploads, and
-(on a version bump) submits.
+(while the version is unsubmitted on App Store Connect) submits.
 
 **Never upload manually when the pipeline can do it.** Manual Xcode Organizer
 uploads exist only as a fallback for when CI is broken.
 
 ## The one rule that shapes everything
 
-**App Store review submission fires only when `version:` in `pubspec.yaml`
-changes.** Apple permanently rejects a second submission for a version string
-already submitted, so bumping the version is the signal that a release is
-intended.
+**App Store review submission fires while App Store Connect shows no
+submitted or handled version matching `version:` in `pubspec.yaml`.** Apple
+permanently rejects a second submission for a version string already
+submitted, so the pipeline asks Apple what state the version is in
+(`tools/asc_version_state.rb`) and decides from that answer:
 
-- Version changed → build, upload to TestFlight, **and submit for review**.
-- Version unchanged → build and upload to TestFlight **only**.
+- No record for the version yet, or every matching record still editable
+  (`PREPARE_FOR_SUBMISSION`, `REJECTED`, `METADATA_REJECTED`,
+  `INVALID_BINARY`) → build, upload to TestFlight, **and submit for
+  review**.
+- Any matching record already submitted or handled — `WAITING_FOR_REVIEW`,
+  `IN_REVIEW`, approved, on sale, `DEVELOPER_REJECTED`, or any state the
+  gate does not recognize → build and upload to TestFlight **only**.
+
+Bumping the version is still the release signal: it is what makes the check
+find no record on Apple's side yet. The decision is idempotent, so a bump
+whose own run fails before the Submit step is submitted by the next push —
+the old gate compared against the previous commit, logged "Version
+unchanged", and lost such submissions forever (issue #89). A failed state
+query fails the run rather than defaulting to TestFlight-only.
 
 Build numbers come from `github.run_number + 1000` and are set by CI. The
 `+build` suffix in `pubspec.yaml` is ignored — never hand-edit it to control
@@ -147,19 +160,35 @@ Tell the user, concretely:
 - **Duplicate build number** — should be impossible given the run-number
   offset. If it happens, someone uploaded manually; check `asc.rb builds`.
 - **The submit lane fails while the upload succeeded** — the build is safely in
-  TestFlight. Fix the lane and force a submission via Actions → *iOS Release* →
-  Run workflow → tick *Submit for App Store review*, rather than re-pushing.
+  TestFlight. Fix the lane and push: the next run re-decides from App Store
+  Connect state, so an unsubmitted version submits by itself. Re-running the
+  failed run works too.
+- **A run fails *before* the Submit step** (tests, archive, signing, upload) —
+  nothing was submitted, and nothing is lost: fix the failure and push. The
+  next run asks App Store Connect and submits the still-unsubmitted version.
+  This is the recovery the old version-diff gate made impossible, when any
+  push after the bump logged "Version unchanged" and shipped TestFlight only
+  (issue #89).
+- **The state query itself fails** (`ruby tools/asc_version_state.rb` exits
+  non-zero) — the run fails loudly instead of guessing TestFlight-only.
+  Read the HTTP code in the log; an App Store Connect outage needs only a
+  re-run.
 - **Signing failure in CI** — the distribution certificate expires
   **2027-08-23**. Renewal means regenerating `IOS_DIST_CERT_P12_BASE64` and
   `IOS_PROVISION_PROFILE_BASE64`. See CLAUDE.md.
 
 ## Force a submission without a version bump
 
-Only when a previous run uploaded a build but the submit step failed:
+Rarely needed now that every push re-decides from App Store Connect state,
+but it still covers "Apple has the version but I want it submitted anyway":
 
 ```bash
 gh workflow run ios-release.yml --repo wjdavis5/taxiGame -f submit_for_review=true
 ```
+
+The ticked box submits regardless of what state Apple reports, so check
+`asc.rb version` first: if the version is already `WAITING_FOR_REVIEW` or
+later, this only crashes into Apple's duplicate-submission rejection.
 
 ## Manual fallback
 

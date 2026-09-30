@@ -4,10 +4,15 @@ name: iOS Release
 #
 # Two stages of delivery:
 #   - Every push to main uploads a build to TestFlight.
-#   - App Store review submission fires only when the `version:` string in
-#     pubspec.yaml changes. Apple will not accept two submissions for the same
-#     version string, so "submit on every push" cannot be literal — bumping the
-#     version is the signal that you intend a new release.
+#   - App Store review submission fires only while App Store Connect shows no
+#     submitted/handled version matching the `version:` string in pubspec.yaml.
+#     Apple will not accept two submissions for the same version string, so
+#     "submit on every push" cannot be literal — the version's state on
+#     Apple's side is the signal that a release is intended. That decision is
+#     idempotent and self-healing: a bump whose own run fails before the
+#     Submit step is picked up by the next push, where the old git-diff gate
+#     logged the version as unchanged and shipped TestFlight only forever
+#     (issue #89).
 #
 # Required repository secrets (Settings -> Secrets and variables -> Actions):
 #   ASC_KEY_ID                  App Store Connect API key ID
@@ -73,8 +78,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Need the previous commit to tell whether the version string moved.
-          fetch-depth: 2
+          # Nothing in this job reads git history — the submit decision asks
+          # App Store Connect — so the shallow default suffices.
+          fetch-depth: 1
 
       - uses: subosito/flutter-action@v2
         with:
@@ -99,32 +105,66 @@ jobs:
           echo "build=$build_number" >> "$GITHUB_OUTPUT"
           echo "Building $marketing ($build_number)"
 
-      - name: Detect a version bump
-        id: bump
+      - name: Decide whether to submit for review
+        id: review
+        env:
+          # The state query signs its own JWT from these, so it needs no key
+          # file — this step deliberately runs before the one that installs
+          # the .p8 for xcodebuild and fastlane.
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          cd "$PROJECT_PATH"
 
           current="${{ steps.version.outputs.marketing }}"
-
-          # On the first commit, or when the previous revision is unavailable,
-          # treat it as no bump rather than submitting something unintended.
-          if previous_raw="$(git show 'HEAD~1:taxi_game/pubspec.yaml' 2>/dev/null)"; then
-            previous="$(printf '%s' "$previous_raw" | grep '^version:' | sed 's/^version: *//' | cut -d'+' -f1)"
-          else
-            previous="$current"
-          fi
-
           # Empty on a push event; "true" only when dispatched with the box ticked.
           manual="${{ inputs.submit_for_review }}"
 
-          if [ "$current" != "$previous" ] || [ "$manual" = "true" ]; then
-            echo "submit=true" >> "$GITHUB_OUTPUT"
-            echo "Version $previous -> $current: will submit for App Store review."
+          # The states Apple still considers editable: the version record
+          # exists but carries no live submission, so submitting it is legal —
+          # and after a rejection (REJECTED, METADATA_REJECTED,
+          # INVALID_BINARY) resubmitting the same string is the standard
+          # path. Every other state has, or may have, a live submission:
+          # DEVELOPER_REJECTED is an explicit human withdrawal, and a state
+          # this list has never seen is treated the same way rather than
+          # guessed at.
+          editable_states="PREPARE_FOR_SUBMISSION REJECTED METADATA_REJECTED INVALID_BINARY"
+
+          # Apple's own record decides, not the git diff (issue #89). A diff
+          # against the previous commit misses any bump whose own run died
+          # before the Submit step — and its replacement run, and a
+          # multi-commit push whose bump is not the last commit — logging
+          # the version as unchanged and shipping TestFlight only forever.
+          # The script exits 1 on any API failure and `set -e` fails the
+          # run: defaulting to TestFlight-only on a query failure is exactly
+          # the silent drop this gate exists to prevent.
+          states="$(ruby tools/asc_version_state.rb "$current")"
+
+          submit=false
+          if [ "$manual" = "true" ]; then
+            submit=true
+            echo "Manual dispatch: submitting $current for App Store review."
+          elif [ "$states" = "NONE" ]; then
+            submit=true
+            echo "$current has no App Store Connect version yet: submitting for review."
           else
-            echo "submit=false" >> "$GITHUB_OUTPUT"
-            echo "Version unchanged at $current: TestFlight only."
+            blocking=""
+            for state in $states; do
+              case " $editable_states " in
+                *" $state "*) ;;
+                *) blocking="${blocking:+$blocking }$state" ;;
+              esac
+            done
+            if [ -z "$blocking" ]; then
+              submit=true
+              echo "App Store version $current is still editable ($states): submitting for review."
+            else
+              echo "App Store version $current is already submitted/handled ($blocking): TestFlight only."
+            fi
           fi
+
+          echo "submit=$submit" >> "$GITHUB_OUTPUT"
 
       - name: Install the App Store Connect API key
         env:
@@ -293,7 +333,7 @@ jobs:
             --apiIssuer "$ASC_ISSUER_ID"
 
       - name: Submit for App Store review
-        if: steps.bump.outputs.submit == 'true'
+        if: steps.review.outputs.submit == 'true'
         working-directory: ${{ env.PROJECT_PATH }}
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}

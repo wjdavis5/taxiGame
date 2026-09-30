@@ -107,7 +107,14 @@ void main() {
     // fare budgets — so their medians can legitimately cross. The batch
     // that priced the current ladder measured median 8368 vs good 8077
     // with heavily overlapping spreads; the wallet grows with skill,
-    // just not monotonically in these stand-ins.
+    // just not monotonically in these stand-ins. The new-vs-median gap
+    // is not free of history either: the first cut of issue #87's
+    // traffic containment gated every spawn on the widest body, which
+    // emptied ~2.5 km of same-direction traffic before every road
+    // narrowing and flipped this ordering (new 7136 vs median 6919).
+    // That was a difficulty regression, not a legitimate crossing, and
+    // was fixed by gating on the body each spawn rolls; the batch after
+    // that fix re-measured new 6001 / median 7134 / good 7697.
     expect(
       medians,
       isNotEmpty,

@@ -196,7 +196,9 @@ class PresetTrafficVehicle {
 ///  - spawning: the spawner's exact cadence (interval read from the curve
 ///    at the current distance, per-lane probability roll, speed drawn from
 ///    the lane range, same-direction traffic halved, vehicle-type
-///    multiplier applied, spawns 500 px ahead of the camera);
+///    multiplier applied, spawns 500 px ahead of the camera), with the
+///    lane re-laid on the road that exists at the spawn distance and any
+///    path the rolled body cannot contain skipped (issue #87);
 ///  - the living road (issue #24): [RunEnvironment] for the street itself
 ///    — lane targets and kerb stops follow the local width, traffic rides
 ///    the environment-aware profile with the weather/night modifier folded
@@ -700,11 +702,28 @@ class RunLengthSimulator {
         final spawnDistance = distance + spawnDistanceAhead;
         // Same clearances the live spawner keeps (issue #24): no traffic
         // materialises on a cross street or inside a work zone's closed
-        // lanes. Skipping after the roll leaves the RNG stream untouched.
+        // lanes. And the same lane math (issue #87): the lane's x is
+        // recovered as a fraction of the taxi's road and re-laid on the
+        // road that exists at the spawn distance — lane px do not
+        // survive a width change — and no spawn is kept whose fixed-x
+        // path leaves the road anywhere over the span it covers, both
+        // through the same [RunEnvironment] helpers the live spawner
+        // calls. The junction and works clearances run before the
+        // per-lane roll; the containment check cannot, because it has to
+        // ask about the body the spawn rolled (a sedan fits a narrow
+        // street where a bus would overhang — gating every spawn on the
+        // bus emptied 2.5 km of same-direction traffic before every
+        // narrowing and flipped the economy's new-below-median
+        // invariant). A skipped spawn's draws produce nothing, so the
+        // stream stays deterministic per seed either way.
+        final spawnRoad = env.roadAt(spawnDistance);
+        final taxiRoad = env.roadAt(distance);
         final junction = env.isIntersectionAt(spawnDistance);
         for (final lane in profile.lanes) {
           if (junction) continue;
-          if (env.isLaneBlockedAt(spawnDistance, lane.laneX)) continue;
+          final laneX =
+              spawnRoad.xAtFraction(taxiRoad.fractionOf(lane.laneX));
+          if (env.isLaneBlockedAt(spawnDistance, laneX)) continue;
           if (random.nextDouble() <= lane.spawnProbability) {
             var laneSpeed = lane.speedRange.min +
                 random.nextDouble() *
@@ -712,8 +731,22 @@ class RunLengthSimulator {
             if (!lane.oncoming) laneSpeed *= 0.5;
             const types = TrafficVehicleType.values;
             final type = types[random.nextInt(types.length)];
+            // The rolled body's own footprint, full sprite width — the
+            // thing a player would see crossing the kerb (issue #87).
+            final (spanFrom, spanTo) = RunEnvironment.trafficPathSpan(
+              spawnDistance,
+              oncoming: lane.oncoming,
+            );
+            if (!env.laneHoldsOnRoad(
+              spanFrom,
+              spanTo,
+              laneX,
+              type.size.x / 2,
+            )) {
+              continue;
+            }
             vehicles.add(_SimVehicle(
-              x: lane.laneX,
+              x: laneX,
               y: y - spawnDistanceAhead,
               speed: laneSpeed * type.speedMultiplier,
               oncoming: lane.oncoming,

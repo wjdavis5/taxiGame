@@ -181,10 +181,21 @@ it by hand or debug it.
 Pushing to `main` runs `.github/workflows/ios-release.yml`: analyze, test,
 archive, export, verify, upload to TestFlight.
 
-**App Store review submission fires only when `version:` in `pubspec.yaml`
-changes.** Apple rejects a second submission for a version string already
-submitted, so bumping the version is the signal that a release is intended.
-A push that leaves the version alone goes to TestFlight only.
+**App Store review submission fires while App Store Connect shows no
+submitted or handled version matching `version:` in `pubspec.yaml`.** Apple
+rejects a second submission for a version string already submitted, so the
+pipeline asks Apple's API (`tools/asc_version_state.rb`) what state the
+version is in and submits only when no live submission exists: the version
+is not on Apple's side yet, or every matching record is still editable
+(`PREPARE_FOR_SUBMISSION`, `REJECTED`, `METADATA_REJECTED`,
+`INVALID_BINARY`). Any other state — in review, approved, on sale, or
+developer-rejected — goes to TestFlight only. The decision is idempotent:
+a bump whose own run fails before Submit is picked up by the next push,
+where the old compare-against-the-previous-commit gate logged
+"Version unchanged" and lost the submission (issue #89). Bumping the
+version is still the signal that a release is intended — it is what makes
+the state check find no record yet. A failed state query fails the run
+rather than guessing TestFlight-only.
 
 ```bash
 # Ship 1.0.1 to review: edit pubspec.yaml, then push.
@@ -294,6 +305,8 @@ taxiGame/
 │   ├── privacy-policy.md      # published via GitHub Pages
 │   └── support.md             # published via GitHub Pages
 ├── tools/
+│   ├── asc_version_state.rb   # App Store Connect version state — the
+│   │                          #   release workflow's submit gate asks it
 │   ├── make_app_icon.swift    # icon artwork
 │   ├── generate_app_icons.sh  # renders every declared size
 │   └── strip_alpha.swift      # removes the alpha channel from a PNG

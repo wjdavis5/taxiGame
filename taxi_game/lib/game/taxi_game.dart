@@ -1072,6 +1072,19 @@ class TaxiGame extends FlameGame
     trafficSpawner.pause();
     _dismissBankPrompt();
 
+    // The ending tears down any pause that was up when the bank was
+    // made (issue #86): the prompt's buttons stay tappable under the
+    // pause menu's card, so banking from a paused prompt used to leave
+    // the shift ended but the game still frozen — and DRIVE AGAIN then
+    // opened a new run under a stale PAUSED menu, because every run
+    // starter assumes it is entered unpaused. The same two lines
+    // [bankFromPause] and [resumeGame] use. Idempotent for the clean
+    // paths: the primer's freeze is released by [_dismissBankPrompt]
+    // above, and an unpaused ending removes and sets nothing that
+    // matters.
+    overlays.remove('pauseMenu');
+    paused = false;
+
     // The ticker keeps running under the summary, and update() stops
     // asserting the engine once the shift settles (issue #73) — so the
     // ending itself turns it off, the same explicit off [pauseGame]
@@ -1225,6 +1238,15 @@ class TaxiGame extends FlameGame
     // the previous one is still up, and a settled level owes no payout on
     // top of its completion.
     _dismissBankPrompt();
+
+    // The ending tears down any pause that was up when the bank was made
+    // (issue #86) — same two lines as [_endShiftAsBanked]: a banking
+    // lesson's prompt banked while paused used to hand NEXT LEVEL a
+    // frozen game under a stale PAUSED menu, because [loadLevel] assumes
+    // it is entered unpaused. Idempotent for the ordinary, unpaused
+    // completion.
+    overlays.remove('pauseMenu');
+    paused = false;
 
     // A volley of coins streams from the taxi to the HUD counter as the
     // reward lands (issue #7). A banked level paid its coins at the

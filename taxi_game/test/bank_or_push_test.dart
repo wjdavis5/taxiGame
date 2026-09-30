@@ -526,6 +526,88 @@ void main() {
       expect(game.paused, isFalse);
     });
 
+    test('banking from the prompt while paused ends the shift unpaused '
+        '(issue #86)', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      // A save that has seen the primer: the offer rides live traffic,
+      // so the pause menu can stack over the prompt's buttons — the
+      // pause button refuses only the primer itself.
+      gameState.markBankPromptSeen();
+
+      deliverFare(game, game.course!.fare(0));
+      expect(game.bankPrompt.isActive, isTrue);
+
+      // The pause lands while the choice is up — the HUD button, or the
+      // lifecycle handler on return from the background.
+      game.pauseGame();
+      expect(game.paused, isTrue);
+      expect(game.overlays.isActive('pauseMenu'), isTrue);
+
+      // The prompt's BANK, tappable under the menu's card: the shift
+      // settles, and the ending must take the pause down with it.
+      game.bankShift();
+      expect(game.isShiftOver, isTrue);
+      expect(game.overlays.isActive('shiftBanked'), isTrue);
+      expect(game.paused, isFalse,
+          reason: 'the summary owns the screen; nothing stays frozen');
+      expect(game.overlays.isActive('pauseMenu'), isFalse,
+          reason: 'no stale PAUSED card under the summary');
+
+      // DRIVE AGAIN opens a live run — before the fix it opened frozen,
+      // needing an extra RESUME on a menu from the previous shift.
+      game.retryShift();
+      await tickAndSettle(game);
+      expect(game.isShiftOver, isFalse);
+      expect(game.isGameActive, isTrue);
+      expect(game.paused, isFalse);
+    });
+
+    test('a banking lesson banked while paused ends the level unpaused '
+        '(issue #86)', () async {
+      // Level 9 is the ladder's first banking lesson: bankPrompt on, two
+      // fares — so the first delivery asks the question while the second
+      // fare is still on the road.
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+      )
+        ..overlays.addEntry('levelComplete', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('pauseMenu', (_, __) => const SizedBox.shrink());
+      await mountGame(game);
+      await game.loadLevel(9);
+      await tickAndSettle(game);
+      gameState.markBankPromptSeen(); // no primer: the lesson runs live
+
+      final pickup = game.currentLevel.pickupPoints.first;
+      final dropoff = game.currentLevel.dropoffPoints.first;
+      game.player.position = Vector2(pickup.x, pickup.y + 30);
+      game.update(1 / 60);
+      game.player.position = Vector2(dropoff.x, dropoff.y + 30);
+      game.update(1 / 60);
+      expect(game.bankPrompt.isActive, isTrue,
+          reason: 'the lesson asks after its first fare');
+
+      game.pauseGame();
+      expect(game.paused, isTrue);
+      game.bankShift();
+
+      expect(game.overlays.isActive('levelComplete'), isTrue);
+      expect(game.paused, isFalse,
+          reason: 'the level ending cleared the pause (issue #86)');
+      expect(game.overlays.isActive('pauseMenu'), isFalse,
+          reason: 'no stale menu under the completion panel');
+
+      // NEXT LEVEL opens the next rung live — not frozen behind a menu
+      // left over from the banked one.
+      final advanced = await game.startNextLevel();
+      expect(advanced, isTrue, reason: 'level 10 exists behind level 9');
+      expect(game.isGameActive, isTrue);
+      expect(game.paused, isFalse);
+    });
+
     test('a wreck 8 px short of a drop-off delivers nothing and offers '
         'no bank (issue #71)', () async {
       final coinsBefore = gameState.totalCoins;
