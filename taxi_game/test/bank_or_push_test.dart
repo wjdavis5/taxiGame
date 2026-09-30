@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flame/components.dart';
+import 'package:flame/events.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -383,6 +384,58 @@ void main() {
       expect(game.bankPrompt.isActive, isTrue);
       expect(game.paused, isFalse,
           reason: 'only the first-ever offer stops the world');
+    });
+
+    test('a thumb that centred during the primer freeze drives nothing '
+        'after the release (issue #103)', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      final stick = game.virtualStick!;
+
+      // A running player's hold: the thumb owns the stick and drives half
+      // throttle when the delivery lands.
+      stick.onDragStart(DragStartEvent(
+        7,
+        game,
+        DragStartDetails(globalPosition: const Offset(200, 600)),
+      ));
+      stick.onDragUpdate(DragUpdateEvent(
+        7,
+        game,
+        DragUpdateDetails(
+          delta: const Offset(0, -60),
+          globalPosition: const Offset(200, 600),
+        ),
+      ));
+      expect(game.player.throttleInput, greaterThan(0));
+
+      // The first-ever offer freezes traffic under the held thumb.
+      deliverFare(game, game.course!.fare(0));
+      expect(game.paused, isTrue, reason: 'the primer holds the freeze');
+
+      // The thumb centres during the freeze: the offset tracks, but the
+      // stick feeds nothing while paused — so the pre-freeze throttle is
+      // still the last thing the cab was fed.
+      stick.onDragUpdate(DragUpdateEvent(
+        7,
+        game,
+        DragUpdateDetails(
+          delta: const Offset(0, 60),
+          globalPosition: const Offset(200, 600),
+        ),
+      ));
+
+      game.pushOn();
+
+      // PUSH ON hands the live street back under the centred thumb: the
+      // released primer re-feeds the offset it actually holds, not the
+      // drive it froze mid-glide.
+      expect(game.paused, isFalse, reason: 'the answer releases the freeze');
+      expect(stick.isActive, isTrue,
+          reason: 'the freeze never took the thumb off the stick');
+      expect(game.player.throttleInput, 0,
+          reason: 'the re-fed offset is the origin, without waiting for '
+              'the thumb to move again');
     });
 
     test('the pause button stands down while the primer holds the freeze',

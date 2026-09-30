@@ -187,18 +187,27 @@ version matching `version:` in `pubspec.yaml`.** Apple rejects a second
 submission for a version string already submitted, so the pipeline asks
 Apple's API (`tools/asc_version_state.rb`) — two sources, and it fails
 closed on any answer it cannot trust. First, `reviewSubmissions` for the
-app: any record that has not reached `COMPLETE` prints `REVIEW_IN_FLIGHT`
-and the run goes TestFlight only, whatever the version records said — the
-build-1074 run of issue #93 read a version list that came back without the
-in-review version as "no version yet" and tried to submit over a live
-review. Second, the version's own records: submit when the version is not
+app: any record actively holding a review slot — `WAITING_FOR_REVIEW`,
+`IN_REVIEW`, or a state the gate does not recognize — prints
+`REVIEW_IN_FLIGHT` and the run goes TestFlight only, whatever the version
+records said — the build-1074 run of issue #93 read a version list that
+came back without the in-review version as "no version yet" and tried to
+submit over a live review. A record parked in `UNRESOLVED_ISSUES` (where
+Apple leaves a submission after rejecting the version) or
+`READY_FOR_REVIEW` (created, never confirmed) prints `REVIEW_STUCK`:
+still TestFlight only — no second submission may be created while it
+exists — but with a `::warning::` annotation, because no push can clear
+it and a version bump alone will not submit (issue #102). Second, the
+version's own records: submit when the version is not
 on Apple's side yet (`NONE`) or every matching record is still
 machine-editable (`PREPARE_FOR_SUBMISSION`, `INVALID_BINARY`). Any other
 state — in review, approved, on sale, developer-rejected — goes to
 TestFlight only. Human rejections (`REJECTED`, `METADATA_REJECTED`) no
 longer auto-resubmit on a routine push: the issue sweep pushes about
 hourly, and resubmitting a rejection nobody has addressed must be a human
-act — bump the version or use the manual dispatch below. An answer the
+act — bump the version or use the manual dispatch below, and clear the
+rejected submission in App Store Connect first: until it is gone the gate
+answers `REVIEW_STUCK` and neither route submits. An answer the
 gate cannot trust (non-200, an empty version list — a live app always has
 version records — page-limit truncation) fails the run outright rather
 than guessing either way. The decision is idempotent: a bump whose own

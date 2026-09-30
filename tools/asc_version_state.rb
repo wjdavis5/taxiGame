@@ -6,14 +6,30 @@
 #     ruby asc_version_state.rb 1.0.1
 #
 # Stdout is exactly one verdict:
-#   REVIEW_IN_FLIGHT  some reviewSubmission for the app has not COMPLETEd.
-#                     A live submission holds Apple's review slot for the
-#                     app, so no second one may be created — whatever the
-#                     version records said. Issue #93: the first run of the
-#                     #89 gate read a version list that came back without
-#                     the in-review 1.0.0 as NONE, "submitted", and crashed
-#                     into Apple's "a relationship value is not acceptable
-#                     for the current resource state" (build 1074).
+#   REVIEW_IN_FLIGHT  some reviewSubmission for the app is actively holding
+#                     Apple's review slot (WAITING_FOR_REVIEW, IN_REVIEW,
+#                     COMPLETING, CANCELING, or any state this script does
+#                     not recognize — the fail-closed default). A live
+#                     submission means no second one may be created —
+#                     whatever the version records said. Issue #93: the
+#                     first run of the #89 gate read a version list that
+#                     came back without the in-review 1.0.0 as NONE,
+#                     "submitted", and crashed into Apple's "a relationship
+#                     value is not acceptable for the current resource
+#                     state" (build 1074).
+#   REVIEW_STUCK      some reviewSubmission for the app sits in a state no
+#                     push can move — UNRESOLVED_ISSUES (where Apple parks
+#                     a submission after rejecting the version; it stays
+#                     there until a human resolves the rejection) or
+#                     READY_FOR_REVIEW (created, never confirmed). No
+#                     review is running, but these block a new submission
+#                     exactly as a live one does, so #93's single
+#                     "unfinished" verdict answered a post-rejection
+#                     version bump with the same "an unfinished review
+#                     submission" line that means "wait for Apple" — while
+#                     the only real recovery was clearing the submission
+#                     in App Store Connect (issue #102). Neither verdict
+#                     submits; this one names the recovery.
 #   NONE              no appStoreVersions record carries the string AND the
 #                     second source agrees no submission is active — the
 #                     never-yet-submitted case.
@@ -38,10 +54,13 @@
 # as "resource path + query" the same way. That spec gives the state enum as
 # READY_FOR_REVIEW, WAITING_FOR_REVIEW, IN_REVIEW, UNRESOLVED_ISSUES,
 # CANCELING, COMPLETING, COMPLETE; fastlane's mirror of the spec
-# (spaceship's ReviewSubmission model) still lacks COMPLETING, which is
-# exactly why the classification below is "COMPLETE, or active" — never an
-# enumeration of active values. A nil state, or one Apple invents after
-# this was written, lands on the active side of that line.
+# (spaceship's ReviewSubmission model) still lacks COMPLETING. The
+# classification below therefore names only the two states that must be
+# peeled AWAY from the blocking default (issue #102's stuck pair) and lets
+# everything else fall through to REVIEW_IN_FLIGHT: a nil state, or one
+# Apple invents after this was written, lands on the same blocking side it
+# always did — the enumerated set can only widen the noisier verdict, never
+# the submitting one, because REVIEW_STUCK submits nothing either.
 #
 # Credentials come from the environment, never a key file: the workflow runs
 # this step before the one that installs the .p8 for xcodebuild and fastlane,
@@ -197,10 +216,20 @@ if submissions.length >= PAGE_LIMIT
         'client-side scanning assumes they all fit on one page')
 end
 
-# "COMPLETE, or active": every state except COMPLETE — including COMPLETING,
+# "COMPLETE, or active" — with one named exception (issue #102). Complete
+# submissions are done. The stuck pair — UNRESOLVED_ISSUES, Apple's parking
+# state after a rejection, and READY_FOR_REVIEW, a submission created but
+# never confirmed — hold no review slot but will never COMPLETE on their
+# own, so they earn their own REVIEW_STUCK verdict for the workflow to
+# attach the real recovery to. Everything else — including COMPLETING,
 # which fastlane's mirror of the spec predates, and nil, which means Apple
-# changed the shape — leaves a submission that may hold the review slot.
-active = submissions.select { |s| s.dig('attributes', 'state') != 'COMPLETE' }
+# changed the shape — stays a submission that may hold the review slot.
+STUCK_SUBMISSION_STATES = %w[UNRESOLVED_ISSUES READY_FOR_REVIEW].freeze
+
+submission_state = ->(s) { s.dig('attributes', 'state') }
+active = submissions.reject { |s| submission_state.call(s) == 'COMPLETE' }
+                    .reject { |s| STUCK_SUBMISSION_STATES.include?(submission_state.call(s)) }
+stuck = submissions.select { |s| STUCK_SUBMISSION_STATES.include?(submission_state.call(s)) }
 
 matching = versions.select { |r| r.dig('attributes', 'versionString') == version }
 
@@ -216,9 +245,20 @@ if matching.empty?
 end
 
 if active.any?
-  states = active.map { |s| s.dig('attributes', 'state') || 'UNKNOWN' }.uniq.join(', ')
+  states = active.map { |s| submission_state.call(s) || 'UNKNOWN' }.uniq.join(', ')
   warn "app #{APP_ID} has #{active.length} unfinished reviewSubmission(s): #{states}"
   puts 'REVIEW_IN_FLIGHT'
+elsif stuck.any?
+  # The #102 scenario: a rejection left its submission parked, the
+  # developer bumped the version exactly as the docs said, and every run
+  # since answered "unfinished review submission" — true, useless, and
+  # indistinguishable from a live review. Name what is sitting there and
+  # the one act that moves it, because no push (bump included) can.
+  states = stuck.map { |s| submission_state.call(s) }.uniq.join(', ')
+  warn "app #{APP_ID} has #{stuck.length} reviewSubmission(s) no push can move: #{states} " \
+       '(issue #102: a version bump will not submit until the submission is ' \
+       'cleared in App Store Connect)'
+  puts 'REVIEW_STUCK'
 elsif matching.empty?
   # Only reachable when the second source agrees nothing is in flight.
   puts 'NONE'
