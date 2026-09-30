@@ -627,7 +627,13 @@ class RunLengthSimulator {
       // point — the live game's two despawn reasons.
       vehicles.removeWhere((v) => v.y > y + 1000 || v.y < v.spawnY - 3000);
 
-      // --- Contacts: one ruling per overlap episode ---
+      // --- Contacts: one ruling per vehicle ---
+      // Episode-scoped arming alone (rulingActive) re-arms the moment the
+      // scrape pushback separates the bodies and the closing vehicle
+      // re-overlaps a frame or two later — an oncoming vehicle could
+      // bulldoze the body backwards off the start one scrape at a time
+      // (issue #42). A contacted vehicle never rules again, mirroring
+      // the live game's TrafficVehicle.contactedPlayer guard.
       for (final v in vehicles) {
         final overlaps = (v.x - x).abs() < playerHalfW + v.halfW &&
             (v.y - y).abs() < playerHalfH + v.halfH;
@@ -635,8 +641,9 @@ class RunLengthSimulator {
           v.rulingActive = false;
           continue;
         }
-        if (v.rulingActive) continue;
+        if (v.rulingActive || v.contacted) continue;
         v.rulingActive = true;
+        v.contacted = true;
 
         var axisX = x - v.x;
         var axisY = y - v.y;
@@ -812,6 +819,16 @@ class _SimVehicle {
   final double spawnY;
   final TrafficVehicleType type;
   bool rulingActive = false;
+
+  /// True once this vehicle has ever ruled on a contact (issue #42):
+  /// [rulingActive] resets when the overlap ends, and a closing vehicle
+  /// re-establishes overlap within a frame or two of the scrape
+  /// pushback — so episode-scoped arming alone let an oncoming vehicle
+  /// bulldoze the body backwards, one scrape per re-contact. This flag
+  /// never resets, mirroring the live game's
+  /// `TrafficVehicle.contactedPlayer`: one ruling per vehicle, then
+  /// traffic drives on through.
+  bool contacted = false;
 }
 
 /// What the simulated driver is doing: cruising the lanes, pulling over to

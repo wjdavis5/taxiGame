@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
@@ -66,13 +64,13 @@ class GhostCar extends PositionComponent with HasGameReference<TaxiGame> {
         await game.loadSprite(
             VehicleSprites.playerSpritePath(trace.vehicleId));
 
-    // Same quarter-turn as [PlayerVehicle]: the bundled art is side-view
-    // facing right, the world drives up the screen.
+    // Same unrotated stretch as [PlayerVehicle] (issue #47): the bundled
+    // art is top-down facing up the screen, the direction the replay
+    // drives, and its canvas carries the logical proportions already.
     add(SpriteComponent(
       sprite: carSprite,
-      size: Vector2(size.y, size.x),
+      size: size,
       position: size / 2,
-      angle: -math.pi / 2,
       anchor: Anchor.center,
     )..paint.color = Colors.white.withValues(alpha: ghostOpacity));
   }

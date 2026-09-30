@@ -106,17 +106,17 @@ class PlayerVehicle extends PositionComponent
     // Center anchor
     anchor = Anchor.center;
 
-    // The bundled sprites are side-view art facing right while the game is
-    // top-down and the taxi travels up the screen, so the child is rotated a
-    // quarter turn. It is stretched over the logical vehicle box; because it
-    // is a separate child, its rotation and art never touch the hitbox.
+    // The bundled sprites are top-down art facing up the screen (issue
+    // #47) — the direction the taxi travels — and each PNG's canvas
+    // already carries its car's logical proportions, so the child is
+    // stretched straight over the vehicle box with no rotation. Because it
+    // is a separate child, its art never touches the hitbox.
     final carSprite = sprite ??
         await game.loadSprite(VehicleSprites.playerSpritePath(vehicleId));
     add(SpriteComponent(
       sprite: carSprite,
-      size: Vector2(vehicleSize.y, vehicleSize.x),
+      size: vehicleSize,
       position: vehicleSize / 2,
-      angle: -math.pi / 2,
       anchor: Anchor.center,
     ));
   }
@@ -163,6 +163,19 @@ class PlayerVehicle extends PositionComponent
     final roadTopY = isMounted ? game.levelRoadTopY : null;
     if (roadTopY != null) {
       position.y = math.max(position.y, roadTopY + vehicleSize.y);
+    }
+
+    // The endless run's start (issue #42): forward is the only gear, but
+    // each scrape's pushback nudged the cab backwards a few pixels, and
+    // a bulldozing vehicle could stack enough of them to carry it past
+    // the start — off the asphalt, into empty sky, with the distance
+    // chip reading below zero. The start line in world coordinates is
+    // the current fold origin ([TaxiGame.worldShift] — true distance
+    // zero, an invariant every fold preserves), so the cab stops exactly
+    // there: the mirror of the level course's end clamp (#31). Levels
+    // never fold and own their own end, so this is endless-only.
+    if (isMounted && game.isEndless) {
+      position.y = math.min(position.y, game.worldShift);
     }
   }
 
@@ -274,6 +287,16 @@ class PlayerVehicle extends PositionComponent
     if (other is! TrafficVehicle) return;
     // No rulings while the level is already over or frozen.
     if (!game.isGameActive) return;
+
+    // One ruling per vehicle (issue #42): the scrape pushback separates
+    // the bodies, a closing vehicle re-establishes contact within a
+    // frame or two, and every new episode was judged afresh — so an
+    // oncoming bus could shove a stopped cab backwards down the road at
+    // the bus's own speed, off the start of the course, one "harmless"
+    // scrape at a time. A vehicle that has already had its touch gets no
+    // second one; traffic drives on through. (The cone branch above has
+    // always worked this way.)
+    if (other.contactedPlayer) return;
 
     // This episode had its touch: whatever the severity, this vehicle is
     // out of the running for a close call at the pass (issue #23).

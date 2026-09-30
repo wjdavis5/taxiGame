@@ -192,5 +192,48 @@ void main() {
 
       expect(find.byKey(const ValueKey('ghost_badge')), findsNothing);
     });
+
+    testWidgets('the worst-case wide HUD fits a 375 pt phone (issue #43)',
+        (tester) async {
+      // The overflow report's worst case, gathered on one screen: a live
+      // ghost gap, a carried fare, a 4-digit at-risk score, and the
+      // multiplier maxed — on the narrowest iPhone width. Before the fix
+      // this was a 141 px overflow that pushed the fare timer and the
+      // multiplier fully off-screen.
+      tester.view.physicalSize = const Size(375, 812);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final game = await mountedGhostRace(tester);
+      // The ghost gap goes live as the replay runs away from the start
+      // line — same hand-ticked drive the badge test above uses.
+      for (var i = 0; i < 30; i++) {
+        game.update(1 / 60);
+      }
+      game.fareChain
+        ..score = 1234
+        ..multiplier = 10
+        ..startFare(waitingFare());
+
+      await tester.pumpWidget(hudFor(game));
+      await tester.pump(const Duration(milliseconds: 150)); // poll tick
+
+      // The overflow stripe is a layout exception in tests: none means
+      // the row fits.
+      expect(tester.takeException(), isNull);
+      // And the chips it used to shove off-screen are fully on it — the
+      // HUD's content area ends 16 px short of the 375 pt surface.
+      const contentRight = 375.0 - 16.0;
+      final timerRect = tester.getRect(find.byIcon(Icons.timer));
+      expect(timerRect.right, lessThanOrEqualTo(contentRight));
+      expect(timerRect.left, greaterThan(0));
+      final multiplierRect = tester.getRect(find.text('\u00d710'));
+      expect(multiplierRect.right, lessThanOrEqualTo(contentRight));
+      expect(multiplierRect.left, greaterThan(0));
+      // The ghost badge survived the reflow — on its own line below the
+      // row, still exactly one of it.
+      expect(find.byKey(const ValueKey('ghost_badge')), findsOneWidget);
+      expect(find.text('AT RISK 1234'), findsOneWidget);
+    });
   });
 }

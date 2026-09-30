@@ -100,7 +100,9 @@ class DailyScreen extends StatelessWidget {
                         .toList()
                       ..sort((a, b) => b.dateKey.compareTo(a.dateKey));
                     return past.isEmpty
-                        ? const _EmptyHistory()
+                        ? _EmptyHistory(
+                            todayPlayed: gameState.todayDailyComplete,
+                          )
                         : ListView.builder(
                             padding:
                                 const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -327,15 +329,27 @@ class _HistoryRow extends StatelessWidget {
   }
 }
 
-/// No daily has ever been completed: the history starts empty.
+/// The history's empty state, worded for what is actually empty. The
+/// history is the *past* days — today has its own card above — so a
+/// player who just finished today's shift has not "completed no shifts":
+/// the completed one is on screen right above (issue #44). Their empty
+/// history is about yesterdays, and the invitation is tomorrow's course.
+/// The fresh player, with nothing played at all, still gets the plain
+/// truth.
 class _EmptyHistory extends StatelessWidget {
-  const _EmptyHistory();
+  const _EmptyHistory({required this.todayPlayed});
+
+  /// True when today's shift has been played — its card sits above this
+  /// message.
+  final bool todayPlayed;
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Text(
-        'No completed daily shifts yet.',
+        todayPlayed
+            ? 'No past daily shifts yet — come back tomorrow for a new course.'
+            : 'No completed daily shifts yet.',
         key: const Key('daily_empty_history'),
         textAlign: TextAlign.center,
         style: TextStyle(

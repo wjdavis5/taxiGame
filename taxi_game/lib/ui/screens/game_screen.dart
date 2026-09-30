@@ -73,49 +73,73 @@ class _GameScreenState extends State<GameScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        children: [
-          // Game widget (full screen)
-          GameWidget(
-            game: game,
-            overlayBuilderMap: {
-              'hud': (context, TaxiGame game) => HudOverlay(game: game),
-              // The one-time stick-control hint (issue #37): active from
-              // the first frame when [showControlHint], removed by the
-              // first real stick touch.
-              'controlHint': (context, TaxiGame game) =>
-                  const ControlHintOverlay(),
-              'pauseMenu': (context, TaxiGame game) => _buildPauseMenu(context),
-              'levelComplete': (context, TaxiGame game) =>
-                  LevelCompleteOverlay(game: game),
-              'levelFailed': (context, TaxiGame game) =>
-                  LevelFailedOverlay(game: game),
-              // The end-of-shift run summaries (issues #14, #15): the
-              // wrecked shift names its forfeit, the banked one celebrates
-              // its payout, and both show the full run's numbers.
-              'shiftWrecked': (context, TaxiGame game) => RunSummaryPanel(
+      // The fixed-resolution viewport letterboxes on any screen taller
+      // than its 400x800 frame, and the game's world used to run under
+      // the status bar through that top band (issue #45) — pickup rings
+      // and traffic brushing the Wi-Fi and battery icons. A top-only
+      // SafeArea drops the game just below the bar, and the strip it
+      // exposes is painted the same colour the game paints outside its
+      // viewport ([TaxiGame.backgroundColor]), so bar band and letterbox
+      // read as one edge-to-edge frame. On the 402x874 and 420x912
+      // devices the report came from, the inset eats the top band
+      // outright: the viewport that remains is barely taller than 2:1,
+      // so the visible letterboxing collapses to a sliver at the bottom.
+      // The bottom stays un-inset on purpose — the HUD's chip band and
+      // the stick both live at the top of the frame, and the home
+      // indicator's swipe area belongs to the system.
+      body: ColoredBox(
+        color: game.backgroundColor(),
+        child: SafeArea(
+          top: true,
+          bottom: false,
+          left: false,
+          right: false,
+          child: Stack(
+            children: [
+              // Game widget (full screen)
+              GameWidget(
+                game: game,
+                overlayBuilderMap: {
+                  'hud': (context, TaxiGame game) => HudOverlay(game: game),
+                  // The one-time stick-control hint (issue #37): active from
+                  // the first frame when [showControlHint], removed by the
+                  // first real stick touch.
+                  'controlHint': (context, TaxiGame game) =>
+                      const ControlHintOverlay(),
+                  'pauseMenu': (context, TaxiGame game) =>
+                      _buildPauseMenu(context),
+                  'levelComplete': (context, TaxiGame game) =>
+                      LevelCompleteOverlay(game: game),
+                  'levelFailed': (context, TaxiGame game) =>
+                      LevelFailedOverlay(game: game),
+                  // The end-of-shift run summaries (issues #14, #15): the
+                  // wrecked shift names its forfeit, the banked one celebrates
+                  // its payout, and both show the full run's numbers.
+                  'shiftWrecked': (context, TaxiGame game) => RunSummaryPanel(
+                        game: game,
+                        // Finalized in the same call stack that added this
+                        // overlay — the snapshot always precedes the panel.
+                        summary: game.lastRunSummary!,
+                      ),
+                  // The timed bank-or-push choice at every endless dropoff
+                  // (issue #13) — asked over live traffic, not a modal.
+                  'bankOrPush': (context, TaxiGame game) =>
+                      BankPromptOverlay(game: game),
+                  'shiftBanked': (context, TaxiGame game) => RunSummaryPanel(
                     game: game,
-                    // Finalized in the same call stack that added this
-                    // overlay — the snapshot always precedes the panel.
                     summary: game.lastRunSummary!,
                   ),
-              // The timed bank-or-push choice at every endless dropoff
-              // (issue #13) — asked over live traffic, not a modal.
-              'bankOrPush': (context, TaxiGame game) =>
-                  BankPromptOverlay(game: game),
-              'shiftBanked': (context, TaxiGame game) => RunSummaryPanel(
-                    game: game,
-                    summary: game.lastRunSummary!,
-                  ),
-            },
-            // The hint rides the initial overlays so Flame registers its
-            // builder before it is ever added (issue #37).
-            initialActiveOverlays: [
-              'hud',
-              if (showControlHint) 'controlHint',
+                },
+                // The hint rides the initial overlays so Flame registers its
+                // builder before it is ever added (issue #37).
+                initialActiveOverlays: [
+                  'hud',
+                  if (showControlHint) 'controlHint',
+                ],
+              ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }

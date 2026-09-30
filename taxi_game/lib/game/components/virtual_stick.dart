@@ -144,8 +144,20 @@ class VirtualStick extends PositionComponent
   @override
   void onDragUpdate(DragUpdateEvent event) {
     if (event.pointerId != _activePointerId) return;
-    final offset = event.canvasEndPosition - _origin!;
-    _knobOffset = offset.clone();
+    // Track the thumb by summing deltas, never by reading
+    // canvasEndPosition (issue #41): Flutter's drag dispatcher reports
+    // globalPosition as the *post-move* thumb position (multidrag.dart's
+    // `_move` passes `event.position`), while Flame's DragUpdateEvent
+    // adds that same event's delta on top — so canvasEndPosition
+    // overshot the real thumb by exactly the last event's delta, every
+    // update after the first. A flick back to centre then left the knob
+    // drawn off to one side and the cab steering the wrong way while the
+    // thumb rested on the origin. Summed deltas are the true offset in
+    // both update kinds — the first update's delta is the whole
+    // accumulated pending delta, later ones are per-event — and
+    // [_knobOffset] starts zeroed at drag start.
+    _knobOffset!.add(event.canvasDelta);
+    final offset = _knobOffset!.clone();
     // A crash can end the run under a held thumb; the freeze already
     // released us — keep tracking the pointer but feed nothing.
     if (!game.isGameActive || game.paused) return;
