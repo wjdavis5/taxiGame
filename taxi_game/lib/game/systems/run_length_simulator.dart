@@ -629,13 +629,17 @@ class RunLengthSimulator {
       // point — the live game's two despawn reasons.
       vehicles.removeWhere((v) => v.y > y + 1000 || v.y < v.spawnY - 3000);
 
-      // --- Contacts: one ruling per vehicle ---
+      // --- Contacts: one scrape response per vehicle, every episode judged ---
       // Episode-scoped arming alone (rulingActive) re-arms the moment the
       // scrape pushback separates the bodies and the closing vehicle
       // re-overlaps a frame or two later — an oncoming vehicle could
       // bulldoze the body backwards off the start one scrape at a time
-      // (issue #42). A contacted vehicle never rules again, mirroring
-      // the live game's TrafficVehicle.contactedPlayer guard.
+      // (issue #42). A contacted vehicle never pays the scrape response
+      // again. But it is still judged on every NEW episode (issue #60):
+      // dropping re-contacts on the floor made a touched vehicle a ghost
+      // the driver could accelerate straight through at crash speed, so
+      // a re-contact that closes over the threshold still spends a life
+      // — mirroring the live game's PlayerVehicle.onCollisionStart.
       for (final v in vehicles) {
         final overlaps = (v.x - x).abs() < playerHalfW + v.halfW &&
             (v.y - y).abs() < playerHalfH + v.halfH;
@@ -643,8 +647,20 @@ class RunLengthSimulator {
           v.rulingActive = false;
           continue;
         }
-        if (v.rulingActive || v.contacted) continue;
+
+        // Pacing (issue #60): while the body overlaps a contacted
+        // same-direction car it can no longer drive through the ghost —
+        // it matches the car's pace until it steers clear. Oncoming cars
+        // never pace it, so #42's bulldoze and #58's struck-cab rulings
+        // are untouched.
+        if (v.contacted && !v.oncoming) {
+          final pace = -v.vy;
+          if (speed > pace) speed = pace;
+        }
+
+        if (v.rulingActive) continue;
         v.rulingActive = true;
+        final firstTouch = !v.contacted;
         v.contacted = true;
 
         var axisX = x - v.x;
@@ -684,9 +700,10 @@ class RunLengthSimulator {
             break;
           }
           break;
-        } else {
+        } else if (firstTouch) {
           // Scrape: keep a third of the speed, push out of overlap along
-          // the impact axis — the live game's scrape response, verbatim.
+          // the impact axis — the live game's scrape response, verbatim,
+          // and first-touch-only there too since issue #60.
           speed *= CollisionRules.scrapeSpeedKeep;
           x += axisX * CollisionRules.scrapePushback;
           y += axisY * CollisionRules.scrapePushback;
@@ -833,8 +850,11 @@ class _SimVehicle {
   /// pushback — so episode-scoped arming alone let an oncoming vehicle
   /// bulldoze the body backwards, one scrape per re-contact. This flag
   /// never resets, mirroring the live game's
-  /// `TrafficVehicle.contactedPlayer`: one ruling per vehicle, then
-  /// traffic drives on through.
+  /// `TrafficVehicle.contactedPlayer`: one scrape *response* per
+  /// vehicle. Since issue #60 the vehicle is still judged on every new
+  /// episode — a re-contact at crash speed spends a life, and a
+  /// contacted same-direction car paces the body instead of letting it
+  /// drive through the ghost.
   bool contacted = false;
 }
 

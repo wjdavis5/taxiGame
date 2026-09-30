@@ -78,6 +78,17 @@ artifact.board("issues", {
 const tail = (s: string) => (s.length > 4000 ? "...\n" + s.slice(-4000) : s);
 const flutter = (what: string, timeoutMs: number) =>
   world.run("cmd", ["/c", "cd taxi_game && flutter " + what], { timeoutMs });
+// The sweep runs on this Windows host, where world.run has no shell
+// built-in sleep — PowerShell's Start-Sleep is the reliable wait. Shared
+// by the CI-registration and release-run polls so they pace their probes
+// (30 × 5 s ≈ 2.5 min each) instead of firing 30 back-to-back round
+// trips that finish long before GitHub has booked anything (issue #61).
+const sleepSeconds = (s: number) =>
+  world.run(
+    "powershell",
+    ["-NoProfile", "-Command", "Start-Sleep -Seconds " + s],
+    { timeoutMs: (s + 30) * 1000 },
+  );
 
 const CODER_PERSONA =
   "You are a senior Flutter/Dart engineer implementing fixes in this repository " +
@@ -376,28 +387,54 @@ log("PR opened: " + prUrl + " — waiting for CI");
 // GitHub can take a minute to register checks after the push, and
 // `gh pr checks` exits 1 printing "no checks reported" on STDERR while
 // none exist — a state to wait out, not a failure. The first live sweep
-// false-failed exactly there and left a good PR stranded. Poll until
-// checks exist, then watch them to completion.
+// false-failed exactly there and left a good PR stranded. So a probe
+// only counts as a verdict when it is one: exit 0 (all green), 8
+// (pending — gh pr checks' documented extra code), or 1 naming a failed
+// check. Exit 1 with "no checks" means wait; any other exit (2
+// cancelled, 4 auth, …) is gh itself failing and must be reported with
+// its stderr — not swallowed into the watch below, where it surfaces as
+// a bogus "CI red". Probes sit 5 s apart, so registration gets ~2.5
+// minutes instead of 30 instant round trips (issue #61).
 let checksRegistered = false;
-for (let attempt = 0; attempt < 30 && !checksRegistered; attempt++) {
+let probeFailure = "";
+for (
+  let attempt = 0;
+  attempt < 30 && !checksRegistered && probeFailure === "";
+  attempt++
+) {
+  if (attempt > 0) await sleepSeconds(5);
   const probe = await world.run(
     "gh",
     ["pr", "checks", String(prNumber)],
     { timeoutMs: 60000 },
   );
-  checksRegistered =
-      probe.exitCode === 0 ||
-      !(probe.stdout + probe.stderr).includes("no checks");
+  if (probe.exitCode === 0 || probe.exitCode === 8) {
+    checksRegistered = true;
+  } else if (
+    probe.exitCode === 1 &&
+    !(probe.stdout + probe.stderr).includes("no checks")
+  ) {
+    checksRegistered = true; // a red check — CI's verdict, judged by the watch below
+  } else if (probe.exitCode !== 1) {
+    probeFailure =
+      "gh pr checks exited " + probe.exitCode + ": " +
+      tail(probe.stderr || probe.stdout);
+  }
 }
-if (!checksRegistered) {
+if (probeFailure !== "" || !checksRegistered) {
   for (const p of toImplement) {
-    report({ issue: p.number, title: p.title, status: "failed", note: "CI never registered on " + prUrl }, "issues");
+    report(
+      { issue: p.number, title: p.title, status: "failed", note: (probeFailure !== "" ? "gh pr checks probe failed on " : "CI never registered on ") + prUrl },
+      "issues",
+    );
   }
   return {
     conclusion:
-      "Checks never registered on PR " + prUrl + " after a minute of polling — the PR is left open for a human; nothing was merged.",
+      probeFailure !== ""
+        ? "The CI probe itself failed on PR " + prUrl + " — " + probeFailure + ". The PR is left open for a human; nothing was merged."
+        : "Checks never registered on PR " + prUrl + " after ~2.5 minutes of paced polling — the PR is left open for a human; nothing was merged.",
     findings: [],
-    verified: ["gh pr checks polled for 30 attempts (registration wait)"],
+    verified: ["gh pr checks polled for 30 paced attempts (registration wait)"],
     notCovered: ["review, merge and deploy — CI never started"],
   } as WorkflowReport;
 }
@@ -503,28 +540,96 @@ for (const p of toImplement) {
 await world.run("git", ["checkout", "main"]);
 await world.run("git", ["pull", "--ff-only"]);
 
-let releaseRunId: string | null = null;
-for (let attempt = 0; attempt < 15 && releaseRunId === null; attempt++) {
-  const runList = await world.run("gh", [
-    "run", "list", "--branch", "main", "--workflow", "iOS Release",
-    "--limit", "1", "--json", "databaseId",
-  ]);
-  const found = JSON.parse(runList.stdout) as { databaseId: number }[];
-  if (found.length > 0) releaseRunId = String(found[0].databaseId);
-}
+// Identify THIS sweep's release run by its commit: the squash commit
+// GitHub recorded for the PR. The old query — "newest iOS Release run on
+// main" — happily returned the previous sweep's already-completed run,
+// and the sweep then closed its issues as "deployed to TestFlight"
+// before its own build existed at all (issue #61). A run whose headSha
+// is this merge commit is unambiguous; until that run appears, deployed
+// stays false and the issues stay open. Every gh call is exit-code
+// checked before JSON.parse, and a missing run is a wait, not an error.
 let deployed = false;
 let deployLine = "the iOS Release pipeline did not register a run";
-if (releaseRunId !== null) {
-  log("Watching the iOS Release pipeline (run " + releaseRunId + ") deploy to TestFlight");
-  const release = await world.run(
+let releaseRunId: string | null = null;
+let commitSha: string | null = null;
+let commitError = "";
+for (let attempt = 0; attempt < 6 && commitSha === null; attempt++) {
+  if (attempt > 0) await sleepSeconds(5);
+  const view = await world.run(
     "gh",
-    ["run", "watch", releaseRunId, "--exit-status", "--interval", "60"],
-    { timeoutMs: 2700000 },
+    ["pr", "view", String(prNumber), "--json", "mergeCommit"],
+    { timeoutMs: 60000 },
   );
-  deployed = release.exitCode === 0;
-  deployLine = deployed
-    ? "the iOS Release pipeline (run " + releaseRunId + ") uploaded the build to TestFlight"
-    : "the iOS Release pipeline (run " + releaseRunId + ") FAILED — the merge is on main but TestFlight did not get a build";
+  if (view.exitCode !== 0) {
+    commitError =
+      "gh pr view exited " + view.exitCode + ": " +
+      tail(view.stderr || view.stdout);
+    continue;
+  }
+  commitError = "";
+  commitSha =
+    (JSON.parse(view.stdout) as { mergeCommit: { oid: string } | null })
+      .mergeCommit?.oid ?? null;
+}
+if (commitSha === null) {
+  deployLine =
+    "the PR's merge commit could not be read" +
+    (commitError !== ""
+      ? " — " + commitError
+      : " (gh reports no merge commit for the PR yet)") +
+    ", so the sweep refused to guess which release run was its own";
+} else {
+  const shortSha = commitSha.slice(0, 10);
+  deployLine =
+    "the iOS Release pipeline never registered a run for merge commit " +
+    shortSha + " within ~2.5 minutes of the merge — the sweep refused " +
+    "to watch an older run and close the issues on someone else's build";
+  let runListError = "";
+  for (let attempt = 0; attempt < 30 && releaseRunId === null; attempt++) {
+    if (attempt > 0) await sleepSeconds(5);
+    const runList = await world.run(
+      "gh",
+      [
+        "run", "list", "--workflow", "iOS Release", "--commit", commitSha,
+        "--json", "databaseId,headSha",
+      ],
+      { timeoutMs: 60000 },
+    );
+    if (runList.exitCode !== 0) {
+      runListError =
+        "gh run list --commit exited " + runList.exitCode + ": " +
+        tail(runList.stderr || runList.stdout);
+      break;
+    }
+    const found = JSON.parse(runList.stdout) as {
+      databaseId: number;
+      headSha: string;
+    }[];
+    // --commit already pins results to the merge commit; the headSha
+    // match is a cheap assertion that never hurts (a re-run shares the
+    // commit, and list order gives the newest run first).
+    if (found.length > 0 && found[0].headSha === commitSha) {
+      releaseRunId = String(found[0].databaseId);
+    }
+  }
+  if (releaseRunId === null && runListError !== "") {
+    deployLine = "looking up this sweep's release run failed — " + runListError;
+  }
+  if (releaseRunId !== null) {
+    log(
+      "Watching the iOS Release pipeline (run " + releaseRunId +
+      ", commit " + shortSha + ") deploy to TestFlight",
+    );
+    const release = await world.run(
+      "gh",
+      ["run", "watch", releaseRunId, "--exit-status", "--interval", "60"],
+      { timeoutMs: 2700000 },
+    );
+    deployed = release.exitCode === 0;
+    deployLine = deployed
+      ? "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") uploaded the build to TestFlight"
+      : "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") FAILED — the merge is on main but TestFlight did not get a build";
+  }
 }
 await closeDoneIssues();
 if (deployed) {
@@ -569,7 +674,9 @@ return {
     "gh pr checks --watch — green CI on the PR (Android + unsigned iOS + the iOS simulator run)",
     "senior review approved: " + verdict.summary,
     "independent final review approved: " + fresh.summary,
-    deployed ? "gh run watch (iOS Release) — TestFlight upload green" : "gh run watch (iOS Release) — FAILED",
+    deployed
+      ? "gh run watch (iOS Release run " + releaseRunId + ", pinned to the PR's merge commit — issue #61) — TestFlight upload green"
+      : "release-run identification pinned to the PR's merge commit (issue #61): " + deployLine,
   ],
   notCovered: [
     "on-device verification on a physical iPhone — the iOS simulator in CI is the closest check that ran",
