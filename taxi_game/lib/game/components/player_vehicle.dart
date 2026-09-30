@@ -127,6 +127,14 @@ class PlayerVehicle extends PositionComponent
 
     _updateMovement(dt);
 
+    // Pacing a car already scraped (issue #60): after a touch, a vehicle
+    // used to be a ghost the taxi could accelerate straight through — no
+    // ruling ever fired on it again, so nothing objected. While the
+    // taxi's hitbox still overlaps a contacted same-direction car's, the
+    // taxi matches that car's pace instead of passing through it: it can
+    // close up to the bumper, then rides there until it steers around.
+    _capSpeedToScrapedTraffic();
+
     // Update position
     position += velocity * dt;
 
@@ -176,6 +184,44 @@ class PlayerVehicle extends PositionComponent
     // never fold and own their own end, so this is endless-only.
     if (isMounted && game.isEndless) {
       position.y = math.min(position.y, game.worldShift);
+    }
+  }
+
+  /// Per-frame half of issue #60's fix: while the taxi overlaps the
+  /// hitbox of a same-direction [TrafficVehicle] it has already been
+  /// ruled against, its forward speed is clamped to that car's. The
+  /// boxes are the same scaled rectangles the collision detector uses
+  /// ([CollisionRules.playerHitboxScale] and
+  /// [CollisionRules.trafficHitboxScale] of the logical sizes), so the
+  /// clamp ends exactly when the bodies separate laterally and steering
+  /// around stays the one escape.
+  ///
+  /// Same-direction only, by velocity sign: oncoming traffic drives
+  /// down-screen (positive y) and never paces the taxi — a struck cab
+  /// (#58) keeps being ruled by the contact judge, not shoved by a
+  /// per-frame clamp, and #42's bulldozing bus passes through untouched.
+  void _capSpeedToScrapedTraffic() {
+    if (!isMounted) return;
+    for (final vehicle in game.world.children.whereType<TrafficVehicle>()) {
+      if (!vehicle.contactedPlayer) continue;
+      if (vehicle.velocity.y >= 0) continue;
+      final halfWidths =
+          (vehicleSize.x * CollisionRules.playerHitboxScale +
+                  vehicle.vehicleSize.x * CollisionRules.trafficHitboxScale) /
+              2;
+      final halfHeights =
+          (vehicleSize.y * CollisionRules.playerHitboxScale +
+                  vehicle.vehicleSize.y * CollisionRules.trafficHitboxScale) /
+              2;
+      final overlaps = (position.x - vehicle.position.x).abs() < halfWidths &&
+          (position.y - vehicle.position.y).abs() < halfHeights;
+      if (!overlaps) continue;
+      // Both velocities are negative (up-screen), so keeping the taxi's
+      // at the car's means it cannot close another pixel while the boxes
+      // overlap; a slower taxi is left alone.
+      if (velocity.y < vehicle.velocity.y) {
+        velocity.y = vehicle.velocity.y;
+      }
     }
   }
 
@@ -294,9 +340,18 @@ class PlayerVehicle extends PositionComponent
     // oncoming bus could shove a stopped cab backwards down the road at
     // the bus's own speed, off the start of the course, one "harmless"
     // scrape at a time. A vehicle that has already had its touch gets no
-    // second one; traffic drives on through. (The cone branch above has
-    // always worked this way.)
-    if (other.contactedPlayer) return;
+    // second scrape *response*; traffic drives on through. (The cone
+    // branch above has always worked this way.)
+    //
+    // But "no second response" must not mean "no physics" (issue #60):
+    // the re-contact is still judged. A touched vehicle used to be
+    // dropped on the floor entirely — a ghost the taxi could then drive
+    // straight through at crash speed, because no ruling ever fired
+    // again. A re-contact that closes over the threshold still crashes;
+    // only the scrape response — pushback, slowdown, feedback — is
+    // first-touch-only, so #42's no-bulldozing guarantee holds exactly
+    // as before.
+    final recontact = other.contactedPlayer;
 
     // This episode had its touch: whatever the severity, this vehicle is
     // out of the running for a close call at the pass (issue #23).
@@ -340,7 +395,10 @@ class PlayerVehicle extends PositionComponent
         // resume (issue #14), the tutorial ladder fails the level.
         game.onCrash(report);
       case ContactSeverity.scrape:
-        _applyScrape(axis, report);
+        // First touch only (issues #42 and #60): the response is the
+        // pushback, the slowdown, and the feedback — a re-contact rules
+        // nothing at scrape speed, so traffic drives on through.
+        if (!recontact) _applyScrape(axis, report);
     }
   }
 

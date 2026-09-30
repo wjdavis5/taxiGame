@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flame/flame.dart';
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,7 @@ import 'package:taxi_game/game/systems/collision_rules.dart';
 import 'package:taxi_game/game/systems/impact_fx.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/traffic_pattern.dart';
+import 'package:taxi_game/game/vehicle_sprites.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -43,6 +45,25 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late GameStateService gameState;
+
+  /// The GameWidget tests below pump real frames, and the taxi and the bus
+  /// register their hitboxes only from `onLoad` — which awaits the sprite
+  /// PNG through the global `Flame.images` cache. A cold cache means real
+  /// asset I/O, and fake-async pump time never completes real I/O: a test
+  /// run on its own (no earlier test having warmed the cache) used to see
+  /// `isGameActive` flip — the game sets it before the deferred mount —
+  /// and then probe a taxi whose hitbox never registered (issue #62).
+  /// Preloading the two sprites every GameWidget test drives turns each
+  /// later `loadSprite` into a cache hit, a future already complete that
+  /// any pump drains as a microtask — exactly the warm state the file
+  /// already ran under when the whole file passed together.
+  setUpAll(() async {
+    await Flame.images.loadAll([
+      VehicleSprites.playerSpritePath(VehicleSprites.defaultVehicleId),
+      VehicleSprites.trafficSpritePath(TrafficVehicleType.bus),
+      VehicleSprites.trafficSpritePath(TrafficVehicleType.sedan),
+    ]);
+  });
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -188,6 +209,34 @@ void main() {
 
       expect(player.position.y, yAfter);
       expect(player.velocity.y, vAfter);
+    });
+
+    test('a re-contact at crash speed on an already-scraped vehicle rules '
+        'a crash (issue #60)', () async {
+      final game = await mountGame(freshGame());
+      final player = game.player;
+
+      // First touch: a gentle 40 px/s brush scrapes and marks the bus —
+      // from then on it can never pay a second scrape response (#42).
+      player.position = Vector2(200, 100);
+      player.velocity = Vector2(0, -40);
+      final bus = parkedBus(Vector2(200, 80));
+      game.world.add(bus);
+      await game.ready();
+
+      player.onCollisionStart({Vector2(200, 90)}, bus);
+      expect(game.lastImpact!.severity, ContactSeverity.scrape);
+
+      // Second touch, same vehicle, now flat out: 150 px/s into the bus.
+      // Before issue #60 a touched vehicle was a ghost — the re-contact
+      // was dropped on the floor and the taxi drove straight through at
+      // crash speed. The re-contact is still judged, and it rules.
+      player.velocity = Vector2(0, -150);
+      player.onCollisionStart({Vector2(200, 90)}, bus);
+
+      expect(game.isGameActive, isFalse);
+      expect(game.lastImpact!.severity, ContactSeverity.crash);
+      expect(game.lastImpact!.vehicleKind, 'bus');
     });
 
     test('a grinding volley fires one feedback burst, but every scrape is '
@@ -349,14 +398,25 @@ void main() {
       final game = freshGame();
       await tester.pumpWidget(GameWidget(game: game));
       // Level/sprite loading is real async I/O, which does not progress
-      // under fake-async time; runAsync lets it finish.
+      // under fake-async time; runAsync lets it finish. Wait for the
+      // taxi's onLoad to have run — the hitbox this test's crash needs
+      // registers there — not merely for the run to be live: isGameActive
+      // flips before the deferred load, and a cold sprite fetch started
+      // under fake-async time never completes at all (issue #62).
       await tester.runAsync(() async {
-        for (var i = 0; i < 300 && !game.isGameActive; i++) {
+        for (var i = 0;
+            i < 300 && !(game.isGameActive && game.player.isLoaded);
+            i++) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
       });
       await tester.pump();
+      // Mounting rides a real game tick, which a zero-duration pump does
+      // not deliver — one timed frame mounts the now-loaded taxi and its
+      // hitbox with it.
+      await tester.pump(const Duration(milliseconds: 16));
       expect(game.isGameActive, isTrue);
+      expect(game.player.isMounted, isTrue);
 
       final player = game.player;
       player.position = Vector2(200, 100);
@@ -395,13 +455,22 @@ void main() {
         endlessSeed: 7,
       );
       await tester.pumpWidget(GameWidget(game: game));
+      // As above (issue #62): wait for the taxi's onLoad, not just the
+      // run going live — the bulldozing scenario needs the player's
+      // hitbox registered before the first contact ruling, and the
+      // sprite fetch behind it is real I/O fake-async time cannot run.
       await tester.runAsync(() async {
-        for (var i = 0; i < 300 && !game.isGameActive; i++) {
+        for (var i = 0;
+            i < 300 && !(game.isGameActive && game.player.isLoaded);
+            i++) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
       });
       await tester.pump();
+      // One timed frame to mount the loaded taxi (see above).
+      await tester.pump(const Duration(milliseconds: 16));
       expect(game.isGameActive, isTrue);
+      expect(game.player.isMounted, isTrue);
 
       // Kill the shift's own spawner so the only traffic is the bus.
       game.trafficSpawner.clear();
@@ -431,6 +500,71 @@ void main() {
       // The start held: true distance never dipped below zero.
       expect(game.runDistance, greaterThan(0));
       expect(player.position.y, lessThanOrEqualTo(game.worldShift));
+    });
+
+    testWidgets(
+        'a throttle-held taxi that scrapes a same-lane car never passes '
+        'it (issue #60)',
+        (tester) async {
+      // The report's scenario: the taxi closes on slower same-lane
+      // traffic, scrapes it once, and — throttle still held — used to
+      // accelerate straight through the now-ghosted car at full speed.
+      // The pace cap must hold the cab behind the car's bumper for as
+      // long as their hitboxes overlap; steering around stays the
+      // escape, and the stick is never touched here so the only way
+      // forward is through the car.
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: 7,
+      );
+      await tester.pumpWidget(GameWidget(game: game));
+      // As above (issue #62): wait for the taxi's onLoad, not just the
+      // run going live — the sprite fetch behind it is real I/O
+      // fake-async time cannot run.
+      await tester.runAsync(() async {
+        for (var i = 0;
+            i < 300 && !(game.isGameActive && game.player.isLoaded);
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+      // One timed frame to mount the loaded taxi (see above).
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(game.isGameActive, isTrue);
+      expect(game.player.isMounted, isTrue);
+
+      // Kill the shift's own spawner so the only traffic is the car.
+      game.trafficSpawner.clear();
+      final player = game.player;
+      player.position = Vector2(200, -140);
+      player.velocity = Vector2.zero();
+      player.startAccelerating();
+
+      // A sedan in the taxi's lane, 160 px up the road, driving away at
+      // 60 px/s. The taxi tops out at 150, so it closes at up to 90 px/s
+      // — scrape territory, never a crash — and the scrape leaves it at
+      // 35% speed, from which it re-accelerates straight at the car.
+      final car = follower(Vector2(200, -300), 60);
+      game.world.add(car);
+
+      // About twelve seconds of frames: without the cap the cab re-
+      // reaches full speed within half a second of the scrape and pours
+      // through the car well inside the first three.
+      var taxiEverAhead = false;
+      for (var i = 0; i < 750; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (player.position.y <= car.position.y) taxiEverAhead = true;
+        if (!game.isGameActive) break;
+      }
+
+      // 90 px/s of closing is a scrape, so the run is still live...
+      expect(game.isGameActive, isTrue);
+      // ...and the cab never drew level with the car, let alone passed
+      // it: it paced the sedan instead of driving through the ghost.
+      expect(taxiEverAhead, isFalse,
+          reason: 'the taxi must pace a scraped car, not pass through it');
     });
 
     test('the endless start clamps: no driving backwards past distance zero',
