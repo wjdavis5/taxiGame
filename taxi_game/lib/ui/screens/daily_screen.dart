@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import '../../game/systems/daily_shift.dart';
 import '../../models/daily_result.dart';
 import '../../models/ghost_trace.dart';
+import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
+import '../../services/haptics_service.dart';
 import 'game_screen.dart';
 
 /// The Daily Shift screen (issue #19): today's result up top, the player's
@@ -212,6 +214,49 @@ class _TodayCard extends StatelessWidget {
                 color: Colors.white.withValues(alpha: 0.85),
               ),
             ),
+            // Start today's shift (issue #64): the invitation above was
+            // dead copy without this — a player who arrived through the
+            // menu's DAILY HISTORY link (which exists only while today
+            // is unplayed) met the day's course described and no way to
+            // drive it. The same route the menu's unplayed daily button
+            // takes: the date-derived seed and the one-attempt flag.
+            // Once the day is played the button is gone — the attempt is
+            // spent, and only the ghost race remains below.
+            if (!played) ...[
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                key: const Key('daily_start_button'),
+                onPressed: () {
+                  // The app-wide click (issue #4) and tick (issue #5)
+                  // every button press gets, null-safe like _MenuButton —
+                  // a missing provider must never break the button.
+                  audioOf(context)?.playButtonSound();
+                  hapticsOf(context)?.buttonPress();
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => GameScreen(
+                        endlessSeed:
+                            DailyShift.seedForDateKey(DailyShift.todayKey),
+                        isDailyShift: true,
+                      ),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.play_arrow, size: 20),
+                label: const Text(
+                  "START TODAY'S SHIFT",
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.yellow,
+                  foregroundColor: Colors.black,
+                ),
+              ),
+            ],
             // Race the ghost (issue #20): the day's one scoring attempt
             // is spent, but racing the stored best run — replayed as a
             // translucent car on the same course — never is. Only on a
