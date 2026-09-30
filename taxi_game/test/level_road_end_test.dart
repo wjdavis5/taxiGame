@@ -264,15 +264,19 @@ void main() {
       final spawner = await installFloodSpawner(game, 7);
 
       // Park the taxi against the street end; the camera follows it
-      // there, so every spawn point now sits beyond the last asphalt.
+      // there — through the level lead (issue #45), so it centres that
+      // far ahead — and every spawn point now sits beyond the last
+      // asphalt.
       final roadTop = game.levelRoadTopY!;
       game.player.position = Vector2(
         TaxiGame.roadCenterX,
         roadTop + game.player.vehicleSize.y,
       );
       game.update(1 / 60);
-      expect(game.camera.viewfinder.position.y,
-          closeTo(roadTop + game.player.vehicleSize.y, 0.01));
+      expect(
+          game.camera.viewfinder.position.y,
+          closeTo(roadTop + game.player.vehicleSize.y
+              - TaxiGame.levelCameraLead, 0.01));
 
       // Every wave rolls a guaranteed spawn; the end turns them all
       // away, so no vehicle ever materialises off the road.

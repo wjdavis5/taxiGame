@@ -123,6 +123,42 @@ void main() {
       }
     });
 
+    test('the first pickup of every rung opens clear of the HUD chip band',
+        () async {
+      // Issue #45: with the camera centred on the taxi, the first marker
+      // always materialised 150 px below the view top — inside the ~110 px
+      // band the HUD chips occupy, hiding under the ×1 (rung 1) or the
+      // SCORE 0 chip (rungs 2 and 3). The camera now leads the taxi by
+      // [TaxiGame.levelCameraLead], and the start stays pinned 250 px
+      // below the lowest marker, so the marker's depth below the view
+      // top is structural: 400 (half the 800-tall frame) - 250 + lead.
+      const viewHalf = 400.0; // TaxiGame's fixed-resolution frame
+      for (var i = 1; i <= GameLevel.ladderLength; i++) {
+        final game = await mountGame(
+            ladderGame(await gameStateAtLevel(i)));
+        game.update(1 / 60);
+
+        // The first marker the player can reach is the route's lowest
+        // point — the start is authored 250 px below it.
+        final route = [
+          ...game.currentLevel.pickupPoints,
+          ...game.currentLevel.dropoffPoints,
+        ];
+        final firstMarkerY =
+            route.map((p) => p.y).reduce((a, b) => a > b ? a : b);
+        final viewTop = game.camera.viewfinder.position.y - viewHalf;
+        final depth = firstMarkerY - viewTop;
+
+        expect(depth, closeTo(250.0, 0.01),
+            reason: 'rung $i: the first pickup must open 250 px below the '
+                'view top (was 150 px, under the chips)');
+        // And the viewfinder really is leading, not centred on the taxi.
+        expect(game.camera.viewfinder.position.y,
+            closeTo(game.player.position.y - TaxiGame.levelCameraLead, 0.01),
+            reason: 'rung $i: the level camera must lead the taxi');
+      }
+    });
+
     test('traffic ramps rung by rung', () async {
       double? previousProbability;
       double? previousSpeed;

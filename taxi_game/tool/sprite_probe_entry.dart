@@ -77,12 +77,12 @@ class ProbeGame extends FlameGame {
       paint: Paint()..color = const Color(0xFFFF5252),
     ));
 
-    // A) The exact SpriteComponent construction from PlayerVehicle.
+    // A) The exact SpriteComponent construction from PlayerVehicle
+    // (unrotated top-down art since issue #47).
     world.add(SpriteComponent(
       sprite: Sprite(image),
-      size: Vector2(60, 40),
+      size: Vector2(40, 60),
       position: Vector2(size.x / 2, size.y * 0.3),
-      angle: -1.5708,
       anchor: Anchor.center,
     ));
 
@@ -90,7 +90,7 @@ class ProbeGame extends FlameGame {
     world.add(RawImageDrawer(
       image: image,
       position: Vector2(size.x / 2, size.y * 0.55),
-      size: Vector2(60, 40),
+      size: Vector2(40, 60),
     ));
     world.add(_mover);
   }

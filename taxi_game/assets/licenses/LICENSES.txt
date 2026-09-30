@@ -49,9 +49,9 @@ from `taxi_game/`; the RNG is seeded and the output is byte-stable.
 
 ## Visual Assets
 
-### Vehicle sprites and UI icons (Kenney.nl)
+### Vehicle sprites (Kenney.nl — Racing Pack)
 
-Source: https://kenney.nl
+Source: Racing Pack — https://kenney.nl/assets/racing-pack
 Artist: Kenney Vleugels
 License: CC0 1.0 Universal (Public Domain Dedication)
 Attribution: Not required. A courtesy credit is shown in the app's Credits screen.
@@ -74,6 +74,31 @@ Traffic vehicles — `assets/images/vehicles/traffic/`:
   suv_blue.png
   truck_red.png
   van_white.png
+
+All fifteen are top-down art facing up the screen (nose at the top, issue
+#47), replacing an earlier side-view set that had to be rotated a quarter
+turn in code. Each PNG's canvas carries the proportions of its logical
+vehicle box — transparent side padding where the art is narrower — so the
+unrotated stretch render stays undistorted.
+
+Modifications of the CC0 sources (all made in-repo, regenerate with
+`python tool/make_vehicle_sprites.py <kenney_racing-pack.zip>` from
+`taxi_game/`; the script is deterministic and re-runs byte-identically):
+
+  - luxury_white, sedan_gray, minivan_gray, compact_white, van_white —
+    bodies recoloured (the pack sells no white or gray car); the pack's
+    three-step body shading is preserved, glass and trim untouched.
+  - bus_yellow — the pack has no bus; the van body elongated to the
+    50x100 box by duplicating a band of plain roof rows.
+  - all files — trimmed and padded with transparent margins to the
+    logical box proportions above; no resampling, no other edits.
+
+### UI icons (Kenney.nl)
+
+Source: https://kenney.nl
+Artist: Kenney Vleugels
+License: CC0 1.0 Universal (Public Domain Dedication)
+Attribution: Not required. A courtesy credit is shown in the app's Credits screen.
 
 UI icons — `assets/images/ui/icons/`:
   back.png

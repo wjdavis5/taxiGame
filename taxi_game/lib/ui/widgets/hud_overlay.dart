@@ -267,57 +267,83 @@ class _ScoringBarState extends State<_ScoringBar> {
   Widget build(BuildContext context) {
     final chain = widget.game.fareChain;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Run score and lives, left. The score is labelled by what it is:
-        // at-risk chain score in an endless shift (it is forfeited by a
-        // wreck and only kept by a bank), plain score in the tutorial
-        // ladder, which settles at completion. The lives badge is
-        // endless-only: the tutorial ladder has no failure budget to
-        // show, and a badge that never moves is noise.
         Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            _HudPill(
-              child: Text(
-                widget.game.isEndless
-                    ? 'AT RISK ${chain.score}'
-                    : 'SCORE ${chain.score}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
+            // Run score and lives, left. The score is labelled by what it
+            // is: at-risk chain score in an endless shift (it is forfeited
+            // by a wreck and only kept by a bank), plain score in the
+            // tutorial ladder, which settles at completion. The lives
+            // badge is endless-only: the tutorial ladder has no failure
+            // budget to show, and a badge that never moves is noise.
+            //
+            // Wrapped in a scale-down box (issue #43): nothing in this
+            // row could shrink, so a wide left group shoved the fare
+            // timer and multiplier off the right edge — up to 141 px on a
+            // 420 pt phone, and even the ghost-free worst case (AT RISK
+            // 1234 + lives + timer + ×10) overflows a 375 pt phone. The
+            // chips on the right are the gameplay-critical ones, so the
+            // left group yields: it renders at natural size while it fits
+            // and scales down a hair when it does not.
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _HudPill(
+                      child: Text(
+                        widget.game.isEndless
+                            ? 'AT RISK ${chain.score}'
+                            : 'SCORE ${chain.score}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                    if (widget.game.isEndless) ...[
+                      const SizedBox(width: 8),
+                      _LivesBadge(
+                        key: const ValueKey('lives_badge'),
+                        remaining: widget.game.lives.remaining,
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),
-            if (widget.game.isEndless) ...[
-              const SizedBox(width: 8),
-              _LivesBadge(
-                key: const ValueKey('lives_badge'),
-                remaining: widget.game.lives.remaining,
-              ),
-              // The ghost gap (issue #20): live +/- metres against the
-              // translucent car on the road, so the race reads even when
-              // the ghost has scrolled off screen.
-              if (widget.game.ghostGapMetres != null) ...[
-                const SizedBox(width: 8),
-                _GhostBadge(gapMetres: widget.game.ghostGapMetres!),
+            // Chain state, right: the fare meter next to the multiplier
+            // it feeds — rigid on purpose (issue #43): the countdown the
+            // player steers their delivery by is the one chip that must
+            // never be the one to give way.
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (chain.isCarryingFare) ...[
+                  _FareTimerBadge(timer: chain.mostUrgentTimer!),
+                  const SizedBox(width: 8),
+                ],
+                _MultiplierBadge(multiplier: chain.multiplier),
               ],
-            ],
+            ),
           ],
         ),
-        // Chain state, right: the fare meter next to the multiplier it
-        // feeds.
-        Row(
-          children: [
-            if (chain.isCarryingFare) ...[
-              _FareTimerBadge(timer: chain.mostUrgentTimer!),
-              const SizedBox(width: 8),
-            ],
-            _MultiplierBadge(multiplier: chain.multiplier),
-          ],
-        ),
+        // The ghost gap (issue #20): live +/- metres against the
+        // translucent car on the road, so the race reads even when the
+        // ghost has scrolled off screen. On its own line under the row
+        // (issue #43): inline it was one more rigid chip doing the
+        // shoving, and the row has no horizontal room to spare on any
+        // phone — the column below has room to spare instead.
+        if (widget.game.isEndless && widget.game.ghostGapMetres != null) ...[
+          const SizedBox(height: 6),
+          _GhostBadge(gapMetres: widget.game.ghostGapMetres!),
+        ],
       ],
     );
   }

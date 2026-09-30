@@ -4,6 +4,7 @@ import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/burst_particles.dart';
 import 'package:taxi_game/game/components/scrape_marker.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/systems/collision_rules.dart';
@@ -136,6 +137,60 @@ void main() {
       expect(game.world.children.whereType<ScrapeMarker>().length, 1);
     });
 
+    test('a second contact from the same vehicle rules nothing (issue #42)',
+        () async {
+      final game = await mountGame(freshGame());
+      final player = game.player;
+      player.position = Vector2(200, 100);
+      player.velocity = Vector2(0, -40);
+      final bus = parkedBus(Vector2(200, 80));
+      game.world.add(bus);
+      await game.ready();
+
+      player.onCollisionStart({Vector2(200, 90)}, bus);
+      final yAfter = player.position.y;
+      final vAfter = player.velocity.y;
+
+      // The pushback separated the bodies, and a closing vehicle re-
+      // establishes the overlap a frame or two later — a new episode as
+      // far as collision detection knows. The vehicle already had its
+      // one ruling, so this touch is nothing at all: no further pushback
+      // (the loop that bulldozed a stopped cab backwards), no further
+      // slowdown. Traffic drives on through.
+      player.onCollisionStart({Vector2(200, 92)}, bus);
+
+      expect(player.position.y, yAfter);
+      expect(player.velocity.y, vAfter);
+    });
+
+    test('a grinding volley fires one feedback burst, but every scrape is '
+        'recorded', () async {
+      final game = await mountGame(freshGame());
+
+      CrashReport scrapeReport() => CollisionRules.buildReport(
+            severity: ContactSeverity.scrape,
+            vehicleKind: 'bus',
+            playerVelocity: Vector2(0, -40),
+            playerPosition: Vector2(200, 100),
+            trafficVelocity: Vector2.zero(),
+            trafficPosition: Vector2(200, 80),
+            contactPoint: Vector2(200, 90),
+          );
+
+      game.onScrape(scrapeReport());
+      game.onScrape(scrapeReport());
+
+      // One volley of everything (issue #42): particles and marker — and
+      // the shake and sound they ride — not two of each at frame rate.
+      expect(game.world.children.whereType<BurstParticles>().length, 1);
+      expect(game.world.children.whereType<ScrapeMarker>().length, 1);
+
+      // The record of what was hit always updates, cooldown or not.
+      final latest = scrapeReport();
+      game.onScrape(latest);
+      expect(game.lastImpact, same(latest));
+    });
+
     test('the scrape marker clears itself', () async {
       final game = await mountGame(freshGame());
       final player = game.player;
@@ -239,6 +294,88 @@ void main() {
       expect(game.overlays.activeOverlays, contains('levelFailed'));
       expect(game.lastImpact!.severity, ContactSeverity.crash);
       expect(game.lastImpact!.vehicleKind, 'bus');
+    });
+
+    testWidgets(
+        'an oncoming bus cannot bulldoze a stopped cab off the start '
+        '(issue #42)', (tester) async {
+      // The report's scenario, on a real endless shift: the cab has
+      // driven 14 m, the stick is released, and an oncoming bus collects
+      // it. Before the fix, every re-contact scraped again — the bus
+      // carried the cab backwards until the distance chip read 0 m and
+      // the cab sat in empty sky below the start of the road.
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: 7,
+      );
+      await tester.pumpWidget(GameWidget(game: game));
+      await tester.runAsync(() async {
+        for (var i = 0; i < 300 && !game.isGameActive; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+      expect(game.isGameActive, isTrue);
+
+      // Kill the shift's own spawner so the only traffic is the bus.
+      game.trafficSpawner.clear();
+      final player = game.player;
+      player.position = Vector2(200, -140); // 14 m up the course
+      player.velocity = Vector2.zero(); // stopped, hands off
+      final bus = oncomingBus(Vector2(200, -400), 50);
+      game.world.add(bus);
+
+      // About ten seconds of frames, as the report watched.
+      for (var i = 0; i < 625; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (!game.isGameActive) break;
+      }
+
+      // Still a live run: 50 px/s closing is scrape territory, never a
+      // crash — and the scrape happened exactly once.
+      expect(game.isGameActive, isTrue);
+      expect(game.lastImpact!.severity, ContactSeverity.scrape);
+      // The whole backwards motion is the one 3 px pushback; the bus
+      // drove on through instead of riding the cab down the road.
+      expect(
+        player.position.y,
+        closeTo(-140 + CollisionRules.scrapePushback, 0.5),
+        reason: 'one nudge, not a ride',
+      );
+      // The start held: true distance never dipped below zero.
+      expect(game.runDistance, greaterThan(0));
+      expect(player.position.y, lessThanOrEqualTo(game.worldShift));
+    });
+
+    test('the endless start clamps: no driving backwards past distance zero',
+        () async {
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: 7,
+      );
+      // The endless-run mount (level_road_end's pattern): the road chunk
+      // manager only arms its world in onMount, so a bare mountGame —
+      // which never mounts the game — would leave the road unmanaged.
+      game.onGameResize(Vector2(400, 800));
+      await game.onLoad();
+      // ignore: invalid_use_of_internal_member
+      game.mount();
+      await game.ready();
+      final player = game.player;
+      expect(game.isEndless, isTrue);
+      expect(game.worldShift, 0);
+
+      // Parked past the start line (true distance zero) — where a
+      // bulldozing scrape series used to leave the cab in empty sky. The
+      // clamp stops it exactly at the line, the mirror of the level
+      // course's end clamp (#31).
+      player.position = Vector2(200, 47);
+      game.update(1 / 60);
+
+      expect(player.position.y, 0.0);
+      expect(game.runDistance, greaterThanOrEqualTo(0));
     });
   });
 

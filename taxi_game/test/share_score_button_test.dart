@@ -73,15 +73,31 @@ void main() {
     await tester.pump();
   }
 
-  /// The render + channel round-trip runs real async work inside the
-  /// widget tree; [runAsync] lets it finish, then the tree is pumped to
-  /// show whatever the completion did.
-  Future<void> letSharingFinish(WidgetTester tester) async {
-    await tester.pump();
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pump();
+  /// Waits until [done] holds, alternating a short real delay with a
+  /// frame pump. The share flow runs real engine work inside the tree —
+  /// the card is rasterised into a 1000x1400 PNG (`picture.toImage`) and
+  /// the platform round-trip hops threads — so the number of event-loop
+  /// turns it needs varies with machine load. A fixed 100 ms drain raced
+  /// exactly there (issue #46): quiet machines finished inside it, loaded
+  /// CI runners did not. Deadline polling (the pattern audio_service_test
+  /// adopted for the same flake class) is load-immune by construction —
+  /// quick runs exit on an early check, slow ones keep stepping, and a
+  /// genuine hang fails loudly at the deadline instead of flaking on
+  /// whatever the assertions happened to see.
+  Future<void> untilShareSettles(
+    WidgetTester tester,
+    bool Function() done,
+  ) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!done()) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('timed out waiting for the share flow to settle');
+      }
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 2)),
+      );
+      await tester.pump();
+    }
   }
 
   testWidgets('a tap hands a rendered card to the share channel',
@@ -97,7 +113,9 @@ void main() {
 
       await showButton(tester, dailyGame());
       await tester.tap(find.byKey(const ValueKey('share_score_button')));
-      await letSharingFinish(tester);
+      // Done when the channel has actually been handed the card — not
+      // after a guess at how long the raster takes.
+      await untilShareSettles(tester, () => calls.isNotEmpty);
 
       expect(calls, hasLength(1));
       expect(calls.single.method, 'shareScoreCard');
@@ -135,7 +153,16 @@ void main() {
       expect(button.onPressed, isNull,
           reason: 'no second sheet while the first is being made');
 
-      await letSharingFinish(tester);
+      // Done when the button has come back around — the working state is
+      // the wait's start line, not its finish.
+      await untilShareSettles(
+        tester,
+        () =>
+            tester.widget<ElevatedButton>(
+              find.byKey(const ValueKey('share_score_button')),
+            ).onPressed !=
+            null,
+      );
       final settled = tester.widget<ElevatedButton>(
         find.byKey(const ValueKey('share_score_button')),
       );
@@ -157,7 +184,11 @@ void main() {
 
       await showButton(tester, dailyGame());
       await tester.tap(find.byKey(const ValueKey('share_score_button')));
-      await letSharingFinish(tester);
+      // Done when the failure has actually surfaced in the tree.
+      await untilShareSettles(
+        tester,
+        () => tester.any(find.text('Could not open the share sheet.')),
+      );
 
       expect(find.text('Could not open the share sheet.'), findsOneWidget);
     } finally {
@@ -172,7 +203,11 @@ void main() {
       // No handler registered: MissingPluginException — the Android case.
       await showButton(tester, dailyGame());
       await tester.tap(find.byKey(const ValueKey('share_score_button')));
-      await letSharingFinish(tester);
+      // Done when the failure has actually surfaced in the tree.
+      await untilShareSettles(
+        tester,
+        () => tester.any(find.text('Could not open the share sheet.')),
+      );
 
       expect(find.text('Could not open the share sheet.'), findsOneWidget);
     } finally {

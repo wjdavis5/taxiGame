@@ -284,6 +284,29 @@ void main() {
           isDailyShift: true,
         );
 
+    /// Waits until [done] holds, alternating a short real delay with a
+    /// frame pump — the same deadline-polling share_score_button_test
+    /// adopted for issue #46. The one-tap share renders the card into a
+    /// real PNG and round-trips the platform channel, so the turns it
+    /// needs vary with machine load; the fixed 100 ms drain this replaced
+    /// raced on loaded CI runners. A 5 s deadline makes quick runs exit
+    /// early, slow ones keep stepping, and a genuine hang fail loudly.
+    Future<void> untilShareSettles(
+      WidgetTester tester,
+      bool Function() done,
+    ) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (!done()) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('timed out waiting for the share flow to settle');
+        }
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 2)),
+        );
+        await tester.pump();
+      }
+    }
+
     testWidgets('an ended shift offers to share the score', (tester) async {
       // The native half of the channel is iOS-only, so the offer is.
       // The override is cleared inside the body: the binding checks its
@@ -318,11 +341,9 @@ void main() {
         await showPanel(tester, dailyGame(), bankedSummary);
 
         await tester.tap(find.byKey(const ValueKey('share_score_button')));
-        await tester.pump();
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 100)),
-        );
-        await tester.pump();
+        // Done when the channel has actually been handed the card (issue
+        // #46) — not after a guess at how long the raster takes.
+        await untilShareSettles(tester, () => calls.isNotEmpty);
 
         expect(calls, hasLength(1));
         final args = calls.single.arguments as Map<Object?, Object?>;

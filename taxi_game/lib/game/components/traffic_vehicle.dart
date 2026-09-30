@@ -119,17 +119,19 @@ class TrafficVehicle extends PositionComponent
       angle = pi;
     }
 
-    // The bundled sprites are side-view art facing right while the game is
-    // top-down and traffic travels along the road, so the child is rotated a
-    // quarter turn and stretched over the logical vehicle box. Because it is
-    // a separate child, its art and rotation never touch the hitbox.
+    // The bundled sprites are top-down art facing up the screen (issue
+    // #47) — the direction same-direction traffic travels, with the π flip
+    // above turning oncoming cars to face the player — and each PNG's
+    // canvas already carries its vehicle's logical proportions, so the
+    // child is stretched straight over the vehicle box with no rotation of
+    // its own. Because it is a separate child, its art never touches the
+    // hitbox.
     final carSprite = sprite ??
         await game.loadSprite(VehicleSprites.trafficSpritePath(vehicleType));
     add(SpriteComponent(
       sprite: carSprite,
-      size: Vector2(vehicleSize.y, vehicleSize.x),
+      size: vehicleSize,
       position: vehicleSize / 2,
-      angle: -pi / 2,
       anchor: Anchor.center,
     ));
   }

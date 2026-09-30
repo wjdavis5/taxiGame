@@ -53,6 +53,9 @@ void main() {
     expect(find.byKey(const Key('daily_screen')), findsOneWidget);
     expect(find.byKey(const Key('daily_today_unplayed')), findsOneWidget);
     expect(find.byKey(const Key('daily_empty_history')), findsOneWidget);
+    // Nothing has been played at all, so the plain wording is the truth
+    // here (issue #44).
+    expect(find.text('No completed daily shifts yet.'), findsOneWidget);
     expect(find.byKey(const Key('daily_today_score')), findsNothing);
   });
 
@@ -66,8 +69,16 @@ void main() {
     expect(find.text('340'), findsOneWidget);
     expect(find.byKey(const Key('daily_outcome_banked')), findsOneWidget);
     expect(find.byKey(const Key('daily_today_unplayed')), findsNothing);
-    // Today has its card; it is not repeated in the history list.
+    // Today has its card; it is not repeated in the history list. And
+    // the empty history is worded for the past days — not the flat "no
+    // completed shifts" that contradicted the card above it (issue #44).
     expect(find.byKey(const Key('daily_empty_history')), findsOneWidget);
+    expect(
+      find.text('No past daily shifts yet — come back tomorrow for a new '
+          'course.'),
+      findsOneWidget,
+    );
+    expect(find.text('No completed daily shifts yet.'), findsNothing);
   });
 
   testWidgets('a wrecked daily names the forfeit, not the payout',

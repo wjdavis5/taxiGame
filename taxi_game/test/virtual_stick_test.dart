@@ -166,6 +166,20 @@ void main() {
           ),
         );
 
+    /// A drag update with the semantics the real dispatcher has: the
+    /// globalPosition Flutter's `MultiDragPointerState._move` reports is
+    /// the thumb's position *after* the move, and the delta is that same
+    /// event's movement. [glide] above pins globalPosition at the touch
+    /// origin — the pre-move convention — under which the old
+    /// canvasEndPosition arithmetic accidentally agreed with the truth;
+    /// these events are the ones that exposed the double count (issue
+    /// #41).
+    DragUpdateEvent move(Offset delta, Offset thumb) => DragUpdateEvent(
+          7,
+          game,
+          DragUpdateDetails(delta: delta, globalPosition: thumb),
+        );
+
     test('a lower-half touch becomes the stick origin and holds the taxi '
         'still', () async {
       await mountRun();
@@ -192,6 +206,43 @@ void main() {
       expect(game.player.throttleInput, greaterThan(0.4));
       expect(game.player.throttleInput, lessThan(0.6));
       expect(stick.input.throttle, game.player.throttleInput);
+    });
+
+    test('a flick back to centre steers nothing (issue #41)', () async {
+      await mountRun();
+
+      // The report's path, in its two large steps: down at (210, 700),
+      // one big move right-and-up to (245, 670), then one big move
+      // straight back above the origin at (210, 670).
+      stick.onDragStart(touchDown(at: const Offset(210, 700)));
+      stick.onDragUpdate(
+        move(const Offset(35, -30), const Offset(245, 670)),
+      );
+      expect(game.player.steeringInput, greaterThan(0),
+          reason: 'the first step really is to the right');
+
+      stick.onDragUpdate(
+        move(const Offset(-35, 0), const Offset(210, 670)),
+      );
+
+      // The thumb now rests directly above the origin: no steering, and
+      // only the (0, -30) glide's throttle. Under the double count the
+      // computed offset after the second step was (-35, -30) — full left
+      // lock while the thumb sat on the origin, and the cab dived for
+      // the left kerb.
+      expect(game.player.steeringInput, 0);
+      expect(game.player.throttleInput, greaterThan(0));
+      // The whole offset is (0, -30): exactly the pure-up glide's share.
+      expect(
+        game.player.throttleInput,
+        closeTo(
+          VirtualStick.resolve(
+            Vector2(0, -30),
+            radius: VirtualStick.stickRadius,
+          ).throttle,
+          1e-9,
+        ),
+      );
     });
 
     test('an upper-half touch is ignored', () async {

@@ -344,9 +344,9 @@ class TaxiGame extends FlameGame
   /// (issue #6 contact legibility). Cleared whenever a level loads.
   CrashReport? lastImpact;
 
-  /// Rate-limits scrape feedback so a jittering grind cannot spam markers,
-  /// or the scrape sound (issue #49).
-  double _scrapeMarkerCooldown = 0;
+  /// Rate-limits scrape feedback so a grinding push-match cannot spam
+  /// particles, shake, sound, and markers at frame rate (issue #42).
+  double _scrapeFeedbackCooldown = 0;
 
   // --- Impact juice (issue #7) -------------------------------------------
   /// Decaying screen-shake envelope, driven onto the camera viewport in
@@ -394,11 +394,31 @@ class TaxiGame extends FlameGame
   /// one car length inside it (see [levelRoadTopY]).
   static const double levelRoadEndMargin = 800.0;
 
+  /// How far up the road the level camera's centre runs ahead of the taxi
+  /// (issue #45). The ladder's start is pinned to each level's lowest
+  /// marker — 250 px below it, a constant of [loadLevel] — so a camera
+  /// centred on the taxi itself always framed the first pickup exactly
+  /// 150 px below the view top: inside the ~110 px HUD chip band, where
+  /// the marker hid under a chip (the ×1 on level 1, SCORE 0 on 2 and 3).
+  /// Editing the level JSON cannot move it — the start derives from the
+  /// lowest point, so the 150 px is structural — but leading the camera
+  /// does: the marker opens 250 px below the view top, clear of the
+  /// chips, with the authored geometry, the first-drive distance, and
+  /// the endless framing all untouched.
+  static const double levelCameraLead = 100.0;
+
   /// World y of the level road's top end (issue #31): the line the taxi
   /// noses against at the course's finish. Null outside level mode — an
   /// endless run's road is infinite, and its coordinate space belongs to
   /// the world fold (issue #30), so nothing may clamp it.
   double? levelRoadTopY;
+
+  /// The point the level camera follows (issue #45): the taxi's position
+  /// nudged up the road by [levelCameraLead]. Pure data — never mounted,
+  /// never rendered; [update] mirrors the taxi into it right before the
+  /// component tree ticks. Null outside level mode; recreated by every
+  /// [loadLevel].
+  _LevelCameraLead? _levelCameraLead;
 
   /// The one-thumb relative-drag virtual stick (issue #29), the sole
   /// touch input: mounted on the viewport in [onLoad]. Null only before
@@ -540,6 +560,9 @@ class TaxiGame extends FlameGame
     // here before — the tutorial handoff (#16) drives this path — owed
     // its clamp to the level road's finish, and that finish is gone.
     levelRoadTopY = null;
+    // Its camera framing goes with it (issue #45): the endless shift
+    // centres straight on the taxi, no level lead.
+    _levelCameraLead = null;
     // And no ladder name either: the shift is not a level.
     currentLevelName = null;
     passengers.clear();
@@ -710,9 +733,17 @@ class TaxiGame extends FlameGame
     world.add(player);
     _playerReady = true;
 
-    // Camera: locked horizontally on the road, follows the taxi vertically.
-    camera.viewfinder.position = Vector2(roadCenterX, playerStartY);
-    camera.follow(player, verticalOnly: true);
+    // Camera: locked horizontally on the road, follows the taxi vertically
+    // — through the lead (issue #45), a point [levelCameraLead] up the
+    // road, so the level's first pickup opens below the HUD chip band
+    // instead of underneath a chip. The lead is born at the start's
+    // lead position and the viewfinder with it, so frame zero is already
+    // the followed frame; [update] keeps the two glued thereafter.
+    _levelCameraLead =
+        _LevelCameraLead(Vector2(roadCenterX, playerStartY - levelCameraLead));
+    camera.viewfinder.position =
+        Vector2(roadCenterX, playerStartY - levelCameraLead);
+    camera.follow(_levelCameraLead!, verticalOnly: true);
 
     trafficSpawner = TrafficSpawner(pattern: currentLevel.trafficPattern);
     world.add(trafficSpawner);
@@ -1312,6 +1343,14 @@ class TaxiGame extends FlameGame
   void onScrape(CrashReport report) {
     lastImpact = report;
 
+    // One volley of feedback per window (issue #42): a push-match grinds
+    // out scrapes at frame rate, and each one used to add particles,
+    // shake, sound, and a marker — 60 Hz of all four. The record above
+    // always updates; everything the player sees and hears shares the
+    // same 0.4 s window the marker has always kept.
+    if (_scrapeFeedbackCooldown > 0) return;
+    _scrapeFeedbackCooldown = 0.4;
+
     // Sparks and a short jolt — enough to feel the sheet metal, without
     // crowding out the crash feedback (issue #7).
     world.add(BurstParticles(
@@ -1325,17 +1364,12 @@ class TaxiGame extends FlameGame
       ImpactFx.scrapeShakeMagnitude,
       duration: ImpactFx.scrapeShakeDuration,
     );
-    if (_scrapeMarkerCooldown <= 0) {
-      _scrapeMarkerCooldown = 0.4;
-      // Sheet-metal scrape sound under the jolt (issue #4). On the marker's
-      // cooldown (issue #49): a grind reports a scrape every frame, and one
-      // sound per frame would flood the audio platform channel.
-      audio?.playScrapeSound();
-      world.add(ScrapeMarker(
-        position: report.contactPoint.clone(),
-        vehicleKind: report.vehicleKind,
-      ));
-    }
+    // Sheet-metal scrape sound under the jolt (issue #4).
+    audio?.playScrapeSound();
+    world.add(ScrapeMarker(
+      position: report.contactPoint.clone(),
+      vehicleKind: report.vehicleKind,
+    ));
   }
 
   /// A pass the taxi just cleared, reported by [vehicle] at the moment
@@ -1445,6 +1479,18 @@ class TaxiGame extends FlameGame
     // before anything reads a position this frame.
     _maybeRebaseWorld();
 
+    // Refresh the level camera's lead (issue #45) here, immediately
+    // before the tree ticks: the camera updates ahead of the world, so a
+    // lead updated inside the world would hand the follow a frame-old
+    // position and the view would rubber-band a tick behind every move.
+    // Mirroring here reads the taxi where it stands this tick — exactly
+    // the position the follow saw when it tracked the taxi itself.
+    final lead = _levelCameraLead;
+    if (lead != null) {
+      lead.position.setFrom(player.position);
+      lead.position.y -= levelCameraLead;
+    }
+
     super.update(dt);
     _applyShake(dt);
 
@@ -1498,8 +1544,8 @@ class TaxiGame extends FlameGame
           : 0;
     }
 
-    if (_scrapeMarkerCooldown > 0) {
-      _scrapeMarkerCooldown = math.max(0.0, _scrapeMarkerCooldown - dt);
+    if (_scrapeFeedbackCooldown > 0) {
+      _scrapeFeedbackCooldown = math.max(0.0, _scrapeFeedbackCooldown - dt);
     }
   }
 
@@ -1708,4 +1754,16 @@ class TaxiGame extends FlameGame
     }
     return KeyEventResult.handled;
   }
+}
+
+/// The invisible point the level camera follows (issue #45): the taxi's
+/// position nudged up the road by [TaxiGame.levelCameraLead], so the
+/// ladder's first pickup spawns clear of the HUD chip band. Never added
+/// to the component tree — [TaxiGame.update] copies the taxi's position
+/// into it each tick, and the follow behavior reads that; keeping it out
+/// of the world also keeps it out of the world fold (issue #30) and
+/// every `_clearWorld`, which is correct, because [TaxiGame.loadLevel]
+/// rebuilds it with each level anyway.
+class _LevelCameraLead extends PositionComponent {
+  _LevelCameraLead(Vector2 position) : super(position: position.clone());
 }
