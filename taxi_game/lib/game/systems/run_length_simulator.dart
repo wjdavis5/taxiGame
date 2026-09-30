@@ -198,7 +198,7 @@ class PresetTrafficVehicle {
 ///    the lane range, same-direction traffic halved, vehicle-type
 ///    multiplier applied, spawns 500 px ahead of the camera), with the
 ///    lane re-laid on the road that exists at the spawn distance and any
-///    path the road cannot contain skipped (issue #87);
+///    path the rolled body cannot contain skipped (issue #87);
 ///  - the living road (issue #24): [RunEnvironment] for the street itself
 ///    — lane targets and kerb stops follow the local width, traffic rides
 ///    the environment-aware profile with the weather/night modifier folded
@@ -708,8 +708,14 @@ class RunLengthSimulator {
         // survive a width change — and no spawn is kept whose fixed-x
         // path leaves the road anywhere over the span it covers, both
         // through the same [RunEnvironment] helpers the live spawner
-        // calls. Everything here runs before the per-lane roll, so the
-        // RNG stream stays untouched.
+        // calls. The junction and works clearances run before the
+        // per-lane roll; the containment check cannot, because it has to
+        // ask about the body the spawn rolled (a sedan fits a narrow
+        // street where a bus would overhang — gating every spawn on the
+        // bus emptied 2.5 km of same-direction traffic before every
+        // narrowing and flipped the economy's new-below-median
+        // invariant). A skipped spawn's draws produce nothing, so the
+        // stream stays deterministic per seed either way.
         final spawnRoad = env.roadAt(spawnDistance);
         final taxiRoad = env.roadAt(distance);
         final junction = env.isIntersectionAt(spawnDistance);
@@ -718,18 +724,6 @@ class RunLengthSimulator {
           final laneX =
               spawnRoad.xAtFraction(taxiRoad.fractionOf(lane.laneX));
           if (env.isLaneBlockedAt(spawnDistance, laneX)) continue;
-          final (spanFrom, spanTo) = RunEnvironment.trafficPathSpan(
-            spawnDistance,
-            oncoming: lane.oncoming,
-          );
-          if (!env.laneHoldsOnRoad(
-            spanFrom,
-            spanTo,
-            laneX,
-            RunEnvironment.widestTrafficHalfWidth,
-          )) {
-            continue;
-          }
           if (random.nextDouble() <= lane.spawnProbability) {
             var laneSpeed = lane.speedRange.min +
                 random.nextDouble() *
@@ -737,6 +731,20 @@ class RunLengthSimulator {
             if (!lane.oncoming) laneSpeed *= 0.5;
             const types = TrafficVehicleType.values;
             final type = types[random.nextInt(types.length)];
+            // The rolled body's own footprint, full sprite width — the
+            // thing a player would see crossing the kerb (issue #87).
+            final (spanFrom, spanTo) = RunEnvironment.trafficPathSpan(
+              spawnDistance,
+              oncoming: lane.oncoming,
+            );
+            if (!env.laneHoldsOnRoad(
+              spanFrom,
+              spanTo,
+              laneX,
+              type.size.x / 2,
+            )) {
+              continue;
+            }
             vehicles.add(_SimVehicle(
               x: laneX,
               y: y - spawnDistanceAhead,

@@ -78,24 +78,11 @@ class TrafficVehicle extends PositionComponent
     speed = baseSpeed * vehicleType.speedMultiplier;
   }
 
-  /// Factory method to create a random traffic vehicle
-  factory TrafficVehicle.random({
-    required Vector2 position,
-    required double baseSpeed,
-    required List<Vector2> path,
-    Random? random,
-  }) {
-    final rng = random ?? Random();
-    const types = TrafficVehicleType.values;
-    final randomType = types[rng.nextInt(types.length)];
-
-    return TrafficVehicle(
-      position: position,
-      vehicleType: randomType,
-      baseSpeed: baseSpeed,
-      path: path,
-    );
-  }
+  // No random factory any more: the spawner used to draw the body type
+  // in here, but the issue #87 containment gate has to ask whether the
+  // body a spawn actually drew fits the road it will drive — before the
+  // car exists — so the roll moved out to the spawner, next to the
+  // gate that needs it.
 
   @override
   Future<void> onLoad() async {

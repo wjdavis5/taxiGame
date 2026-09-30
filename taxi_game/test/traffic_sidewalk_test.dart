@@ -18,13 +18,13 @@ import 'package:taxi_game/services/storage_service.dart';
 /// Traffic and the road's width changes (issue #87).
 ///
 /// Endless traffic takes its lane x from the road under the taxi but
-/// materialises 500 px ahead, and its straight path never re-reads the
-/// road — so wherever an avenue narrowed, cars appeared over the kerb and
-/// drove the sidewalk for their whole life. The fix is two-sided: the lane
+/// materialises 500 px ahead, and its straight path never re-reads
+/// the road — so wherever an avenue narrowed, cars appeared over the kerb
+/// and drove the sidewalk for their whole life. The fix is two-sided: the lane
 /// is re-laid on the road that exists at the *spawn* distance (fractions
 /// survive a width change; px do not), and a spawn is skipped outright
-/// when its widest-body footprint leaves the road anywhere over the span
-/// its waypoints cover. These tests cover the containment helper exactly,
+/// when the body it rolled leaves the road anywhere over the span its
+/// waypoints cover. These tests cover the containment helper exactly,
 /// the fraction re-lay, and — flood-spawning at a real avenue→narrow
 /// boundary — the live invariant that no car ever sits on the sidewalk.
 void main() {
@@ -91,6 +91,21 @@ void main() {
     return null;
   }
 
+  /// First distance where a standard segment gives way to a narrow one —
+  /// the native habitat of the per-body gate's other face: the standard
+  /// lane x (250) overhangs the narrow kerb by exactly one pixel for the
+  /// bus and for nothing else, so the approach is where gating every
+  /// spawn on the widest body empties lanes the rolled bodies fit.
+  double? firstStandardToNarrow(RunEnvironment env) {
+    for (var k = 2; k < 60; k++) {
+      if (env.profileForSegment(k - 1) == RoadProfile.standard &&
+          env.profileForSegment(k) == RoadProfile.narrow) {
+        return k * RunEnvironment.geometrySegmentLength;
+      }
+    }
+    return null;
+  }
+
   /// The reference implementation of containment: sample the road finely
   /// over the whole span. The production helper must agree with this
   /// verdict exactly while doing far less work.
@@ -126,8 +141,10 @@ void main() {
       final narrowRightLane = env.roadAt(boundary + 1000).laneXs.last;
       expect(narrowRightLane, closeTo(237, 0.01));
 
-      final busHalf = RunEnvironment.widestTrafficHalfWidth; // 25 px
-      expect(busHalf, 25.0, reason: 'the bus is the widest body');
+      // The bus's half width, 25 px — the widest body on the road and
+      // the natural probe for the helper; the gate itself asks per
+      // rolled body (a sedan's 20 px fits streets the bus cannot).
+      const busHalf = 25.0;
 
       // The avenue's right lane over a span crossing the boundary and
       // through the whole taper: its 5/6 fraction re-laid on the narrow
@@ -228,10 +245,9 @@ void main() {
       final spawnRoad = env.roadAt(boundary + 400);
       final relaid = spawnRoad.xAtFraction(fraction);
       expect(relaid, lessThan(laneX));
-      expect(relaid - RunEnvironment.widestTrafficHalfWidth,
-          greaterThanOrEqualTo(spawnRoad.leftX - 0.001));
-      expect(laneX + RunEnvironment.widestTrafficHalfWidth,
-          greaterThan(spawnRoad.rightX),
+      const busHalf = 25.0; // the widest body — the worst case to fit
+      expect(relaid - busHalf, greaterThanOrEqualTo(spawnRoad.leftX - 0.001));
+      expect(laneX + busHalf, greaterThan(spawnRoad.rightX),
           reason: 'the old px would have put a bus over the kerb');
     });
 
@@ -306,9 +322,10 @@ void main() {
       // geometry of the bug; the re-lay has to move the lanes onto the
       // road that exists there, and the skip has to turn away the
       // same-direction kerb lanes whose 3000 px paths cross the full
-      // narrowing (probed at this seed: oncoming lanes at the 1/6 and
-      // 5/6 lines hold, their spans never reaching the taper's end;
-      // every same-direction lane but the centre line is skipped).
+      // narrowing (probed at this seed: the oncoming lane at the 1/6
+      // line holds, its span never reaching the taper's end, and every
+      // same-direction lane but the centre line is turned away — no
+      // rolled body fits the narrowing at the kerb lines).
       game.player.position = Vector2(TaxiGame.roadCenterX, -(boundary - 450));
       await tickAndSettle(game);
       final taxiDistance = game.runDistance;
@@ -319,51 +336,6 @@ void main() {
       var vehiclesSeen = 0;
       final laneFractionsSeen = <double>{};
 
-      /// The whole invariant, per car: its body (full sprite width, the
-      /// thing a player sees over the kerb) stays inside roadAt at every
-      /// distance its path covers, its own half-length beyond each end
-      /// waypoint included. 25 px sampling — finer than any taper moves.
-      void expectOnRoad(TrafficVehicle v) {
-        final shift = game.worldShift;
-        var minDistance = double.infinity;
-        var maxDistance = double.negativeInfinity;
-        for (final waypoint in v.path) {
-          final d = shift - waypoint.y;
-          minDistance = math.min(minDistance, d);
-          maxDistance = math.max(maxDistance, d);
-        }
-        final halfLength = v.vehicleSize.y / 2;
-        final halfWidth = v.vehicleSize.x / 2;
-        final from = minDistance - halfLength;
-        final to = maxDistance + halfLength;
-        for (var d = from; d <= to; d += 25) {
-          final road = env.roadAt(d);
-          expect(v.position.x - halfWidth,
-              greaterThanOrEqualTo(road.leftX - 0.5),
-              reason: 'vehicle at x ${v.position.x.toStringAsFixed(1)} '
-                  '(${v.vehicleType.name}) leaves the road at distance '
-                  '${d.toStringAsFixed(0)}');
-          expect(v.position.x + halfWidth, lessThanOrEqualTo(road.rightX + 0.5),
-              reason: 'vehicle at x ${v.position.x.toStringAsFixed(1)} '
-                  '(${v.vehicleType.name}) leaves the road at distance '
-                  '${d.toStringAsFixed(0)}');
-        }
-
-        // And the lane it actually took is one of the profile's lanes —
-        // re-laid by fraction onto the road at its own spawn distance,
-        // never an avenue x pasted onto a narrow street.
-        final spawnDistance = shift - v.path.first.y;
-        final f = env.roadAt(spawnDistance).fractionOf(v.position.x);
-        laneFractionsSeen.add(f);
-        expect(
-          taxiFractions.any((p) => (p - f).abs() < 0.001),
-          isTrue,
-          reason: 'x ${v.position.x.toStringAsFixed(1)} at spawn distance '
-              '${spawnDistance.toStringAsFixed(0)} is not on a lane of the '
-              'taxi-road profile $taxiFractions',
-        );
-      }
-
       for (var i = 0; i < 1800; i++) {
         game.update(1 / 60);
         if (i % 6 == 5) await drain();
@@ -372,7 +344,8 @@ void main() {
               game.world.children.whereType<TrafficVehicle>().toList();
           vehiclesSeen = math.max(vehiclesSeen, vehicles.length);
           for (final v in vehicles) {
-            expectOnRoad(v);
+            laneFractionsSeen
+                .add(expectOnRoadAndOnALane(game, env, v, taxiFractions));
           }
         }
       }
@@ -384,8 +357,175 @@ void main() {
               'to mean anything');
       expect(laneFractionsSeen.length, greaterThan(1),
           reason: 'both surviving lane lines carried traffic (the kerb '
-              'lanes cannot fit a bus on the narrow width — their spawns '
-              'are the ones the skip turns away)');
+              'lanes cannot fit any body on the narrow width — their '
+              'spawns are the ones the skip turns away)');
     }, timeout: const Timeout(Duration(minutes: 3)));
   });
+
+  group('a flood before a standard→narrow boundary (issue #87)', () {
+    // The economy-regression face of the gate: the standard lane x
+    // (250) overhangs the narrow kerb by exactly one pixel for the bus
+    // and fits for every other body — so an approach like this is where
+    // "gate every spawn on the widest body" emptied 2.5 km of
+    // same-direction traffic the difficulty curve meant to place,
+    // lengthened every simulated chain, and flipped the economy
+    // instrument's new-below-median ordering. The gate must ask about
+    // the body the spawn rolled, not the worst body on the road.
+    test('the lane carries every body that fits — only the bus is turned away',
+        () async {
+      // A clean window: the first standard→narrow boundary whose spawn
+      // point (1.5 km short of it, the taxi parked 2 km short) sits on
+      // no cross street and inside no cone line. The scan is
+      // deterministic, so the seed it lands on is stable.
+      int? seed;
+      double? boundary;
+      RunEnvironment? scanned;
+      for (var s = 1; s <= 60; s++) {
+        final env = RunEnvironment(seed: s);
+        final b = firstStandardToNarrow(env);
+        if (b == null) continue;
+        final laneX = env.roadAt(b - 1500).xAtFraction(0.75);
+        if (env.isIntersectionAt(b - 1500)) continue;
+        if (env.isLaneBlockedAt(b - 1500, laneX)) continue;
+        seed = s;
+        boundary = b;
+        scanned = env;
+        break;
+      }
+      expect(boundary, isNotNull,
+          reason: 'some seed in 1..60 draws a clean standard→narrow '
+              'approach');
+      final env = scanned!;
+
+      final game = await mountGame(endlessGame(seed!));
+      expect(game.environment!.seed, env.seed);
+
+      game.trafficSpawner.clear();
+      final flood = TrafficSpawner.distanceBased(
+        profileOf: (d) {
+          final base = env.trafficAt(d);
+          return TrafficProfile(
+            spawnInterval: 0.3,
+            lanes: [
+              for (final lane in base.lanes)
+                TrafficLaneConfig(
+                  laneX: lane.laneX,
+                  speedRange: lane.speedRange,
+                  spawnProbability: 1.0,
+                  oncoming: lane.oncoming,
+                ),
+            ],
+          );
+        },
+        distanceOf: () => game.runDistance,
+        random: math.Random(90210),
+      );
+      game.trafficSpawner = flood;
+      game.world.add(flood);
+      await drain();
+
+      // Park the taxi 2 000 px below the boundary, dead centre of the
+      // standard road (x 200 — between the lanes at 150/250, so no
+      // parked body ever touches the flood). Every spawn lands 1 500 px
+      // short of the taper: flat standard road, lane x 250, whose
+      // 3 050 px same-direction span crosses the whole narrowing. Under
+      // the widest-body gate not one car would appear in this lane for
+      // the entire window; under the per-body gate everything but the
+      // bus spawns here — and drives through the narrowing on screen.
+      game.player.position = Vector2(TaxiGame.roadCenterX, -(boundary! - 2000));
+      await tickAndSettle(game);
+      final taxiDistance = game.runDistance;
+      expect(taxiDistance, closeTo(boundary - 2000, 1));
+      final taxiFractions =
+          env.roadAt(taxiDistance).profile.laneFractions;
+
+      var vehiclesSeen = 0;
+      final laneFractionsSeen = <double>{};
+      final typesOnTheKerbLine = <String>{};
+
+      for (var i = 0; i < 1800; i++) {
+        game.update(1 / 60);
+        if (i % 6 == 5) await drain();
+        if (i % 30 == 29) {
+          final vehicles =
+              game.world.children.whereType<TrafficVehicle>().toList();
+          vehiclesSeen = math.max(vehiclesSeen, vehicles.length);
+          for (final v in vehicles) {
+            final f =
+                expectOnRoadAndOnALane(game, env, v, taxiFractions);
+            laneFractionsSeen.add(f);
+            if ((f - 0.75).abs() < 0.001) {
+              typesOnTheKerbLine.add(v.vehicleType.name);
+            }
+          }
+        }
+      }
+
+      // Not vacuous, and the same-direction lane carried traffic: the
+      // 0.75 line is the one the widest-body gate used to empty here.
+      expect(vehiclesSeen, greaterThan(3),
+          reason: 'the flood must have spawned traffic for the invariant '
+              'to mean anything');
+      expect(laneFractionsSeen, contains(closeTo(0.75, 0.001)),
+          reason: 'the same-direction lane line at fraction 0.75 carried '
+              'traffic through the narrowing approach — the widest-body '
+              'gate emptied exactly this stretch');
+      // And the bus never appeared on it: its 25 px half-width is the
+      // one body that overhangs the narrow kerb (275 > 274).
+      expect(typesOnTheKerbLine, isNot(contains('bus')),
+          reason: 'a bus at x 250 overhangs the narrow kerb by 1 px — '
+              'the gate must still turn it away');
+    }, timeout: const Timeout(Duration(minutes: 3)));
+  });
+}
+
+/// The whole invariant, per car: its body (full sprite width, the thing
+/// a player sees over the kerb) stays inside roadAt at every distance
+/// its path covers, its own half-length beyond each end waypoint
+/// included. 25 px sampling — finer than any taper moves. Returns the
+/// lane fraction the car took, for the caller's lane-line census, and
+/// asserts that fraction is one of the taxi-road profile's lanes — the
+/// lane is re-laid by fraction onto the road at the car's own spawn
+/// distance, never an avenue x pasted onto a narrow street.
+double expectOnRoadAndOnALane(
+  TaxiGame game,
+  RunEnvironment env,
+  TrafficVehicle v,
+  List<double> taxiFractions,
+) {
+  final shift = game.worldShift;
+  var minDistance = double.infinity;
+  var maxDistance = double.negativeInfinity;
+  for (final waypoint in v.path) {
+    final d = shift - waypoint.y;
+    minDistance = math.min(minDistance, d);
+    maxDistance = math.max(maxDistance, d);
+  }
+  final halfLength = v.vehicleSize.y / 2;
+  final halfWidth = v.vehicleSize.x / 2;
+  final from = minDistance - halfLength;
+  final to = maxDistance + halfLength;
+  for (var d = from; d <= to; d += 25) {
+    final road = env.roadAt(d);
+    expect(v.position.x - halfWidth,
+        greaterThanOrEqualTo(road.leftX - 0.5),
+        reason: 'vehicle at x ${v.position.x.toStringAsFixed(1)} '
+            '(${v.vehicleType.name}) leaves the road at distance '
+            '${d.toStringAsFixed(0)}');
+    expect(v.position.x + halfWidth, lessThanOrEqualTo(road.rightX + 0.5),
+        reason: 'vehicle at x ${v.position.x.toStringAsFixed(1)} '
+            '(${v.vehicleType.name}) leaves the road at distance '
+            '${d.toStringAsFixed(0)}');
+  }
+
+  final spawnDistance = shift - v.path.first.y;
+  final f = env.roadAt(spawnDistance).fractionOf(v.position.x);
+  expect(
+    taxiFractions.any((p) => (p - f).abs() < 0.001),
+    isTrue,
+    reason: 'x ${v.position.x.toStringAsFixed(1)} at spawn distance '
+        '${spawnDistance.toStringAsFixed(0)} is not on a lane of the '
+        'taxi-road profile $taxiFractions',
+  );
+  return f;
 }

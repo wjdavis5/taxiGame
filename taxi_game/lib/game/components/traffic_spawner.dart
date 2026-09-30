@@ -136,10 +136,10 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     // clearance reads true distance (issue #30): world y folds back
     // toward the origin as the run deepens.
     final env = game.environment;
+    final spawnDistance =
+        env == null ? null : max(0.0, game.worldShift - spawnY);
     var spawnX = laneConfig.laneX;
     if (env != null) {
-      final spawnDistance = max(0.0, game.worldShift - spawnY);
-
       // The lane x belongs to the road at the spawn distance, not the
       // one under the taxi (issue #87): the profile was laid out over
       // roadAt(runDistance) — the difficulty pressure stays there — but
@@ -149,32 +149,11 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
       // road and re-lays it on the road that actually exists at the
       // spawn. Level mode has no living road — fixed lanes on a fixed
       // street — and keeps its lane x untouched.
-      spawnX = env.roadAt(spawnDistance).xAtFraction(
+      spawnX = env.roadAt(spawnDistance!).xAtFraction(
           env.roadAt(_distanceOf!()).fractionOf(laneConfig.laneX));
 
       if (env.isIntersectionAt(spawnDistance)) return;
       if (env.isLaneBlockedAt(spawnDistance, spawnX)) return;
-
-      // A straight path never re-reads the road as it drives, so the
-      // body has to hold this lane for the whole span its waypoints
-      // cover — or the next narrowing would put it on the sidewalk
-      // mid-drive, the exact defect the remap above fixes at the spawn
-      // point (issue #87). Checked against the widest body any spawn
-      // can roll (the bus): a lane fits everyone or spawns no one.
-      // Like the clearances above, this runs after the roll, consuming
-      // no RNG, so the seed's stream is untouched.
-      final (spanFrom, spanTo) = RunEnvironment.trafficPathSpan(
-        spawnDistance,
-        oncoming: laneConfig.oncoming,
-      );
-      if (!env.laneHoldsOnRoad(
-        spanFrom,
-        spanTo,
-        spawnX,
-        RunEnvironment.widestTrafficHalfWidth,
-      )) {
-        return;
-      }
     }
 
     // Generate random speed within range. Same-direction traffic drives
@@ -183,6 +162,44 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
         random.nextDouble() * (laneConfig.speedRange.max - laneConfig.speedRange.min);
     if (!laneConfig.oncoming) {
       speed *= 0.5;
+    }
+
+    // The body this spawn rolls, drawn here — it used to be drawn
+    // inside TrafficVehicle's random factory — so the containment gate
+    // below can ask whether THIS body's footprint fits; the draw order
+    // is unchanged from before the gate learned about bodies:
+    // probability, speed, type.
+    const types = TrafficVehicleType.values;
+    final type = types[random.nextInt(types.length)];
+
+    if (env != null) {
+      // A straight path never re-reads the road as it drives, so the
+      // rolled body has to hold this lane for the whole span its
+      // waypoints cover — or the next narrowing would put it on the
+      // sidewalk mid-drive, the exact defect the remap above fixes at
+      // the spawn point (issue #87). The gate is the body's own full
+      // sprite width, the thing a player would see crossing the kerb:
+      // a sedan's footprint fits a narrowing street where a bus's
+      // would overhang, and gating every spawn on the widest body
+      // emptied kilometres of lane before every width change the bus
+      // alone cannot make — traffic the difficulty curve meant to
+      // place. The span itself stays padded by half the longest body
+      // any spawn can roll, so either end is judged with the deepest
+      // nose any car has. A skipped spawn has already spent its rolls;
+      // they produced nothing, and the stream stays deterministic per
+      // seed.
+      final (spanFrom, spanTo) = RunEnvironment.trafficPathSpan(
+        spawnDistance!,
+        oncoming: laneConfig.oncoming,
+      );
+      if (!env.laneHoldsOnRoad(
+        spanFrom,
+        spanTo,
+        spawnX,
+        type.size.x / 2,
+      )) {
+        return;
+      }
     }
 
     // Oncoming traffic drives down toward the player; same-direction
@@ -196,11 +213,11 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     // construction (issue #32): a retired spawner's last spawn may outlive
     // its tree attachment, and the vehicle's sprite load must not depend
     // on walking a tree that is being torn down underneath it.
-    final vehicle = TrafficVehicle.random(
+    final vehicle = TrafficVehicle(
       position: Vector2(spawnX, spawnY),
+      vehicleType: type,
       baseSpeed: speed,
       path: path,
-      random: random,
     )..game = game;
 
     // Add to this run's world so it scrolls with the camera (issue #32:

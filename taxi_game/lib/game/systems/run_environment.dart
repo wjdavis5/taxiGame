@@ -296,13 +296,6 @@ class RunEnvironment {
 
   // --- Traffic containment (issue #87) -------------------------------------
 
-  /// Half the width of the widest traffic body any lane can spawn — the
-  /// bus. A lane has to fit this band before any spawn is allowed there,
-  /// because the vehicle type is rolled only after the lane check.
-  static final double widestTrafficHalfWidth = TrafficVehicleType.values
-      .map((type) => type.size.x)
-      .reduce(math.max) / 2;
-
   /// Half the length of the longest traffic body any lane can spawn —
   /// the pad that keeps a vehicle centred at either end of its path
   /// fully on the road, the same clearance the level course's end keeps
