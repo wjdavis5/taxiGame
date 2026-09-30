@@ -182,20 +182,31 @@ Pushing to `main` runs `.github/workflows/ios-release.yml`: analyze, test,
 archive, export, verify, upload to TestFlight.
 
 **App Store review submission fires while App Store Connect shows no
-submitted or handled version matching `version:` in `pubspec.yaml`.** Apple
-rejects a second submission for a version string already submitted, so the
-pipeline asks Apple's API (`tools/asc_version_state.rb`) what state the
-version is in and submits only when no live submission exists: the version
-is not on Apple's side yet, or every matching record is still editable
-(`PREPARE_FOR_SUBMISSION`, `REJECTED`, `METADATA_REJECTED`,
-`INVALID_BINARY`). Any other state — in review, approved, on sale, or
-developer-rejected — goes to TestFlight only. The decision is idempotent:
-a bump whose own run fails before Submit is picked up by the next push,
-where the old compare-against-the-previous-commit gate logged
-"Version unchanged" and lost the submission (issue #89). Bumping the
-version is still the signal that a release is intended — it is what makes
-the state check find no record yet. A failed state query fails the run
-rather than guessing TestFlight-only.
+unfinished review submission for the app and no submitted or handled
+version matching `version:` in `pubspec.yaml`.** Apple rejects a second
+submission for a version string already submitted, so the pipeline asks
+Apple's API (`tools/asc_version_state.rb`) — two sources, and it fails
+closed on any answer it cannot trust. First, `reviewSubmissions` for the
+app: any record that has not reached `COMPLETE` prints `REVIEW_IN_FLIGHT`
+and the run goes TestFlight only, whatever the version records said — the
+build-1074 run of issue #93 read a version list that came back without the
+in-review version as "no version yet" and tried to submit over a live
+review. Second, the version's own records: submit when the version is not
+on Apple's side yet (`NONE`) or every matching record is still
+machine-editable (`PREPARE_FOR_SUBMISSION`, `INVALID_BINARY`). Any other
+state — in review, approved, on sale, developer-rejected — goes to
+TestFlight only. Human rejections (`REJECTED`, `METADATA_REJECTED`) no
+longer auto-resubmit on a routine push: the issue sweep pushes about
+hourly, and resubmitting a rejection nobody has addressed must be a human
+act — bump the version or use the manual dispatch below. An answer the
+gate cannot trust (non-200, an empty version list — a live app always has
+version records — page-limit truncation) fails the run outright rather
+than guessing either way. The decision is idempotent: a bump whose own
+run fails before Submit is picked up by the next push, where the old
+compare-against-the-previous-commit gate logged "Version unchanged" and
+lost the submission (issue #89). Bumping the version is still the signal
+that a release is intended — it is what makes the state check find no
+record yet.
 
 ```bash
 # Ship 1.0.1 to review: edit pubspec.yaml, then push.
@@ -305,8 +316,9 @@ taxiGame/
 │   ├── privacy-policy.md      # published via GitHub Pages
 │   └── support.md             # published via GitHub Pages
 ├── tools/
-│   ├── asc_version_state.rb   # App Store Connect version state — the
-│   │                          #   release workflow's submit gate asks it
+│   ├── asc_version_state.rb   # App Store Connect version + review-submission
+│   │                          #   state — the release workflow's fail-closed
+│   │                          #   submit gate asks it (two sources)
 │   ├── make_app_icon.swift    # icon artwork
 │   ├── generate_app_icons.sh  # renders every declared size
 │   └── strip_alpha.swift      # removes the alpha channel from a PNG

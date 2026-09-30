@@ -15,25 +15,42 @@ uploads exist only as a fallback for when CI is broken.
 ## The one rule that shapes everything
 
 **App Store review submission fires while App Store Connect shows no
-submitted or handled version matching `version:` in `pubspec.yaml`.** Apple
-permanently rejects a second submission for a version string already
-submitted, so the pipeline asks Apple what state the version is in
-(`tools/asc_version_state.rb`) and decides from that answer:
+unfinished review submission for the app and no submitted or handled
+version matching `version:` in `pubspec.yaml`.** Apple permanently rejects
+a second submission for a version string already submitted, so the
+pipeline asks Apple (`tools/asc_version_state.rb`) — two sources, failing
+closed on any answer it cannot trust — and decides like this:
 
-- No record for the version yet, or every matching record still editable
-  (`PREPARE_FOR_SUBMISSION`, `REJECTED`, `METADATA_REJECTED`,
-  `INVALID_BINARY`) → build, upload to TestFlight, **and submit for
-  review**.
+- Any unfinished `reviewSubmissions` record for the app (`REVIEW_IN_FLIGHT`
+  — anything not yet `COMPLETE`) → build and upload to TestFlight
+  **only**, whatever the version records said. This is the guard that
+  would have stopped the build-1074 run, which read a version list that
+  came back without the in-review version as "no version yet" and tried to
+  submit over a live review (issue #93).
+- No record for the version yet (`NONE`), or every matching record still
+  machine-editable (`PREPARE_FOR_SUBMISSION`, `INVALID_BINARY`) → build,
+  upload to TestFlight, **and submit for review**.
 - Any matching record already submitted or handled — `WAITING_FOR_REVIEW`,
   `IN_REVIEW`, approved, on sale, `DEVELOPER_REJECTED`, or any state the
   gate does not recognize → build and upload to TestFlight **only**.
+
+Human rejections (`REJECTED`, `METADATA_REJECTED`) are TestFlight-only on a
+routine push (issue #93): a person at Apple sent reasons someone must read
+and act on, and this repo's automation pushes about hourly —
+auto-resubmitting would fire unaddressed rejections at Apple with no human
+involved. Resubmit deliberately: bump the version (new string → `NONE`) or
+use the manual dispatch below. `INVALID_BINARY` still auto-resubmits
+because it is Apple rejecting the artifact itself; the fix is a new build
+and the next push attaches it.
 
 Bumping the version is still the release signal: it is what makes the check
 find no record on Apple's side yet. The decision is idempotent, so a bump
 whose own run fails before the Submit step is submitted by the next push —
 the old gate compared against the previous commit, logged "Version
 unchanged", and lost such submissions forever (issue #89). A failed state
-query fails the run rather than defaulting to TestFlight-only.
+query fails the run rather than defaulting to TestFlight-only — and so
+does an answer the gate cannot trust, such as an empty version list (a
+live app always has version records) or a page-limit-truncated one.
 
 Build numbers come from `github.run_number + 1000` and are set by CI. The
 `+build` suffix in `pubspec.yaml` is ignored — never hand-edit it to control
@@ -169,10 +186,16 @@ Tell the user, concretely:
   This is the recovery the old version-diff gate made impossible, when any
   push after the bump logged "Version unchanged" and shipped TestFlight only
   (issue #89).
+- **The gate answers `REVIEW_IN_FLIGHT`** — normal while any version is in
+  review: the run ships TestFlight only and stays green. Nothing to fix;
+  wait for Apple, or remove the submission in App Store Connect first.
 - **The state query itself fails** (`ruby tools/asc_version_state.rb` exits
   non-zero) — the run fails loudly instead of guessing TestFlight-only.
-  Read the HTTP code in the log; an App Store Connect outage needs only a
-  re-run.
+  Read the log: an HTTP code means an App Store Connect outage (a re-run
+  fixes it), while "returned an empty list" or a page-limit message means
+  the answer came back broken (wrong app, wrong key role, API change) and
+  needs a human looking at `asc.rb version` before trusting the gate again
+  (issue #93).
 - **Signing failure in CI** — the distribution certificate expires
   **2027-08-23**. Renewal means regenerating `IOS_DIST_CERT_P12_BASE64` and
   `IOS_PROVISION_PROFILE_BASE64`. See CLAUDE.md.
