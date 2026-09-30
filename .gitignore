@@ -64,3 +64,7 @@ __azurite_db_blob_extent__.json
 
 # ZCode harness workspace config (regenerated locally by the harness on sync)
 .zcodeignore
+
+# Transient dynamic-workflow drafts (the saved definitions in
+# .zcode/workflows/ ARE committed; drafts are machine-owned scratch.)
+.zcode/workflow-drafts/
