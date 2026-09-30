@@ -376,12 +376,40 @@ if (!gatesOk) {
   } as WorkflowReport;
 }
 log("PR opened: " + prUrl + " — waiting for CI");
+// GitHub can take a minute to register checks after the push, and
+// `gh pr checks` exits 1 printing "no checks reported" on STDERR while
+// none exist — a state to wait out, not a failure. The first live sweep
+// false-failed exactly there and left a good PR stranded. Poll until
+// checks exist, then watch them to completion.
+let checksRegistered = false;
+for (let attempt = 0; attempt < 30 && !checksRegistered; attempt++) {
+  const probe = await world.run(
+    "gh",
+    ["pr", "checks", String(prNumber)],
+    { timeoutMs: 60000 },
+  );
+  checksRegistered =
+      probe.exitCode === 0 ||
+      !(probe.stdout + probe.stderr).includes("no checks");
+}
+if (!checksRegistered) {
+  for (const p of toImplement) {
+    report({ issue: p.number, title: p.title, status: "failed", note: "CI never registered on " + prUrl }, "issues");
+  }
+  return {
+    conclusion:
+      "Checks never registered on PR " + prUrl + " after a minute of polling — the PR is left open for a human; nothing was merged.",
+    findings: [],
+    verified: ["gh pr checks polled for 30 attempts (registration wait)"],
+    notCovered: ["review, merge and deploy — CI never started"],
+  } as WorkflowReport;
+}
 const checks = await world.run(
   "gh",
   ["pr", "checks", String(prNumber), "--watch", "--interval", "30"],
   { timeoutMs: 2700000 },
 );
-if (checks.exitCode !== 0 && !checks.stdout.includes("no checks")) {
+if (checks.exitCode !== 0) {
   for (const p of toImplement) {
     report({ issue: p.number, title: p.title, status: "failed", note: "CI red on " + prUrl }, "issues");
   }
