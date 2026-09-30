@@ -74,7 +74,13 @@ void main() {
           reason: 'roughly one shift in six should stretch past 4 km');
       expect(past4km, lessThanOrEqualTo(0.40),
           reason: '4 km must stay an achievement, not the default');
-      expect(estimate.survivalFractionBeyond(50000), lessThanOrEqualTo(0.05),
+      // Refreshed for issue #95: traffic no longer materialises on a
+      // two-lane road's centre divider at avenue boundaries — the
+      // straddler was a standing wall of unfair deep-run pressure, and
+      // removing it lets one more of the 101 pinned seeds live past
+      // 50 km (5.94% against the old 5% cap). The band's intent is
+      // unchanged: only a small minority outruns the curve that far.
+      expect(estimate.survivalFractionBeyond(50000), lessThanOrEqualTo(0.07),
           reason: 'a fixed-skill driver cannot outrun the curve forever');
     });
 

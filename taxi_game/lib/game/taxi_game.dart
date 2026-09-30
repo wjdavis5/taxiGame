@@ -1209,12 +1209,24 @@ class TaxiGame extends FlameGame
   /// restart mirrors [retryShift], and [startEndlessRun] does the rest
   /// — it re-derives the ghost day from [isGhostRace], spawns the
   /// [GhostCar], and clears the settled shift's flags.
+  ///
+  /// The race may only start for the day the settled run pinned
+  /// ([runDateKey]) — the day the summary's button was built for. A tap
+  /// after midnight (issue #96) used to re-read `todayKey`, which was
+  /// already the next day: the "race" drove D+1's never-shared course
+  /// alone — the ghost it promised belonged to D — and the practice
+  /// run's trace then became D+1's stored ghost, overwriting D's, so
+  /// the player entered D+1's one scoring attempt having rehearsed the
+  /// course. Refused, nothing changes: the summary keeps the screen,
+  /// exactly as if the button had never been offered.
   void raceGhost() {
+    final day = runDateKey;
+    if (day == null || day != DailyShift.todayKey) return;
     overlays.remove('shiftBanked');
     overlays.remove('shiftWrecked');
     isDailyShift = false;
     isGhostRace = true;
-    startEndlessRun(seed: DailyShift.seedForDateKey(DailyShift.todayKey));
+    startEndlessRun(seed: DailyShift.seedForDateKey(day));
   }
 
   /// Settles a completed level: freezes the run, pays the flat reward —

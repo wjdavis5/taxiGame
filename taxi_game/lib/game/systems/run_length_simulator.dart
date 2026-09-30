@@ -694,35 +694,37 @@ class RunLengthSimulator {
       // --- Spawn, exactly as TrafficSpawner.distanceBased does ---
       // The environment-aware profile (issue #24): the curve's anchors
       // over the local lane layout, with the weather/night modifier
-      // already folded into the pressure.
+      // already folded into the pressure. The interval comes from the
+      // taxi's distance; the lane list below comes from the spawn road.
       final profile = env.trafficAt(distance);
       spawnTimer += dt;
       if (spawnTimer >= profile.spawnInterval) {
         spawnTimer = 0.0;
         final spawnDistance = distance + spawnDistanceAhead;
-        // Same clearances the live spawner keeps (issue #24): no traffic
-        // materialises on a cross street or inside a work zone's closed
-        // lanes. And the same lane math (issue #87): the lane's x is
-        // recovered as a fraction of the taxi's road and re-laid on the
-        // road that exists at the spawn distance — lane px do not
-        // survive a width change — and no spawn is kept whose fixed-x
-        // path leaves the road anywhere over the span it covers, both
-        // through the same [RunEnvironment] helpers the live spawner
-        // calls. The junction and works clearances run before the
-        // per-lane roll; the containment check cannot, because it has to
-        // ask about the body the spawn rolled (a sedan fits a narrow
-        // street where a bus would overhang — gating every spawn on the
-        // bus emptied 2.5 km of same-direction traffic before every
-        // narrowing and flipped the economy's new-below-median
+        // The lanes a spawn rolls against are the spawn road's own
+        // (issue #95, mirroring the live spawner): the difficulty core —
+        // interval above, speeds, per-side probability — stays at the
+        // taxi's distance, but the lane xs, roles, and count belong to
+        // the road the cars will stand on. Re-laying the taxi-road lanes
+        // by fraction put the avenue's middle lane exactly on a two-lane
+        // street's centre divider. Same clearances as the live spawner
+        // (issue #24): no traffic materialises on a cross street or
+        // inside a work zone's closed lanes, and no spawn is kept whose
+        // fixed-x path leaves the road anywhere over the span it covers
+        // — all through the same [RunEnvironment] helpers the live
+        // spawner calls. The junction and works clearances run before
+        // the per-lane roll; the containment check cannot, because it
+        // has to ask about the body the spawn rolled (a sedan fits a
+        // narrow street where a bus would overhang — gating every spawn
+        // on the bus emptied 2.5 km of same-direction traffic before
+        // every narrowing and flipped the economy's new-below-median
         // invariant). A skipped spawn's draws produce nothing, so the
         // stream stays deterministic per seed either way.
-        final spawnRoad = env.roadAt(spawnDistance);
-        final taxiRoad = env.roadAt(distance);
         final junction = env.isIntersectionAt(spawnDistance);
-        for (final lane in profile.lanes) {
+        for (final lane
+            in env.trafficAt(distance, geometryDistance: spawnDistance).lanes) {
           if (junction) continue;
-          final laneX =
-              spawnRoad.xAtFraction(taxiRoad.fractionOf(lane.laneX));
+          final laneX = lane.laneX;
           if (env.isLaneBlockedAt(spawnDistance, laneX)) continue;
           if (random.nextDouble() <= lane.spawnProbability) {
             var laneSpeed = lane.speedRange.min +

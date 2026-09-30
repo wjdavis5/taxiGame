@@ -277,6 +277,10 @@ class RunSummaryPanel extends StatelessWidget {
               // daily-course shift ends, because that is the only place a
               // "subsequent attempt at the same day's course" exists: the
               // scoring attempt is spent, but racing yourself never is.
+              // The offer is this panel's snapshot of the day; the tap
+              // itself re-checks the day in [TaxiGame.raceGhost] and
+              // refuses once midnight has passed it by (issue #96) — a
+              // summary left open cannot hand out the next day's course.
               if ((game.isDailyShift || game.isGhostRace) &&
                   game.gameState.todayGhost != null) ...[
                 const SizedBox(height: 8),

@@ -380,5 +380,37 @@ void main() {
           reason: 'the planted ghost stands; the live run offered nothing');
       expect(gameState.todayGhost!.sampleCount, 5);
     });
+
+    test('a race refused after midnight writes no D+1 ghost (issue #96)',
+        () async {
+      // Day D: the scoring daily is driven and settled — its trace is
+      // D's ghost, and the summary's RACE YOUR GHOST was built for D.
+      final game = await mountGame(dailyGame());
+      await tickAndSettle(game);
+      bankAfterFare(game, game.course!.fare(0));
+      final dayD = DailyShift.todayKey;
+      final dayDGhost = gameState.todayGhost;
+      expect(dayDGhost, isNotNull, reason: 'precondition: D has a ghost');
+      final dayE = DailyShift.dateKeyFor(
+          DateTime.now().add(const Duration(days: 1)));
+
+      // Midnight passes with the summary up (issue #96): the tap the
+      // bug would have honoured starts a D+1 ghost race whose trace —
+      // the first for that "new" day — overwrites D's ghost outright.
+      DailyShift.clock = () => DateTime.now().add(const Duration(days: 1));
+      addTearDown(() => DailyShift.clock = DateTime.now);
+      game.raceGhost();
+
+      expect(game.isGhostRace, isFalse,
+          reason: 'the refused tap starts no race');
+      expect(game.isGameActive, isFalse,
+          reason: 'the settled shift still owns the game');
+      expect(game.ghostCar, isNull,
+          reason: 'no replay car materialised for a day nothing was raced');
+      expect(gameState.ghostFor(dayE), isNull,
+          reason: 'no practice trace was written as D+1\'s ghost');
+      expect(gameState.ghostFor(dayD)!.score, dayDGhost!.score,
+          reason: "D's ghost survives untouched");
+    });
   });
 }

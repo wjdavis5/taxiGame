@@ -834,6 +834,80 @@ void main() {
       expectViewportCovered(game);
     });
 
+    test('a car spawned on the frame before a fold rides it (issue #98)',
+        () async {
+      final game = await mountQuietGame(989898);
+      await preloadSprites(game);
+
+      // Park just short of the first fold and settle there: the boundary
+      // is still ahead and no traffic exists yet.
+      game.player.position = Vector2(200, -(WorldOrigin.period - 50));
+      await tickAndSettle(game);
+      expect(game.worldShift, 0, reason: 'the fold is still ahead');
+      expect(game.trafficSpawner.activeVehicleCount, 0,
+          reason: 'precondition: no traffic before the spawn loop');
+
+      // Roll frames WITHOUT draining microtasks until the spawner fires.
+      // `add` only queues the car; the queue is applied inside the next
+      // frame's tree walk, so the moment this loop exits the car is
+      // provably still unmounted — not in world.children, invisible to
+      // the fold's walk over the tree, the exact one-frame window of
+      // issue #98.
+      var ticks = 0;
+      while (game.trafficSpawner.activeVehicleCount == 0 && ticks < 600) {
+        game.update(1 / 60);
+        ticks++;
+      }
+      expect(game.trafficSpawner.activeVehicleCount, greaterThan(0),
+          reason: 'traffic spawned in the pre-fold frame');
+      expect(game.world.children.whereType<TrafficVehicle>(), isEmpty,
+          reason: 'the spawned car is queued, not yet mounted');
+
+      // Cross the boundary: this one update folds the world first (the
+      // car is still unmounted), then mounts the car inside its tree
+      // walk — the same order the live loop runs.
+      game.player.position = Vector2(200, -(WorldOrigin.period + 200));
+      game.update(1 / 60);
+      expect(game.worldShift, WorldOrigin.period, reason: 'the fold fired');
+
+      // Settle: the car mounts, its onLoad computes a velocity, and its
+      // first update advances past the zero-offset spawn waypoint.
+      await tickAndSettle(game);
+
+      // Position and waypoints must share the folded frame: every
+      // mounted car sits within one leg of the waypoint it drives to
+      // (a same-direction leg spans 3,000 px). The frozen car of the
+      // bug sat a whole period — 100,800 px — from its first waypoint,
+      // a gap no amount of driving could close, and reappeared one
+      // period later as a car parked in the road.
+      final cars = game.world.children.whereType<TrafficVehicle>().toList();
+      expect(cars, isNotEmpty, reason: 'the spawned car is mounted and live');
+      for (final car in cars) {
+        expect(car.currentWaypointIndex, lessThan(car.path.length),
+            reason: 'a live car still has road to drive');
+        expect(
+          car.position.distanceTo(car.path[car.currentWaypointIndex]),
+          lessThan(5000),
+          reason: 'position and waypoints live in the same world frame '
+              '(issue #98)',
+        );
+      }
+
+      // And the car drives: half a second of ticks moves every car that
+      // survives the window. The frozen one never moved at all.
+      final spawnedAt = {
+        for (final car in cars) car: car.position.clone(),
+      };
+      advanceGameTime(game, 0.5);
+      await drain();
+      final stillLive =
+          game.world.children.whereType<TrafficVehicle>().toSet();
+      for (final car in cars.where(stillLive.contains)) {
+        expect(car.position.distanceTo(spawnedAt[car]!), greaterThan(5.0),
+            reason: 'the car drives on instead of parking in the road');
+      }
+    });
+
     test('a ghost replay re-enters the live frame across a fold', () async {
       final game = await mountQuietGame(777);
       await preloadSprites(game);

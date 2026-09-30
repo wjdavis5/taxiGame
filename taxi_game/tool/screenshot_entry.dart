@@ -19,6 +19,7 @@ import 'package:provider/provider.dart';
 import 'package:taxi_game/main.dart' show lockOrientation;
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
+import 'package:taxi_game/services/haptics_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/credits_screen.dart';
@@ -50,30 +51,73 @@ Future<void> main() async {
 
   final audioService = AudioService();
   final levelLoaderService = LevelLoaderService();
+  // Haptics (issue #99): GameScreen reads a HapticsService provider in
+  // initState, and this entry's stack used to stop one service short — the
+  // SHOT=game capture died with a ProviderNotFoundException before its
+  // first frame, photographing Flutter's error screen instead of the
+  // shift. Built exactly like the production root (lib/main.dart): the
+  // save's vibration flag gates the buzz from the first frame. No live
+  // settings listener here — a capture never toggles settings, and a
+  // still frame cannot feel either way.
+  final hapticsService = HapticsService()
+    ..setEnabled(gameStateService.vibrationEnabled);
 
   runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider.value(value: gameStateService),
-        Provider.value(value: audioService),
-        Provider.value(value: storageService),
-        Provider.value(value: levelLoaderService),
-      ],
+    screenshotProviders(
+      gameStateService: gameStateService,
+      audioService: audioService,
+      hapticsService: hapticsService,
+      storageService: storageService,
+      levelLoaderService: levelLoaderService,
       child: const _ScreenshotApp(),
     ),
   );
 }
 
+/// The provider stack every shot launches under, as one widget around
+/// [child] — the same five services the production root provides
+/// (lib/main.dart), so a capture shows the real app and no screen can
+/// miss, here only, a dependency production hands it.
+///
+/// Public and handed its services so the regression test can pump each
+/// shot's home under this exact stack (test/screenshot_entry_test.dart):
+/// `shot` is a compile-time constant, so no test run can vary it through
+/// `main`. (Returns the whole MultiProvider rather than a bare provider
+/// list because `SingleChildWidget` lives in package:nested, which
+/// provider does not re-export.)
+MultiProvider screenshotProviders({
+  required GameStateService gameStateService,
+  required AudioService audioService,
+  required HapticsService hapticsService,
+  required StorageService storageService,
+  required LevelLoaderService levelLoaderService,
+  required Widget child,
+}) {
+  return MultiProvider(
+    providers: [
+      ChangeNotifierProvider.value(value: gameStateService),
+      Provider.value(value: audioService),
+      Provider.value(value: hapticsService),
+      Provider.value(value: storageService),
+      Provider.value(value: levelLoaderService),
+    ],
+    child: child,
+  );
+}
+
+/// The screen a shot name launches into. Extracted from [_ScreenshotApp]
+/// so the regression test can drive every target — `shot` is resolved at
+/// compile time, so this switch is the only way a test can vary it.
+Widget homeForShot(String shot) => switch (shot) {
+      'game' => const GameScreen(),
+      'garage' => const GarageScreen(),
+      'credits' => const CreditsScreen(),
+      'settings' => const SettingsScreen(),
+      _ => const MainMenuScreen(),
+    };
+
 class _ScreenshotApp extends StatelessWidget {
   const _ScreenshotApp();
-
-  Widget get _home => switch (shot) {
-        'game' => const GameScreen(),
-        'garage' => const GarageScreen(),
-        'credits' => const CreditsScreen(),
-        'settings' => const SettingsScreen(),
-        _ => const MainMenuScreen(),
-      };
 
   @override
   Widget build(BuildContext context) {
@@ -88,7 +132,7 @@ class _ScreenshotApp extends StatelessWidget {
         fontFamily: 'Roboto',
       ),
       debugShowCheckedModeBanner: false,
-      home: _home,
+      home: homeForShot(shot),
     );
   }
 }

@@ -204,6 +204,38 @@ void main() {
       expect(find.byKey(const Key('daily_today_unplayed')), findsOneWidget);
       expect(find.byKey(const Key('daily_race_ghost_button')), findsNothing);
     });
+
+    testWidgets('a tap after midnight refuses the next day\'s course '
+        '(issue #96)', (tester) async {
+      // Day D is played with its ghost stored, and the screen — its
+      // result card and RACE YOUR GHOST — is built for D.
+      final dayD = DailyShift.todayKey;
+      await gameState
+          .recordDailyResult(resultFor(dayD, score: 340));
+      await plantGhost();
+      await pumpScreen(tester);
+      expect(find.byKey(const Key('daily_race_ghost_button')), findsOneWidget,
+          reason: 'precondition: the button was built on day D');
+
+      // Midnight passes with the screen left open. The Consumer only
+      // rebuilds on a save change, so the card — and the day its tap is
+      // guarded to — are still D's; the tap must not start D+1's course
+      // as ghostless free practice (whose trace would become D+1's
+      // ghost, overwriting D's).
+      DailyShift.clock = () => DateTime.now().add(const Duration(days: 1));
+      addTearDown(() => DailyShift.clock = DateTime.now);
+
+      await tester.tap(find.byKey(const Key('daily_race_ghost_button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(GameScreen), findsNothing,
+          reason: 'no course started from a button built for yesterday');
+      expect(gameState.ghostFor(DailyShift.todayKey), isNull,
+          reason: "no practice trace was written as D+1's ghost");
+      expect(gameState.ghostFor(dayD)!.score, 500,
+          reason: "D's ghost survives untouched");
+    });
   });
 
   group("the start-today's-shift button (issue #64)", () {

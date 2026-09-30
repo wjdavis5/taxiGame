@@ -441,6 +441,12 @@ void main() {
         'second game stacked (issue #73)', (tester) async {
       await plantGhostForToday();
       final game = dailyGame();
+      // Pin the run's day the way the live flow does (issue #96): the
+      // summary only ever exists over a shift that ran, and the tap's
+      // day-guard reads that run's pinned day — an unstarted game has
+      // none, which a midnight tap must refuse.
+      await game.startEndlessRun(
+          seed: DailyShift.seedForDateKey(DailyShift.todayKey));
       await showPanel(tester, game, bankedSummary);
 
       await tester.tap(find.byKey(const ValueKey('race_ghost_button')));
@@ -463,6 +469,47 @@ void main() {
       expect(game.runSeed, DailyShift.seedForDateKey(DailyShift.todayKey),
           reason: "the race rides today's course, the one the ghost "
               'recorded its trace on');
+    });
+
+    testWidgets('a tap after midnight refuses: no D+1 course, no D+1 '
+        'ghost (issue #96)', (tester) async {
+      // Day D: the daily settles with its ghost stored, and the summary
+      // — whose RACE YOUR GHOST was built for D — is on screen.
+      final dayD = DailyShift.todayKey;
+      final dayE = DailyShift.dateKeyFor(
+          DateTime.now().add(const Duration(days: 1)));
+      await plantGhostForToday();
+      final game = dailyGame();
+      await game.startEndlessRun(
+          seed: DailyShift.seedForDateKey(DailyShift.todayKey));
+      await showPanel(tester, game, bankedSummary);
+      expect(find.byKey(const ValueKey('race_ghost_button')), findsOneWidget,
+          reason: 'precondition: the button was built on day D');
+
+      // Midnight passes with the summary left open. Nothing notifies the
+      // panel, so the button — and the settled run's pinned day — are
+      // still D's; the tap must not hand out D+1's course.
+      DailyShift.clock = () => DateTime.now().add(const Duration(days: 1));
+      addTearDown(() => DailyShift.clock = DateTime.now);
+
+      await tester.tap(find.byKey(const ValueKey('race_ghost_button')));
+      await tester.pump();
+
+      // The tap changed nothing: the guard returned before a single flag
+      // moved. With the bug, the tap flipped the game into a D+1 ghost
+      // race — isGhostRace true, isDailyShift false, the run re-seeded
+      // to D+1's course.
+      expect(game.isGhostRace, isFalse,
+          reason: 'the refused tap starts no race');
+      expect(game.isDailyShift, isTrue,
+          reason: "the settled shift's flags are untouched");
+      expect(game.runSeed, DailyShift.seedForDateKey(dayD),
+          reason: "the run on the game is still the settled daily, not "
+              'D+1\'s course');
+      expect(gameState.ghostFor(dayE), isNull,
+          reason: 'nothing was written for a day that has not been driven');
+      expect(gameState.ghostFor(dayD)!.score, 500,
+          reason: "D's ghost survives untouched");
     });
 
     testWidgets('RACE YOUR GHOST over a real GameScreen: one MAIN MENU '
