@@ -1,12 +1,19 @@
+import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
+import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/daily_result.dart';
+import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
+import 'package:taxi_game/services/haptics_service.dart';
+import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/daily_screen.dart';
+import 'package:taxi_game/ui/screens/game_screen.dart';
+import 'helpers/fake_audio_platform.dart';
 /// The Daily Shift screen (issue #19): today's result and the history
 /// behind it — the two things a player checks before screenshotting their
 /// score for the group chat.
@@ -17,6 +24,10 @@ void main() {
   late StorageService storage;
 
   setUp(() async {
+    // The start button (issue #64) pushes a live GameScreen, whose audio
+    // runs for real — hermetic platform fakes, the control-hint tests'
+    // recipe for pumping live screens.
+    installFakeAudioPlatform();
     SharedPreferences.setMockInitialValues({});
     storage = StorageService();
     await storage.init();
@@ -26,8 +37,16 @@ void main() {
 
   Future<void> pumpScreen(WidgetTester tester) async {
     await tester.pumpWidget(
-      ChangeNotifierProvider<GameStateService>.value(
-        value: gameState,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<GameStateService>.value(value: gameState),
+          // GameScreen.initState reads the whole service stack, and the
+          // start button pushes one — the provider set the game-screen
+          // tests pump with.
+          Provider<AudioService>.value(value: AudioService()),
+          Provider<HapticsService>.value(value: HapticsService()),
+          Provider<LevelLoaderService>.value(value: LevelLoaderService()),
+        ],
         child: const MaterialApp(home: DailyScreen()),
       ),
     );
@@ -184,6 +203,57 @@ void main() {
 
       expect(find.byKey(const Key('daily_today_unplayed')), findsOneWidget);
       expect(find.byKey(const Key('daily_race_ghost_button')), findsNothing);
+    });
+  });
+
+  group("the start-today's-shift button (issue #64)", () {
+    testWidgets('an unplayed day offers to start the shift, not the ghost '
+        'race', (tester) async {
+      await pumpScreen(tester);
+
+      final start = find.byKey(const Key('daily_start_button'));
+      expect(start, findsOneWidget,
+          reason: 'the card invites the player; the button accepts');
+      expect(tester.widget<ElevatedButton>(start).onPressed, isNotNull);
+      expect(find.text("START TODAY'S SHIFT"), findsOneWidget);
+      // The one scoring attempt is unspent, and no run exists to race —
+      // the race button belongs to a played day (issue #20).
+      expect(find.byKey(const Key('daily_race_ghost_button')), findsNothing);
+    });
+
+    testWidgets("tapping it opens today's daily course, live", (tester) async {
+      await pumpScreen(tester);
+
+      await tester.tap(find.byKey(const Key('daily_start_button')));
+      await tester.pump(); // the route push
+      // The HUD polls on a repeating timer, so fixed durations — never
+      // pumpAndSettle (the game-screen tests' convention).
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(GameScreen), findsOneWidget);
+      final game = tester
+          .widget<GameWidget<TaxiGame>>(find.byType(GameWidget<TaxiGame>))
+          .game!;
+      expect(game.isDailyShift, isTrue,
+          reason: "this run is the day's one scoring attempt");
+      expect(game.endlessSeed, DailyShift.seedForDateKey(DailyShift.todayKey),
+          reason: 'the same date-derived course the menu button starts');
+      expect(game.isGameActive, isTrue,
+          reason: 'the daily course is running, not just mounted');
+    });
+
+    testWidgets('a played day offers no second attempt', (tester) async {
+      await gameState
+          .recordDailyResult(resultFor(DailyShift.todayKey, score: 340));
+
+      await pumpScreen(tester);
+
+      expect(find.byKey(const Key('daily_start_button')), findsNothing,
+          reason: 'the daily is one shift a day — the spent attempt must '
+              'not be re-offered here');
     });
   });
 }
