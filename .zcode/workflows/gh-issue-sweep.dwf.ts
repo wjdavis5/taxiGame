@@ -496,7 +496,10 @@ if (!verdict.approved || !gatesGreen || !fresh.approved) {
   const why = !verdict.approved
     ? "the senior reviewer did not approve: " + verdict.summary
     : !gatesGreen
-      ? "gates were not green after the review fixes"
+      ? "gates were not green after the review fixes: " +
+        tail((finalGates.exitCode !== 0
+                ? finalGates.stdout + finalGates.stderr
+                : finalTests.stdout + finalTests.stderr))
       : "the independent reviewer did not approve: " + fresh.summary;
   for (const p of toImplement) {
     report({ issue: p.number, title: p.title, status: "failed", note: "review blocked on " + prUrl }, "issues");
