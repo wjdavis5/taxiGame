@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/game/systems/run_length_simulator.dart';
+import 'package:taxi_game/game/systems/run_environment.dart';
 
 /// The Monte-Carlo run-length estimate behind issue #18's tuning.
 ///
@@ -159,6 +161,110 @@ void main() {
           ),
       ]);
       expect(even.medianDistancePx, 2500.0);
+    });
+  });
+
+  group('re-contacts with already-ruled cars (issue #67)', () {
+    // The scenario's furniture. The cab keeps the starter's body (so the
+    // hitboxes are the ones every other test drives) but is deliberately
+    // hot off the line and lazy at the wheel: slow steering is what makes
+    // the re-contact constructible, because the cab is still travelling
+    // sideways into its target lane when it reaches full speed — the
+    // first frame of overlap then arrives at a real road-closing speed
+    // instead of the crawl an ordinary lane change ends at. The reflex
+    // driver cannot dodge first: its first decision is a reaction
+    // interval away (0.25 s) and the contact lands well inside that.
+    final env = RunEnvironment(seed: 2011);
+    const hotCab = VehicleStats(
+      topSpeed: 150,
+      acceleration: 1200,
+      steeringSpeed: 100,
+      width: 40,
+      height: 60,
+    );
+
+    test('a same-lane re-contact over the threshold crashes, as the game does',
+        () {
+      // A sedan already ruled on (one scrape spent, the state a real run
+      // reaches through a first touch) rides the cab's target lane, half
+      // a car's length ahead and barely crawling: vertically inside the
+      // contact box, laterally clear until the cab's own lane change
+      // carries it in. At the first overlapping frame the cab closes at
+      // full speed along a mostly forward axis — over the 110 px/s
+      // crash threshold.
+      final run = RunLengthSimulator(
+        seed: 2011,
+        vehicle: hotCab,
+        environment: env,
+        misjudgeRate: 0,
+        presetTraffic: [
+          PresetTrafficVehicle(
+            x: env.roadAt(0).sameDirectionLaneX,
+            y: -60,
+            speed: 10,
+            contacted: true,
+          ),
+        ],
+      ).run();
+
+      expect(run.crashDistancesPx, isNotEmpty,
+          reason: 'the contact loop used to clamp the cab to the paced '
+              'car\'s speed before ruling the re-contact, so a same-lane '
+              're-contact was judged at the pace it was about to be held '
+              'to and could never crash — while the live game spends a '
+              'life on this exact contact. The clamp now runs before the '
+              'move, in PlayerVehicle.update\'s order, so the first '
+              'overlapping frame is ruled at the speed the cab actually '
+              'arrived at');
+      expect(run.crashDistancesPx.first, lessThan(150),
+          reason: 'the crash must be the preset scenario\'s own contact, a '
+              'few dozen px in — anything later would be the seed\'s '
+              'random traffic, not the regression under test');
+    });
+
+    test('a contacted car in the cab\'s rear never pins it (issue #66)',
+        () {
+      // The mirror of the live rule: the pace cap used to fire on
+      // overlap alone, so a same-direction car sitting in the cab's
+      // rear clamped the cab to that car's crawl — the sim cab could
+      // not outrun a slow rear-ender any more than the player could.
+      // Same scenario as above, plus that follower: contacted, boxes
+      // overlapping the cab from the first tick, crawling at 5 px/s.
+      // With the ahead-only guard it is ignored and the re-contact
+      // above still lands at full closing speed; without it the cab is
+      // pinned from tick one and never reaches the ahead car at crash
+      // speed at all.
+      final run = RunLengthSimulator(
+        seed: 2011,
+        vehicle: hotCab,
+        environment: env,
+        misjudgeRate: 0,
+        presetTraffic: [
+          const PresetTrafficVehicle(
+            x: 200, // the cab's own start lane — overlapping from tick 1
+            y: 20, // behind: y grows toward the rear of the run
+            speed: 5,
+            contacted: true,
+          ),
+          PresetTrafficVehicle(
+            x: env.roadAt(0).sameDirectionLaneX,
+            y: -60,
+            speed: 10,
+            contacted: true,
+          ),
+        ],
+      ).run();
+
+      expect(run.crashDistancesPx, isNotEmpty,
+          reason: 'a car in the cab\'s rear must not pace the cab — the '
+              're-contact ahead still has to be reached and ruled at the '
+              'speed the cab actually arrives at');
+      expect(run.crashDistancesPx.first, lessThan(150),
+          reason: 'the crash must be the preset scenario\'s own contact, '
+              'a few dozen px in — pinned to the rear car\'s 5 px/s the '
+              'cab never closes on the car ahead at crash speed, and the '
+              'first crash would be the seed\'s random traffic much '
+              'later');
     });
   });
 }

@@ -48,6 +48,35 @@ void main() {
     }
   }
 
+  /// Waits until the fake platform has gone quiet — no new calls across
+  /// two consecutive polls — failing loudly after 5 s. This is the
+  /// deadline-polling answer for a *negative* assertion, where [until]
+  /// cannot work: `fake.player.created` is empty at t=0, so polling
+  /// `until(created.isEmpty)` would return before the fire-and-forget
+  /// chains have had any chance to show a leak and the test would pass
+  /// vacuously every run. Polling the platform's total traffic instead
+  /// waits exactly as long as work is still in flight and no longer:
+  /// those chains hop through `AudioPlayer._create()` and AudioCache's
+  /// real asset loads and temp-file writes, so the event-loop turns they
+  /// need vary with machine load — the fixed 50 ms drain ([settle]) this
+  /// replaced raced exactly there on loaded full-suite runs, passing in
+  /// isolation (issue #69). Once two polls agree that nothing new
+  /// landed, whatever the chains were going to do, they have done it.
+  Future<void> untilQuiet() async {
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    var lastCount = fake.player.calls.length;
+    var quietPolls = 0;
+    while (quietPolls < 2) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('timed out waiting for the audio platform to go quiet');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      final count = fake.player.calls.length;
+      quietPolls = count == lastCount ? quietPolls + 1 : 0;
+      lastCount = count;
+    }
+  }
+
   group('the license inventory (issue #4)', () {
     test('lists every audio file the bundle ships', () async {
       final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
@@ -467,7 +496,7 @@ void main() {
       final initializing = audio.initialize();
       audio.playCoinSound();
       audio.setEngineRunning(true);
-      await settle();
+      await untilQuiet();
       expect(fake.player.created, isEmpty,
           reason: 'a player that started under the plugin\'s launch-time '
               '.playback session would stop the player\'s own music');

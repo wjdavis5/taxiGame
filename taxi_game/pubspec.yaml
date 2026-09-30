@@ -29,6 +29,11 @@ dependencies:
   # Utilities
   vector_math: ^2.1.4
 
+  # Annotations (@visibleForTesting) for the headless simulator, which
+  # stays Flutter-free (issue #67's test seam). Already resolved via
+  # Flutter; declared so the import is a direct dependency.
+  meta: ^1.19.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

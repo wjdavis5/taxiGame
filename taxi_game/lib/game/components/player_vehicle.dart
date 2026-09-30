@@ -189,8 +189,9 @@ class PlayerVehicle extends PositionComponent
 
   /// Per-frame half of issue #60's fix: while the taxi overlaps the
   /// hitbox of a same-direction [TrafficVehicle] it has already been
-  /// ruled against, its forward speed is clamped to that car's. The
-  /// boxes are the same scaled rectangles the collision detector uses
+  /// ruled against, and that car is *ahead* of it (issue #66), its
+  /// forward speed is clamped to that car's. The boxes are the same
+  /// scaled rectangles the collision detector uses
   /// ([CollisionRules.playerHitboxScale] and
   /// [CollisionRules.trafficHitboxScale] of the logical sizes), so the
   /// clamp ends exactly when the bodies separate laterally and steering
@@ -200,11 +201,23 @@ class PlayerVehicle extends PositionComponent
   /// down-screen (positive y) and never paces the taxi — a struck cab
   /// (#58) keeps being ruled by the contact judge, not shoved by a
   /// per-frame clamp, and #42's bulldozing bus passes through untouched.
+  ///
+  /// Ahead only, by position (issue #66): the cap paces a car the taxi
+  /// is riding behind, and a car in the taxi's rear is not that. A
+  /// same-direction follower that has just rear-ended the cab used to
+  /// clamp the cab to the follower's own speed on overlap alone, so
+  /// full throttle could not pull away — a slow rear-ender became a
+  /// rolling anchor only the stick could shake off.
   void _capSpeedToScrapedTraffic() {
     if (!isMounted) return;
     for (final vehicle in game.world.children.whereType<TrafficVehicle>()) {
       if (!vehicle.contactedPlayer) continue;
       if (vehicle.velocity.y >= 0) continue;
+      // y grows downward and forward is -y, so a car ahead has the
+      // smaller y — the same convention _nearestThreatTime-style "only
+      // ahead counts" checks use. Anything else is beside or behind
+      // the taxi and must never hold it back.
+      if (vehicle.position.y >= position.y) continue;
       final halfWidths =
           (vehicleSize.x * CollisionRules.playerHitboxScale +
                   vehicle.vehicleSize.x * CollisionRules.trafficHitboxScale) /
