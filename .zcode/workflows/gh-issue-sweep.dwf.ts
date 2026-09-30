@@ -140,12 +140,27 @@ if (openPrs.stdout.includes("automation/issue-sweep")) {
 }
 const issuesRun = await world.run(
   "gh",
-  ["issue", "list", "--state", "open", "--json", "number,title", "--limit", "100"],
+  ["issue", "list", "--state", "open", "--json", "number,title,labels", "--limit", "100"],
 );
-const issues = JSON.parse(issuesRun.stdout) as GhIssue[];
+// Issues labeled "assigned" are being worked outside this pipeline (a
+// tagged worktree agent, or a human) — the sweep never touches them.
+const allIssues = JSON.parse(issuesRun.stdout) as (GhIssue & {
+  labels: { name: string }[];
+})[];
+const issues = allIssues.filter(
+  (i) => !i.labels.some((l) => l.name === "assigned"),
+);
+if (allIssues.length > issues.length) {
+  log(
+    "Skipping " + (allIssues.length - issues.length) +
+    " issue(s) labeled 'assigned' — they are being worked outside this pipeline.",
+  );
+}
 if (issues.length === 0) {
   return {
-    conclusion: "No open GitHub issues — nothing to do this sweep.",
+    conclusion: allIssues.length === 0
+      ? "No open GitHub issues — nothing to do this sweep."
+      : "All open issues are labeled 'assigned' (worked outside this pipeline) — nothing for this sweep.",
     findings: [],
     verified: ["gh issue list --state open (empty)"],
     notCovered: [],

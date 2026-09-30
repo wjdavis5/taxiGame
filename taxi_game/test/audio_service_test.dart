@@ -1,3 +1,5 @@
+import 'dart:async' show Completer;
+
 import 'package:audioplayers_platform_interface/audioplayers_platform_interface.dart'
     show AVAudioSessionCategory;
 import 'package:flutter/foundation.dart'
@@ -33,15 +35,14 @@ void main() {
   }
 
   /// Waits until [condition] holds, failing after 5 s. The engine-loop
-  /// chains are fire-and-forget through real asset loads plus the audio
-  /// session hop issue #39 added to every call, so the number of
+  /// chains are fire-and-forget through real asset loads, so the number of
   /// event-loop turns varies with machine load — a fixed drain (settle)
   /// passed locally but raced on loaded CI runners (run 36451103837).
   Future<void> until(bool Function() condition) async {
     final deadline = DateTime.now().add(const Duration(seconds: 5));
     while (!condition()) {
       if (DateTime.now().isAfter(deadline)) {
-        fail('timed out waiting for the engine loop to settle');
+        fail('timed out waiting for the audio stack to settle');
       }
       await Future<void>.delayed(const Duration(milliseconds: 2));
     }
@@ -154,9 +155,199 @@ void main() {
     });
   });
 
-  group('the engine loop', () {
-    test('adopts a player while running and releases it when stopped',
+  group('one-shot voices (issue #49)', () {
+    test('a replay restarts an existing voice instead of making a player',
         () async {
+      final audio = AudioService()..playCoinSound();
+      await until(() => fake.player.count('resume') == 1);
+
+      // The first coin is still ringing (the fake never finishes it), so
+      // the second grows the pool to its second voice.
+      audio.playCoinSound();
+      await until(() => fake.player.count('resume') == 2);
+
+      // The pool is full: the third coin restarts a voice.
+      audio.playCoinSound();
+      await until(() => fake.player.count('resume') == 3);
+
+      expect(fake.player.created, hasLength(2));
+      expect(fake.player.count('stop'), 1,
+          reason: 'the restarted voice is stopped back to its top first');
+      expect(fake.player.disposed, isEmpty);
+      await audio.dispose();
+    });
+
+    test('a finished voice is reused before the pool grows', () async {
+      final audio = AudioService()..playCoinSound();
+      await until(() => fake.player.count('resume') == 1);
+
+      fake.player.complete(fake.player.created.single);
+      await settle();
+      audio.playCoinSound();
+      await until(() => fake.player.count('resume') == 2);
+
+      expect(fake.player.created, hasLength(1));
+      await audio.dispose();
+    });
+
+    test('a long shift of one-shots never grows past the fixed pool',
+        () async {
+      final audio = AudioService();
+      for (var round = 0; round < 10; round++) {
+        for (final name in AudioService.soundFiles.keys) {
+          audio.playSound(name);
+        }
+        await settle();
+      }
+
+      expect(fake.player.created.length,
+          lessThanOrEqualTo(2 * AudioService.soundFiles.length),
+          reason: 'each sound owns at most two voices; the old path made a '
+              'new native player for every play and never disposed it');
+      expect(fake.player.disposed, isEmpty);
+      expect(fake.player.count('getCurrentPosition'), 0,
+          reason: 'nothing reads position, so no player may poll for it '
+              'every frame');
+      await audio.dispose();
+      expect(fake.player.disposed, unorderedEquals(fake.player.created),
+          reason: 'dispose releases every voice');
+    });
+  });
+
+  group('the engine loop on a slow device (issue #49)', () {
+    /// One game frame: the two calls TaxiGame.update makes every frame,
+    /// then a real gap so the slow fake platform can make progress.
+    Future<void> frame(AudioService audio) async {
+      audio
+        ..setEngineRunning(true)
+        ..setEngineIntensity(0.5);
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+
+    test('a start that outlasts many frames creates exactly one player',
+        () async {
+      // Each slow call takes 100 ms, so the start spans dozens of frames,
+      // as it does on an iPhone and never in the Simulator.
+      fake.player.latency = const Duration(milliseconds: 100);
+      final audio = AudioService();
+
+      for (var i = 0; i < 5; i++) {
+        await frame(audio);
+      }
+      expect(audio.isEngineLoopActive, isFalse,
+          reason: 'the start must still be pending for this test to mean '
+              'anything');
+      while (!audio.isEngineLoopActive) {
+        await frame(audio);
+      }
+      for (var i = 0; i < 20; i++) {
+        await frame(audio);
+      }
+
+      expect(fake.player.created, hasLength(1),
+          reason: 'the old code started a new player on every frame of the '
+              'wait and adopted none of them: ~120 AVPlayers a second on a '
+              'ProMotion iPhone, until the watchdog killed the app');
+      expect(fake.player.disposed, isEmpty);
+      await audio.dispose();
+    });
+
+    test('the per-frame steady state makes no platform calls', () async {
+      final audio = AudioService()
+        ..setEngineIntensity(0.5)
+        ..setEngineRunning(true);
+      await until(() => audio.isEngineLoopActive);
+      await settle();
+
+      final before = fake.player.calls.length;
+      for (var i = 0; i < 120; i++) {
+        audio
+          ..setEngineRunning(true)
+          ..setEngineIntensity(0.5);
+      }
+      await settle();
+
+      expect(fake.player.calls.sublist(before), isEmpty);
+      await audio.dispose();
+    });
+
+    test('intensity reaches the platform only in whole volume steps',
+        () async {
+      final audio = AudioService()..setEngineRunning(true);
+      await until(() => audio.isEngineLoopActive);
+      await settle();
+
+      final before = fake.player.volumes.length;
+      for (var i = 0; i <= 1000; i++) {
+        audio.setEngineIntensity(i / 1000);
+      }
+      await settle();
+
+      final sent = fake.player.volumes.sublist(before);
+      expect(sent.length, lessThanOrEqualTo(34),
+          reason: 'idle 0.22 to full 0.90 is 34 steps of 0.02, not 1000 '
+              'frame-rate setVolume calls');
+      expect(sent.last, closeTo(0.90, 1e-9));
+      await audio.dispose();
+    });
+
+    test('hit-stops pause and resume the one player, never re-create it',
+        () async {
+      final audio = AudioService()..setEngineRunning(true);
+      await until(() => audio.isEngineLoopActive);
+
+      for (var i = 0; i < 50; i++) {
+        audio.setEngineRunning(false);
+        expect(audio.isEngineLoopActive, isFalse);
+        audio.setEngineRunning(true);
+        expect(audio.isEngineLoopActive, isTrue);
+      }
+      await settle();
+
+      expect(fake.player.created, hasLength(1));
+      expect(fake.player.disposed, isEmpty);
+      await audio.dispose();
+    });
+
+    test('a start that lands after the want is gone stays paused',
+        () async {
+      fake.player.latency = const Duration(milliseconds: 50);
+      final audio = AudioService()..setEngineRunning(true);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      audio.setEngineRunning(false);
+
+      await until(() => fake.player.created.isNotEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(audio.isEngineLoopActive, isFalse);
+      expect(fake.player.count('resume'), 0,
+          reason: 'the loop is adopted paused and only resumed when wanted');
+
+      audio.setEngineRunning(true);
+      await until(() => audio.isEngineLoopActive);
+      expect(fake.player.created, hasLength(1));
+      await audio.dispose();
+    });
+
+    test('a failed start disposes its player and backs off', () async {
+      fake.player.failing.add('setReleaseMode');
+      final audio = AudioService();
+
+      for (var i = 0; i < 50; i++) {
+        await frame(audio);
+      }
+      await until(() => fake.player.disposed.isNotEmpty);
+
+      expect(fake.player.created, hasLength(1),
+          reason: 'one attempt, then a backoff — not one attempt per frame');
+      expect(fake.player.disposed, fake.player.created,
+          reason: 'a half-made player must not leak');
+      expect(audio.isEngineLoopActive, isFalse);
+      await audio.dispose();
+    });
+  });
+
+  group('the engine loop', () {
+    test('runs while wanted and falls silent when stopped', () async {
       final audio = AudioService();
 
       audio.setEngineRunning(true);
@@ -247,25 +438,46 @@ void main() {
               'in debug builds');
     });
 
-    test('playback re-asserts ambient, never flame_audio playback default',
+    test('playback never re-applies the session per player (issue #49)',
         () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       final audio = AudioService();
 
       audio.playCoinSound();
       audio.setEngineRunning(true);
+      await until(() => audio.isEngineLoopActive);
       await settle();
       await audio.dispose();
 
-      expect(fake.player.audioContexts, isNotEmpty);
-      expect(
-        fake.player.audioContexts.map((c) => c.iOS.category),
-        everyElement(AVAudioSessionCategory.ambient),
-        reason: 'flame_audio re-applies a .playback context on every play '
-            'when none is given, and on iOS even player-level contexts set '
-            'the global session — one unguarded play would silence the '
-            'Ring/Silent switch for the rest of the run',
-      );
+      expect(fake.player.created, isNotEmpty);
+      expect(fake.player.audioContexts, isEmpty,
+          reason: 'on iOS a player-level context IS the global session — '
+              'audioplayers answers it with setCategory + setActive on the '
+              'main thread. initialize claims ambient once; re-applying it '
+              'per play cost main-thread time, and flame_audio\'s own '
+              'helpers would have applied .playback, silencing the '
+              'Ring/Silent switch (issue #39)');
+    });
+
+    test('nothing plays before the ambient session lands', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      final hold = fake.global.hold = Completer<void>();
+      final audio = AudioService();
+
+      final initializing = audio.initialize();
+      audio.playCoinSound();
+      audio.setEngineRunning(true);
+      await settle();
+      expect(fake.player.created, isEmpty,
+          reason: 'a player that started under the plugin\'s launch-time '
+              '.playback session would stop the player\'s own music');
+
+      hold.complete();
+      await initializing;
+      await until(() => audio.isEngineLoopActive);
+      expect(fake.global.contexts.single.iOS.category,
+          AVAudioSessionCategory.ambient);
+      await audio.dispose();
     });
 
     test('off iOS the session is left entirely alone', () async {
@@ -283,8 +495,9 @@ void main() {
       expect(
         fake.player.audioContexts.map((c) => c.iOS.category),
         everyElement(AVAudioSessionCategory.playback),
-        reason: 'off iOS the service passes no context, so flame_audio\'s '
-            'own default stays in force — exactly as shipped before #39',
+        reason: 'off iOS each player gets flame_audio\'s own mix-with-'
+            'others default once, at creation — exactly as shipped before '
+            '#39',
       );
     });
 
