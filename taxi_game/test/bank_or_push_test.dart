@@ -324,6 +324,34 @@ void main() {
       expect(find.text('BANK OR PUSH?'), findsNothing);
     });
 
+    testWidgets('a prompt with no badge band settles: the steady state owns '
+        'no frames (issue #139)', (tester) async {
+      // The common prompt — no daily ghost, so no band to arbitrate and
+      // no re-park ever owed. The post-frame measurement used to read
+      // `false == false` (no oust, no below-band park) as a branch flip
+      // and setState after every painted frame, a self-sustaining
+      // rebuild loop for the prompt's whole window at 60 fps.
+      final fare0 = EndlessCourse(seed: 42).fare(0);
+      final game = await armedGame(tester, fare0);
+      await showPrompt(tester, game);
+      expect(find.byKey(const ValueKey('bank_prompt_panel')), findsOneWidget);
+      expect(game.bankPanelOustsGhostBadge, isFalse,
+          reason: 'sanity: no ghost on this road, so no band to claim');
+
+      // Drain: the measurement has landed, any re-park it asked for has
+      // painted, and one more zero-duration frame consumes whatever the
+      // last frame scheduled.
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pump();
+
+      // Nothing may want another frame: the overlay's own rebuilds ride
+      // its 100 ms poll timer, which only fires inside a pump with
+      // duration — a pending frame here is the loop.
+      expect(tester.binding.hasScheduledFrame, isFalse,
+          reason: 'the fit measurement must not keep scheduling frames '
+              'once it agrees with the layout it measured');
+    });
+
     testWidgets('tapping PUSH ON raises the multiplier and stands down',
         (tester) async {
       final fare0 = EndlessCourse(seed: 42).fare(0);
@@ -356,7 +384,7 @@ void main() {
     });
   });
 
-  group('the panel and the ghost badge (issue #130)', () {
+  group('the panel and the ghost badge (issues #130, #134, #139)', () {
     /// Plants a daily ghost so a ghost race has a car to race — the
     /// scoring HUD's pattern.
     Future<void> plantGhost() async {
@@ -369,19 +397,16 @@ void main() {
       );
     }
 
-    testWidgets('the ghost gap readout stands down while the choice is up '
-        '(issues #130, #134)', (tester) async {
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      await plantGhost();
-
-      // The ghost-race mount the badge tests use, with the fare armed
-      // through the real flow. All of it inside the test binding's
-      // real-async window: mounting loads real sprite assets, and the
-      // settle between the arming ticks awaits real futures — the
-      // fake-async zone outside would deadlock on both. Everything
-      // after is pumps and synchronous reads.
+    /// Mounts a ghost race and arms the save's first-ever offer through
+    /// the real delivery flow. Being the primer, that offer freezes the
+    /// world under the prompt, so the window cannot expire
+    /// mid-measurement; the planted ghost keeps a live gap for the
+    /// badge to read. All of it inside the test binding's real-async
+    /// window: mounting loads real sprite assets, and the settle
+    /// between the arming ticks awaits real futures — the fake-async
+    /// zone outside would deadlock on both. Everything after is pumps
+    /// and synchronous reads.
+    Future<TaxiGame> primerArmedGhostRace(WidgetTester tester) async {
       final mountedGame = await tester.runAsync<TaxiGame>(() async {
         final game = TaxiGame(
           levelLoader: LevelLoaderService(),
@@ -408,29 +433,112 @@ void main() {
           game.update(1 / 60);
         }
 
-        // The save's first-ever delivery arms the choice — and being the
-        // primer, it freezes the world under the prompt, so the window
-        // cannot expire mid-measurement.
         deliverFare(game, game.course!.fare(0));
         return game;
       });
-      final game = mountedGame!;
+      return mountedGame!;
+    }
+
+    testWidgets('where the lane fits both, the badge reads on through the '
+        'window and the panel parks below it (issues #130, #139)',
+        (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await plantGhost();
+      final game = await primerArmedGhostRace(tester);
       expect(game.bankPrompt.isActive, isTrue);
       expect(game.ghostGapMetres, isNotNull,
           reason: 'sanity: the race has a live gap to read');
 
+      // The issue's tall-phone surface, 430×932 pt: the lane below the
+      // badge band runs 301.75 − 47 ≈ 254.75 px, and the panel's
+      // natural height at 1.0 text sits around 130 px under the Ahem
+      // test font — both fit with room to spare. (The width binds the
+      // world scale on this surface: min(430/400, 932/800) = 1.075, so
+      // the half-cab offset uses 430/400.)
+      tester.view.physicalSize = const Size(430, 932);
+      const nose = 932 / 2 - 30 * (430 / 400); // ≈ 433.75
+      const cabClearance = 12.0;
+
       // Both overlays in the game screen's stacking order — the HUD
-      // first, the prompt above it — at the narrowest and the widest
-      // iPhone widths, the band the issue was measured across, and at
-      // full text scale: the panel's title row now yields (the #57
-      // pattern), so the em-square test font cannot overflow it.
-      for (final width in [375.0, 393.0, 430.0]) {
-        tester.view.physicalSize = Size(width, 812);
-        await tester.pumpWidget(
-          ChangeNotifierProvider<GameStateService>.value(
-            value: gameState,
-            child: MaterialApp(
-              home: Scaffold(
+      // first, the prompt above it.
+      await tester.pumpWidget(
+        ChangeNotifierProvider<GameStateService>.value(
+          value: gameState,
+          child: MaterialApp(
+            home: Scaffold(
+              body: Stack(
+                children: [
+                  HudOverlay(game: game),
+                  BankPromptOverlay(game: game),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      // One frame lays the panel out and measures its natural height;
+      // the next beat is the 100 ms poll both overlays read the fit
+      // from.
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(tester.takeException(), isNull,
+          reason: 'the overlays must lay out cleanly');
+
+      // #139's headline: the readout stays up through the decision
+      // window — the race is live under every non-primer offer, and the
+      // bank-or-push decision turns on the gap it reads.
+      expect(game.bankPanelOustsGhostBadge, isFalse,
+          reason: 'the panel fits below the badge band on this surface');
+      expect(find.byKey(const ValueKey('ghost_badge')), findsOneWidget);
+      expect(find.byKey(const ValueKey('bank_prompt_panel')), findsOneWidget);
+
+      final panel =
+          tester.getRect(find.byKey(const ValueKey('bank_prompt_panel')));
+      expect(panel.top,
+          greaterThanOrEqualTo(120 + HudOverlay.ghostBadgeBandHeight),
+          reason: 'the panel parks below the badge band (#130), not in it');
+      expect(panel.bottom, lessThanOrEqualTo(nose - cabClearance + 0.5),
+          reason: 'and it still stops clear of the cab\'s nose (#134)');
+
+      // The choice resolved: the panel is gone, and the readout never
+      // left.
+      game.pushOn();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(find.byKey(const ValueKey('bank_prompt_panel')), findsNothing);
+      expect(find.byKey(const ValueKey('ghost_badge')), findsOneWidget,
+          reason: 'the gap readout is still up once no choice is on screen');
+    });
+
+    testWidgets('where the lane cannot fit both, the badge stands down and '
+        'the panel keeps the cab clear (issues #134, #139)', (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await plantGhost();
+      final game = await primerArmedGhostRace(tester);
+      expect(game.bankPrompt.isActive, isTrue);
+
+      // The issue's short-phone surface, 375×667 pt, at 1.3× text — the
+      // reading at which #134 measured the panel over the cab. The lane
+      // below the badge band runs 176.49 − 47 ≈ 129.5 px; at 1.0 text
+      // the Ahem panel sits within a few px of that line either way, so
+      // the hidden case is pinned at the large text the issue was filed
+      // against, where the natural height clears 129.5 unambiguously.
+      // (The height binds the world scale on this surface:
+      // min(375/400, 667/800) = 0.834, so the half-cab offset uses
+      // 667/800.)
+      tester.view.physicalSize = const Size(375, 667);
+      const nose = 667 / 2 - 30 * (667 / 800); // ≈ 308.49
+      const cabClearance = 12.0;
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<GameStateService>.value(
+          value: gameState,
+          child: MaterialApp(
+            home: MediaQuery(
+              data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+              child: Scaffold(
                 body: Stack(
                   children: [
                     HudOverlay(game: game),
@@ -440,23 +548,33 @@ void main() {
               ),
             ),
           ),
-        );
-        await tester.pump(const Duration(milliseconds: 150)); // poll tick
-        expect(tester.takeException(), isNull,
-            reason: 'at $width pt the overlays must lay out cleanly');
+        ),
+      );
+      // Two beats: the frame that measures the panel's natural height
+      // and raises the oust flag, then the poll tick the HUD reads it
+      // on and the panel re-parks in.
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(tester.takeException(), isNull,
+          reason: 'the overlays must lay out cleanly');
 
-        // The readout stands down for the window's few seconds — the
-        // fare-offer bar's pattern — because a panel parked below it
-        // (#130) has no lower bound, and on a 667 pt phone that put the
-        // panel on the cab (#134). Its band is the panel's instead.
-        expect(find.byKey(const ValueKey('bank_prompt_panel')), findsOneWidget);
-        expect(find.byKey(const ValueKey('ghost_badge')), findsNothing,
-            reason: 'at $width pt the gap readout stands down while the '
-                'bank-or-push choice is up');
-      }
+      expect(game.bankPanelOustsGhostBadge, isTrue,
+          reason: 'the panel\'s natural height at 1.3× text does not fit '
+              'below the badge band on this surface');
+      expect(find.byKey(const ValueKey('bank_prompt_panel')), findsOneWidget);
+      expect(find.byKey(const ValueKey('ghost_badge')), findsNothing,
+          reason: 'the panel has claimed the band; the readout stands down '
+              'for the window — the only phones that lose it');
 
-      // The choice resolved: the readout returns with it, carried by the
-      // scoring bar's own 100 ms poll.
+      final panel =
+          tester.getRect(find.byKey(const ValueKey('bank_prompt_panel')));
+      expect(panel.top, greaterThanOrEqualTo(120),
+          reason: 'the full-lane panel stays below the HUD band');
+      expect(panel.bottom, lessThanOrEqualTo(nose - cabClearance + 0.5),
+          reason: 'the panel must stop clear of the cab\'s nose — the cap '
+              'holds in the oust branch too (#134)');
+
+      // The choice resolved: the band is the badge's again, and the
+      // readout returns with the resolution.
       game.pushOn();
       await tester.pump(const Duration(milliseconds: 150));
       expect(find.byKey(const ValueKey('ghost_badge')), findsOneWidget,
@@ -470,36 +588,10 @@ void main() {
       addTearDown(tester.view.reset);
 
       await plantGhost();
-
-      // The same primer-armed ghost race as the stands-down test: the
-      // freeze holds the window open for the measurement, and the ghost
-      // badge is stood down, so the panel's lane is the HUD band to the
-      // cab's nose and nothing else.
-      final mountedGame = await tester.runAsync<TaxiGame>(() async {
-        final game = TaxiGame(
-          levelLoader: LevelLoaderService(),
-          gameState: gameState,
-          endlessSeed: DailyShift.seedForDateKey(DailyShift.todayKey),
-          isGhostRace: true,
-        )
-          ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
-          ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink())
-          ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
-          ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink())
-          ..overlays.addEntry('pauseMenu', (_, __) => const SizedBox.shrink());
-        game.onGameResize(Vector2(400, 800));
-        await game.onLoad();
-        // ignore: invalid_use_of_internal_member
-        game.mount();
-        await game.ready();
-        await tickAndSettle(game);
-        for (var i = 0; i < 30; i++) {
-          game.update(1 / 60);
-        }
-        deliverFare(game, game.course!.fare(0));
-        return game;
-      });
-      final game = mountedGame!;
+      // The same primer-armed ghost race as the band tests: the freeze
+      // holds the window open for the measurement. Whichever branch the
+      // fit lands in, the cab bound below must hold.
+      final game = await primerArmedGhostRace(tester);
       expect(game.bankPrompt.isActive, isTrue);
 
       // The iPhone SE/8 class surface the issue was filed against:
