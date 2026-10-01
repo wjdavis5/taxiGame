@@ -2038,11 +2038,20 @@ class TaxiGame extends FlameGame
 
   /// True while a shift is live enough that backgrounding it must freeze
   /// the run and demand deliberate re-entry on return: the street is
-  /// moving and the clocks are burning. Deliberately narrow — a crash
-  /// stall or hit-stop has already frozen the world (and only ever
-  /// consumes clamped time, see [maxUpdateDelta]), and an end-of-shift
-  /// panel has nothing live left to protect.
-  bool get _isRunLive => isGameActive;
+  /// moving, the clocks are burning — or a temporary freeze is holding a
+  /// shift that is not over. That last case is the hole issue #141
+  /// closed: a crash stall or hit-stop sets [isGameActive] false, but it
+  /// ends by itself — [_resumeAfterCrashStall] hands the world back to
+  /// live play with no player input — so a backgrounded app used to come
+  /// back to a shift already rolling, the exact dump-into-traffic this
+  /// gate exists to prevent. Freezing through the pause machinery holds
+  /// the stall mid-count instead (the freeze only ever consumes clamped
+  /// time anyway, see [maxUpdateDelta]). An *ended* shift still does not
+  /// count: every terminal path — wreck, level fail, bank — sets
+  /// [isShiftOver] and clears the stall, so the summary panel keeps the
+  /// screen alone, never a pause menu under it.
+  bool get _isRunLive =>
+      isGameActive || isCrashStall || (hitStop.isActive && !isShiftOver);
 
   /// Flame's hook for app lifecycle changes (`Game.lifecycleStateChange`
   /// — wired through the game widget's render box observer). Flame's own

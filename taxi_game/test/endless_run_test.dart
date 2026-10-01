@@ -20,7 +20,9 @@ import 'package:taxi_game/game/systems/world_origin.dart';
 import 'package:taxi_game/game/vehicle_sprites.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
+import 'package:taxi_game/models/fare_type.dart';
 import 'package:taxi_game/models/ghost_trace.dart';
+import 'package:taxi_game/models/passenger_data.dart';
 import 'package:taxi_game/models/traffic_pattern.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
@@ -248,6 +250,130 @@ void main() {
         isNotEmpty,
         reason: 'the course keeps producing fares',
       );
+    });
+  });
+
+  group('the pulsing zone markers (issue #143)', () {
+    /// The pulse sweeps one full period every π s (2 rad/s), so 4 s of
+    /// frames carries the sine through both extremes — drawn radii 25
+    /// and 35. At either extreme the old code rewrote the component's
+    /// `size`, sliding the top-left origin under every fixed-offset
+    /// child by 5 px per axis while the drawn circle stayed dead on the
+    /// kerb, so 4 s is enough to catch the wobble at its worst.
+    Future<void> sweepPulse(TaxiGame game, void Function() assertHeld) async {
+      for (var frame = 0; frame < 240; frame++) {
+        game.update(1 / 60);
+        assertHeld();
+      }
+    }
+
+    test('the pickup detection circle stays centred on its marker', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      // Geometry, not survival: the cab stands on the start line, out of
+      // every lane, while the marker ahead breathes.
+      game.player.children.whereType<RectangleHitbox>().single.collisionType =
+          CollisionType.inactive;
+      expect(game.player.hasPassenger, isFalse,
+          reason: 'precondition: fare 0 still waits at its kerb');
+
+      final zone = game.world.children.whereType<PickupZone>().single;
+      final hitbox = zone.children.whereType<CircleHitbox>().single;
+
+      // The hitbox hangs from the component's local origin at
+      // (baseRadius, baseRadius); the marker is drawn at size/2. Those
+      // are the same point only while the component never resizes — the
+      // whole of issue #143's fix.
+      await sweepPulse(game, () {
+        expect(
+          hitbox.absoluteCenter.distanceTo(zone.absoluteCenter),
+          lessThan(0.001),
+          reason: 'the detection circle slid off the marker the player '
+              'aims at',
+        );
+        expect(zone.size, Vector2.all(30.0 * 2),
+            reason: 'the component stays baseRadius square for life');
+      });
+    });
+
+    test('the dropoff detection circle stays centred once its flag pulses',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      // Board fare 0 so its dropoff activates — the flag only pulses
+      // with a passenger aboard.
+      final fare = game.course!.fare(0);
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+      game.update(1 / 60);
+      expect(game.player.hasPassenger, isTrue, reason: 'passenger boarded');
+
+      // Geometry, not survival: park at the boarding kerb, off the road.
+      game.player.children.whereType<RectangleHitbox>().single.collisionType =
+          CollisionType.inactive;
+
+      final zone = game.world.children
+          .whereType<DropoffZone>()
+          .firstWhere((z) => z.passenger.id == 'endless_0');
+      final hitbox = zone.children.whereType<CircleHitbox>().single;
+
+      await sweepPulse(game, () {
+        expect(
+          hitbox.absoluteCenter.distanceTo(zone.absoluteCenter),
+          lessThan(0.001),
+          reason: 'the detection circle slid off the flag the player '
+              'aims at',
+        );
+        expect(zone.size, Vector2.all(30.0 * 2),
+            reason: 'the component stays baseRadius square for life');
+      });
+    });
+
+    test('a special fare\'s label holds its offset while the marker pulses',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      // Geometry, not survival.
+      game.player.children.whereType<RectangleHitbox>().single.collisionType =
+          CollisionType.inactive;
+
+      // The label is the issue's other victim and only a special fare
+      // wears one, so mount a VIP outright rather than trusting the
+      // seed to have dealt one: it waits on a quiet stretch of road the
+      // controller does not know about, so nothing culls or boards it.
+      final passenger = PassengerData(
+        id: 'issue_143_vip',
+        pickupLocation: Vector2(200, -1000),
+        dropoffLocation: Vector2(200, -3000),
+        reward: 42,
+        fareType: FareType.vip,
+      );
+      final zone = PickupZone(
+        position: Vector2(200, -1000),
+        passenger: passenger,
+        onPickup: () {},
+      );
+      game.world.add(zone);
+      await tickAndSettle(game);
+
+      final label = zone.children.whereType<TextComponent>().single;
+      expect(zone.children.whereType<CircleHitbox>(), isNotEmpty,
+          reason: 'precondition: the mounted zone built its hitbox');
+      final restOffset = label.absoluteCenter - zone.absoluteCenter;
+
+      // The label hangs at a fixed local offset under the marker, so its
+      // offset from the (never-moving) marker centre must read the same
+      // at every phase of the pulse. Before the fix it wobbled ±5 px in
+      // both axes with the sine.
+      await sweepPulse(game, () {
+        expect(
+          (label.absoluteCenter - zone.absoluteCenter).distanceTo(restOffset),
+          lessThan(0.001),
+          reason: 'the label wobbled with the pulse',
+        );
+      });
     });
   });
 

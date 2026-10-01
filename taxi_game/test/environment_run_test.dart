@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -313,6 +315,129 @@ void main() {
           lessThan(45),
           reason: 'the contact point belongs on the touch, not halfway to '
               'the chunk-local origin');
+    });
+  });
+
+  group('the light pools are soft, not cut with a cookie (issue #142)',
+      () {
+    /// Rasterises the windshield layer alone into the 400x800 virtual
+    /// resolution it draws in, then samples the alpha of its tint along
+    /// the horizontal row through the cab. The overlay renders straight
+    /// into the recorder exactly as GameWidget's canvas would — the
+    /// world under it is irrelevant, only the tint and its cut-outs are
+    /// under test.
+    Future<ui.Image> rasteriseOverlay(EnvironmentOverlay overlay) async {
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+      overlay.render(canvas);
+      return recorder.endRecording().toImage(400, 800);
+    }
+
+    test('the headlight pool fades from centre to rim, not a step',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final overlay =
+          game.camera.viewport.children.whereType<EnvironmentOverlay>().first;
+      expect(overlay.isMounted, isTrue,
+          reason: 'precondition: the overlay sized itself to the viewport');
+
+      // Deepest night and nothing else over it: the tint under test is
+      // 0.62 × 255 ≈ 158 alpha, with no fog card or rain streaks in the
+      // way. Set directly — the run's own environment would overwrite
+      // it on the next update, and the renderer, not the driver, is
+      // what this test judges.
+      overlay.darkness = 1.0;
+      overlay.fogIntensity = 0;
+      overlay.rainIntensity = 0;
+
+      final image = await rasteriseOverlay(overlay);
+      final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final data = bytes!.buffer.asUint8List();
+
+      // The cab's screen position, projected the same way the overlay's
+      // own _playerScreenPos does, so the probes straddle its pool
+      // whatever the camera settled at.
+      final viewfinder = game.camera.viewfinder.position;
+      final cx =
+          (game.player.position.x - (viewfinder.x - 200)).round().clamp(0, 399);
+      final cy =
+          (game.player.position.y - (viewfinder.y - 400)).round().clamp(0, 799);
+
+      int alphaAt(int x, int y) => data[(y * 400 + x) * 4 + 3];
+
+      // The warm additive glow sits 117 px above the cab with a 60 px
+      // radius, so this row never touches it: every alpha below is the
+      // tint and its cuts alone.
+      final centre = alphaAt(cx, cy);
+      final at65 = alphaAt(cx + 65, cy);
+      final at120 = alphaAt(cx + 120, cy);
+      final outside = alphaAt(cx + 185, cy);
+
+      // 185 px out clears both cut ovals (the 130 px ambient circle and
+      // the headlight ellipse's 110 px half-width): the untouched tint.
+      expect(outside, closeTo(158, 4),
+          reason: 'beyond the beams the night tint stands at full '
+              '0.62 alpha');
+
+      // The gradient's falloff, not a step: strictly more tint at every
+      // probe out from the centre, and the centre keeps a breath of it.
+      // With the old BlendMode.clear the first three probes all read 0
+      // — every covered pixel fully cleared, the gradient ignored — and
+      // the tint jumped 0 → 158 in one pixel at the oval's rim.
+      expect(centre, greaterThan(0),
+          reason: 'the erase is graduated: even the pool centre keeps '
+              'some tint instead of being zeroed');
+      expect(centre, lessThan(30),
+          reason: 'the pool centre is mostly clear');
+      expect(centre, lessThan(at65),
+          reason: 'the erase weakens away from the cab');
+      expect(at65, lessThan(at120),
+          reason: 'the falloff keeps climbing toward the rim');
+      expect(at120, lessThan(outside),
+          reason: 'the rim hands over to the full tint, not a cliff');
+    });
+
+    test('the fog bubble fades the same way (issue #142)', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final overlay =
+          game.camera.viewport.children.whereType<EnvironmentOverlay>().first;
+      overlay.darkness = 0;
+      overlay.fogIntensity = 1.0;
+      overlay.rainIntensity = 0;
+
+      final image = await rasteriseOverlay(overlay);
+      final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final data = bytes!.buffer.asUint8List();
+
+      final viewfinder = game.camera.viewfinder.position;
+      final cx =
+          (game.player.position.x - (viewfinder.x - 200)).round().clamp(0, 399);
+      final cy =
+          (game.player.position.y - (viewfinder.y - 400)).round().clamp(0, 799);
+
+      int alphaAt(int x, int y) => data[(y * 400 + x) * 4 + 3];
+
+      // Fog's card is 0.55 × 255 ≈ 140; its bubble reaches a little
+      // further than the night pool (149.5 px) with a longer throw.
+      final centre = alphaAt(cx, cy);
+      final at65 = alphaAt(cx + 65, cy);
+      final at120 = alphaAt(cx + 120, cy);
+      final outside = alphaAt(cx + 185, cy);
+
+      expect(outside, closeTo(140, 4),
+          reason: 'beyond the bubble the fog card stands at full '
+              '0.55 alpha');
+      expect(centre, greaterThan(0),
+          reason: 'the bubble centre keeps some fog instead of being '
+              'zeroed');
+      expect(centre, lessThan(30), reason: 'the bubble centre is mostly clear');
+      expect(centre, lessThan(at65), reason: 'the fog thins toward the cab');
+      expect(at65, lessThan(at120), reason: 'and thickens back out again');
+      expect(at120, lessThan(outside), reason: 'the rim hands over to the fog');
     });
   });
 

@@ -280,6 +280,73 @@ void main() {
     });
   });
 
+  group('backgrounding during the post-crash freeze (issue #141)', () {
+    test('the auto-pause arms on the stall, and the shift never resumes '
+        'on its own under the menu', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      // Spend a life the way the clamp test does: a survivable crash
+      // with its impact freeze armed, exactly what a judged collision
+      // produces. The stall holds the world, the shift is not over, and
+      // [TaxiGame.isGameActive] is false for the whole freeze — the
+      // state the old _isRunLive gate read as "nothing live to
+      // protect".
+      game.onCrash();
+      game.hitStop.trigger();
+      expect(game.isCrashStall, isTrue, reason: 'the post-crash freeze');
+      expect(game.isGameActive, isFalse,
+          reason: 'the stall holds the world still');
+      expect(game.isShiftOver, isFalse,
+          reason: 'a survivable crash: the shift continues after it');
+
+      // --- The app goes to the background mid-freeze (call, shade) ---
+      game.lifecycleStateChange(AppLifecycleState.hidden);
+
+      expect(game.paused, isTrue,
+          reason: 'the freeze counts as live: the auto-pause arms');
+      expect(game.overlays.isActive('pauseMenu'), isFalse,
+          reason: 'still silent — no menu over a street nobody can see');
+
+      // --- The app returns; the ticker carries the absence as one dt ---
+      game.lifecycleStateChange(AppLifecycleState.resumed);
+
+      expect(game.paused, isTrue,
+          reason: 'the deliberate re-entry gate, same as a live run');
+      expect(game.overlays.isActive('pauseMenu'), isTrue,
+          reason: 'the pause menu is the way back in');
+      expect(game.isGameActive, isFalse,
+          reason: 'the shift has not silently restarted under the menu');
+
+      // The resumed frame delivers the absent gap as one dt. Clamped, it
+      // must not finish the freeze and hand the shift to live traffic
+      // while the player is still reading the menu — the self-restart
+      // the issue reported.
+      game.update(30.0);
+      expect(game.isCrashStall, isTrue,
+          reason: 'the stall did not silently complete');
+      expect(game.isGameActive, isFalse,
+          reason: 'no live play the player did not choose');
+
+      // --- Deliberate re-entry: the freeze finishes and hands the
+      // shift back where the crash left it ---
+      game.resumeGame();
+      expect(game.paused, isFalse);
+      expect(game.overlays.isActive('pauseMenu'), isFalse);
+
+      // 1.5 s of live ticks: the hit-stop remainder (0.10 s minus the
+      // clamped frame) plus the 1.2 s stall, with margin.
+      for (var i = 0; i < 90; i++) {
+        game.update(1 / 60);
+      }
+      expect(game.isCrashStall, isFalse, reason: 'the stall has run out');
+      expect(game.isGameActive, isTrue,
+          reason: 'the shift resumes where the crash left it — chosen, '
+              'not automatic');
+      expect(game.lives.remaining, 2, reason: 'the one life the crash cost');
+    });
+  });
+
   group('the dt clamp (issue #36)', () {
     test('one frame may never consume more than maxUpdateDelta, even '
         'carrying raw engine time', () async {
