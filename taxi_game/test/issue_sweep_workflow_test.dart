@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The issue-sweep workflow's push and CI contract (issue #88), its
-/// gate-log round trip (issue #97), and its branch-safety pins
-/// (issues #108 and #118).
+/// gate-log round trip (issue #97), its branch-safety pins (issues #108
+/// and #118), and its deploy-verdict pins (issue #124).
 ///
 /// The sweep script (`.zcode/workflows/gh-issue-sweep.dwf.ts`) drives real
 /// git pushes and real CI waits, so this suite cannot execute it — the
@@ -15,7 +15,12 @@ import 'package:flutter_test/flutter_test.dart';
 /// as exit codes, it does not throw) let a rejected push pass silently, and
 /// CI was awaited once before review but never again on the heads that
 /// review-round fixes produced — so the merge could ship a head CI never
-/// passed, or a remote head that never got the fix at all.
+/// passed, or a remote head that never got the fix at all. The #124 bug
+/// was the same shape at the deploy end: the verdict was read off `gh run
+/// watch`'s exit code, but the release workflow skips the upload while
+/// staying green when the App Store Connect train is closed (issue #119),
+/// so a green run with no build was reported — and the issues closed — as
+/// a TestFlight deploy.
 void main() {
   // flutter test runs from the package directory (the assumption
   // vehicle_sprites_test.dart makes for assets); the workflow lives one
@@ -286,6 +291,88 @@ void main() {
       final addAt = body.indexOf('world.run("git", ["add", "-A"])');
       expect(guardAt, lessThan(addAt),
           reason: 'the branch verification precedes the staging');
+    });
+  });
+
+  group('a green release run is only a deploy when the upload step ran '
+      '(issue #124)', () {
+    // The original bug: the sweep read its deploy verdict off `gh run
+    // watch`'s exit code alone, but the release workflow's closed-train
+    // gate (issue #119) skips the build and the upload while the run stays
+    // green — so issues were closed as deployed-to-TestFlight by a run
+    // that uploaded nothing. The verdict must come from the Upload to
+    // TestFlight step's own conclusion, read back from the green run's
+    // jobs — and a verdict that cannot be read is no deploy.
+    test('the green run is read back for the upload step', () {
+      expect(script, contains('"run", "view", releaseRunId, "--json", "jobs"'),
+          reason: 'the sweep must query the green run\'s jobs — the watch '
+              'exit code cannot say whether the upload step ran');
+      expect(script, contains('"Build, sign, and upload"'),
+          reason: 'the job name is pinned to ios-release.yml');
+      expect(script, contains('"Upload to TestFlight"'),
+          reason: 'the step name is pinned to ios-release.yml');
+    });
+
+    test('deployed is the step conclusion, never the watch exit code', () {
+      expect(script, isNot(contains('deployed = release.exitCode === 0')),
+          reason: 'a green run whose upload was skipped must not read as '
+              'deployed');
+      expect(script, contains('deployed = stepConclusion === "success"'),
+          reason: 'only the upload step concluding success is a deploy');
+
+      // The skipped verdict is a third state with its own flag, not a
+      // flavor of failed: the step (or its whole job) skipped means the
+      // gate stood the run down while everything else about the merge
+      // succeeded.
+      expect(script, contains('let uploadSkipped = false'));
+      expect(script, contains('=== "skipped"'),
+          reason: 'a skipped job or step must be recognized as skipped');
+    });
+
+    test('the skipped case closes the issues with its own honest comment',
+        () {
+      // Leaving skipped-upload issues open would make the next sweep
+      // re-implement already-merged work, so they close — but on a
+      // comment that says merged + gate + next upload, never on the
+      // deployed one. The deployed text appears exactly once, in its own
+      // branch; the skipped branch is a separate arm with its own words.
+      expect(
+          RegExp('deployed to TestFlight \\(issue-sweep pipeline\\)')
+              .allMatches(script),
+          hasLength(1),
+          reason: 'the deployed close comment belongs to the deployed '
+              'branch alone');
+      expect(script, contains('else if (uploadSkipped)'),
+          reason: 'the skipped verdict has its own close branch');
+      expect(script, contains('The TestFlight upload was skipped'),
+          reason: 'the skipped comment says what actually happened');
+      expect(script, contains('after a version bump'),
+          reason: 'the skipped comment says how the merge eventually ships');
+    });
+
+    test('no report line claims an upload the step did not make', () {
+      // "upload green" is claimed exactly once, and only in the arm that
+      // also names the step's success conclusion; the skipped arm denies
+      // the upload outright.
+      expect(RegExp('TestFlight upload green').allMatches(script),
+          hasLength(1),
+          reason: 'the upload-green claim must stay branch-scoped');
+      expect(
+          script,
+          contains(
+              'TestFlight upload green: the Upload to TestFlight step concluded success'),
+          reason: 'the green claim is tied to the step conclusion it '
+              'rests on');
+      expect(script, contains('no TestFlight upload'),
+          reason: 'the skipped arm must deny the upload explicitly');
+
+      // deployLine itself branches three ways after the watch, so a
+      // skipped or unreadable step can never inherit the uploaded
+      // wording either.
+      expect(script, contains('uploaded the build to TestFlight'));
+      expect(script,
+          contains('stayed green but skipped the Upload to TestFlight step'));
+      expect(script, contains('claims no TestFlight upload'));
     });
   });
 }
