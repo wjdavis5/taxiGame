@@ -17,6 +17,20 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
   bool _isCompleted = false;
   double _pulseAnimation = 0.0;
 
+  // The pulse breathes this private brush radius, never the component's
+  // own `radius`: CircleComponent's radius setter rewrites `size`, and
+  // under anchor.center every resize slides the top-left local origin
+  // that the fixed-offset children hang from — the detection
+  // CircleHitbox at (baseRadius, baseRadius), the special-fare label at
+  // (baseRadius, 2·baseRadius + 18) — while render() keeps the drawn
+  // flag dead on its kerb, so the detection circle drifted up to 5 px
+  // per axis off the marker the player aims at and the label wobbled
+  // with it (issue #143). The component stays baseRadius square for
+  // life; only the brush shrinks and grows. An inactive dropoff never
+  // pulses at all: _drawRadius sits at baseRadius, exactly the resting
+  // size the grey flag always drew at.
+  double _drawRadius = baseRadius;
+
   static const double baseRadius = 30.0;
   static const double detectionRadius = 40.0;
 
@@ -73,7 +87,7 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
 
     // Pulse animation
     _pulseAnimation += dt * 2.0;
-    radius = baseRadius + (math.sin(_pulseAnimation) * 5.0);
+    _drawRadius = baseRadius + (math.sin(_pulseAnimation) * 5.0);
   }
 
   @override
@@ -82,6 +96,8 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
 
     // Skip CircleComponent's default paint and draw centered on the
     // component (local origin is the top-left corner, not the center).
+    // Every circle below reads _drawRadius, the pulsing brush — size
+    // never moves, so this translate lands on the same kerb all shift.
     canvas.save();
     canvas.translate(size.x / 2, size.y / 2);
 
@@ -92,20 +108,20 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
     final glowPaint = Paint()
       ..color = color.withValues(alpha: opacity * 0.5)
       ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset.zero, radius + 10, glowPaint);
+    canvas.drawCircle(Offset.zero, _drawRadius + 10, glowPaint);
 
     // Draw main circle
     final paint = Paint()
       ..color = color.withValues(alpha: opacity)
       ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset.zero, radius, paint);
+    canvas.drawCircle(Offset.zero, _drawRadius, paint);
 
     // Draw border
     final borderPaint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
-    canvas.drawCircle(Offset.zero, radius, borderPaint);
+    canvas.drawCircle(Offset.zero, _drawRadius, borderPaint);
 
     // Draw the fare kind's glyph at the dropoff's lower weight (issue #35).
     _drawKindGlyph(canvas, _isActive ? Colors.white : Colors.grey.shade400);

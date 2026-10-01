@@ -155,7 +155,14 @@ class EnvironmentOverlay extends PositionComponent
       Rect.fromCenter(center: center, width: radius.width * 2,
           height: radius.height * 2),
       Paint()
-        ..blendMode = BlendMode.clear
+        // dstOut, not clear: clear zeroes every pixel the oval covers,
+        // reading neither the paint nor its shader — the gradient below
+        // was dead weight and the cut came out a hard-edged, fully
+        // clear oval (issue #142). dstOut multiplies the destination
+        // by (1 − source alpha), so the gradient finally does its job:
+        // ~95% of the tint erased at the centre, fading to untouched at
+        // the rim — the soft pool of light the doc comments promise.
+        ..blendMode = BlendMode.dstOut
         ..shader = RadialGradient(
           colors: [
             const Color(0xFFFFFFFF).withValues(alpha: 0.95),
