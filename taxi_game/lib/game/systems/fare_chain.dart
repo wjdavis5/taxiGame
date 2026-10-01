@@ -46,7 +46,8 @@ class FareTimer {
 ///
 /// Several passengers can be aboard at once (a level can let the player
 /// stack pickups), so each carries their own countdown and the chain breaks
-/// if any of them runs out. The HUD shows the most urgent one.
+/// if any of them runs out. The HUD shows the most urgent still-live one —
+/// an expired rider surfaces only when nothing live is left (issue #126).
 ///
 /// Pure logic — no Flame state — so every rule is unit testable, matching
 /// [DifficultyCurve] and [EndlessCourse].
@@ -166,16 +167,31 @@ class FareChain {
   /// The countdown for [passenger], or null when they are not aboard.
   FareTimer? timerFor(PassengerData passenger) => _timers[passenger.id];
 
-  /// The countdown that will run out first — the one the HUD shows. Null
-  /// when no passenger is aboard.
+  /// The live countdown that will run out first — the one the HUD shows.
+  /// Null when no passenger is aboard.
+  ///
+  /// Expired riders are invisible to the pick until nothing live is left
+  /// (issue #126): a meter floored at zero always wins a plain min, so
+  /// once any passenger rode late the badge parked on LATE and every
+  /// other countdown aboard ticked to zero unseen — its expiry, the one
+  /// event the badge exists to warn about, landing with no warning at
+  /// all. A late rider is still returned, but only when every timer
+  /// aboard is expired, keeping the lone-late LATE read; and that LATE
+  /// no longer claims the chain is broken *now* — #120 breaks it once at
+  /// the crossing, so a delivery since may have rebuilt it while the
+  /// late rider sat on.
   FareTimer? get mostUrgentTimer {
     FareTimer? urgent;
+    FareTimer? expired;
     for (final timer in _timers.values) {
-      if (urgent == null || timer.remainingSeconds < urgent.remainingSeconds) {
+      if (timer.isExpired) {
+        expired ??= timer;
+      } else if (urgent == null ||
+          timer.remainingSeconds < urgent.remainingSeconds) {
         urgent = timer;
       }
     }
-    return urgent;
+    return urgent ?? expired;
   }
 
   /// Starts [passenger]'s countdown, sized to their ride and to their fare

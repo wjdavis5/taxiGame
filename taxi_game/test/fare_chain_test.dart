@@ -269,6 +269,44 @@ void main() {
       expect(chain.multiplier, 2);
     });
 
+    test('a late rider no longer wins the urgency pick over a live '
+        'countdown (issue #126)', () {
+      final chain = FareChain();
+      final stale = fareOf('stale', 400, -300); // 700 px ride
+      final fresh = fareOf('fresh', 400, -600); // 1000 px: the longer clock
+      chain.startFare(stale);
+      chain.startFare(fresh);
+
+      // Stale's meter runs out while both ride; fresh's keeps ticking.
+      chain.update(FareChain.secondsForRide(700) + 1);
+      expect(chain.timerFor(stale)!.isExpired, isTrue);
+      expect(chain.timerFor(fresh)!.isExpired, isFalse);
+
+      // The live clock is the urgent one. A meter floored at zero always
+      // won the old plain min, parking the badge on LATE while fresh's
+      // countdown ran out unseen — the one warning the badge exists for.
+      expect(chain.mostUrgentTimer, same(chain.timerFor(fresh)));
+
+      // Once every rider aboard is expired, LATE is all there is to
+      // show: the fallback still surfaces a spent meter rather than
+      // nothing. (Which one is unspecified — any expired rider reads
+      // the same.)
+      chain.update(FareChain.maxFareSeconds);
+      expect(chain.mostUrgentTimer, isNotNull);
+      expect(chain.mostUrgentTimer!.isExpired, isTrue);
+    });
+
+    test('a lone expired rider still surfaces for the LATE read (issue '
+        '#126)', () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+      chain.update(FareChain.secondsForRide(700) + 5);
+
+      expect(chain.mostUrgentTimer, same(chain.timerFor(passenger)),
+          reason: 'nothing live is aboard — the late read is the read');
+    });
+
     test('a stale expired rider no longer re-breaks the chain every '
         'frame (issue #120)', () {
       final chain = FareChain();

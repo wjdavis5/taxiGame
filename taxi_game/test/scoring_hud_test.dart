@@ -37,6 +37,16 @@ void main() {
         reward: 50,
       );
 
+  /// A second fare to ride alongside [waitingFare] (issue #126): 1000 px
+  /// of ride buys a budget that outlives the first fare's whole window,
+  /// so one update can leave this one live while that one is expired.
+  PassengerData longAboardFare() => PassengerData(
+        id: 'hud_fare_long',
+        pickupLocation: Vector2(85, 400),
+        dropoffLocation: Vector2(85, -600),
+        reward: 50,
+      );
+
   Widget hudFor(TaxiGame game) =>
       ChangeNotifierProvider<GameStateService>.value(
         value: gameState,
@@ -97,6 +107,28 @@ void main() {
     expect(find.byIcon(Icons.timer_off), findsOneWidget);
     expect(game.fareChain.multiplier, 1,
         reason: 'the HUD reflects the chain the expiry broke');
+  });
+
+  testWidgets('a late rider aboard does not hide a second passenger\'s '
+      'live countdown (issue #126)', (tester) async {
+    final game = levelGame();
+    await tester.pumpWidget(hudFor(game));
+    await tester.pump(const Duration(milliseconds: 150));
+
+    // Two passengers aboard: one whose meter is spent, one still live.
+    game.fareChain.startFare(waitingFare());
+    game.fareChain.startFare(longAboardFare());
+    game.fareChain.update(FareChain.secondsForRide(700) + 1);
+    await tester.pump(const Duration(milliseconds: 150)); // poll tick
+
+    // The live clock reads. Before #126 the spent meter — floored at
+    // zero, and therefore the winner of the old plain-min urgency pick —
+    // parked the badge on LATE while this countdown ran out with no
+    // warning at all.
+    expect(find.byIcon(Icons.timer), findsOneWidget);
+    expect(find.byIcon(Icons.timer_off), findsNothing);
+    expect(find.textContaining(RegExp(r'^\d+\.\ds$')), findsOneWidget);
+    expect(find.text('LATE'), findsNothing);
   });
 
   testWidgets('an on-time delivery banks the score, steps the multiplier, '
