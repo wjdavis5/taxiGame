@@ -92,12 +92,18 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
     _panelNaturalHeight = measured;
     final ousts = _badgeBand > 0 && measured > _laneHeight - _badgeBand;
     widget.game.bankPanelOustsGhostBadge = ousts;
-    // The flag write alone repaints nothing here. Re-park only when the
-    // measurement disagrees with the branch just laid out — most
-    // commonly the first measurement of a too-tall panel arriving after
-    // the optimistic below-the-band build, or a text-scale change
-    // moving the panel across the line mid-window.
-    if (ousts == _parksBelowBadge) {
+    // The flag write alone repaints nothing here. Re-park only where a
+    // band is in play and the measurement disagrees with the branch
+    // just laid out — most commonly the first measurement of a
+    // too-tall panel arriving after the optimistic below-the-band
+    // build, or a text-scale change moving the panel across the line
+    // mid-window. The band check is load-bearing: with no badge to
+    // arbitrate (`_badgeBand == 0` — every ordinary dropoff, every
+    // banking-lesson level) `ousts` and `_parksBelowBadge` are both
+    // false on every frame, and reading that agreement as a flip would
+    // setState after every painted frame of the window — a
+    // self-sustaining rebuild loop at frame rate.
+    if (_badgeBand > 0 && ousts == _parksBelowBadge) {
       setState(() {});
     }
   }

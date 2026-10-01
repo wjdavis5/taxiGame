@@ -324,6 +324,34 @@ void main() {
       expect(find.text('BANK OR PUSH?'), findsNothing);
     });
 
+    testWidgets('a prompt with no badge band settles: the steady state owns '
+        'no frames (issue #139)', (tester) async {
+      // The common prompt — no daily ghost, so no band to arbitrate and
+      // no re-park ever owed. The post-frame measurement used to read
+      // `false == false` (no oust, no below-band park) as a branch flip
+      // and setState after every painted frame, a self-sustaining
+      // rebuild loop for the prompt's whole window at 60 fps.
+      final fare0 = EndlessCourse(seed: 42).fare(0);
+      final game = await armedGame(tester, fare0);
+      await showPrompt(tester, game);
+      expect(find.byKey(const ValueKey('bank_prompt_panel')), findsOneWidget);
+      expect(game.bankPanelOustsGhostBadge, isFalse,
+          reason: 'sanity: no ghost on this road, so no band to claim');
+
+      // Drain: the measurement has landed, any re-park it asked for has
+      // painted, and one more zero-duration frame consumes whatever the
+      // last frame scheduled.
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pump();
+
+      // Nothing may want another frame: the overlay's own rebuilds ride
+      // its 100 ms poll timer, which only fires inside a pump with
+      // duration — a pending frame here is the loop.
+      expect(tester.binding.hasScheduledFrame, isFalse,
+          reason: 'the fit measurement must not keep scheduling frames '
+              'once it agrees with the layout it measured');
+    });
+
     testWidgets('tapping PUSH ON raises the multiplier and stands down',
         (tester) async {
       final fare0 = EndlessCourse(seed: 42).fare(0);
