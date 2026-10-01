@@ -6,6 +6,7 @@ import 'dart:math';
 import '../taxi_game.dart';
 import '../vehicle_sprites.dart';
 import '../systems/collision_rules.dart';
+import '../systems/run_environment.dart';
 import '../../models/traffic_pattern.dart';
 import 'danger_indicator.dart';
 
@@ -202,10 +203,31 @@ class TrafficVehicle extends PositionComponent
       // Update position
       position += velocity * dt;
     } else {
-      // Path exhausted - despawn instead of idling forever at the path end
-      shouldRemove = true;
-      removeFromParent();
-      return;
+      // Path exhausted. On the endless road that is not a
+      // same-direction car's last leg — the 3,000 px extent (#18) is
+      // road distance from the *spawn*, not a position relative to the
+      // camera, so its end could land anywhere, including mid-view: a
+      // car driving a little slower than the taxi blinked out of
+      // existence right beside the cab (issue #129). There the car
+      // keeps driving, its schedule rebuilt from where it stands, and
+      // the culls below own the removal — position-relative, so nothing
+      // lingers out of view (#18's property, held by geometry instead
+      // of by a path length).
+      //
+      // Oncoming paths end exactly at the behind-camera cull by
+      // construction (500 px ahead at the spawn plus 1,500 px of drive
+      // = 1,000 px below the camera), so there is nothing past their
+      // end worth driving and they despawn on arrival, out of sight,
+      // as they always have. Level mode keeps the despawn for the same
+      // reason of genuinely finite road: its streets end at a barrier
+      // (#31 clamps every path this far inside it).
+      final env = game.environment;
+      if (env == null || path.isEmpty || velocity.y > 0) {
+        shouldRemove = true;
+        removeFromParent();
+        return;
+      }
+      _extendPath(env);
     }
 
     // Check if vehicle is off screen (below player view)
@@ -215,7 +237,86 @@ class TrafficVehicle extends PositionComponent
       return;
     }
 
+    // And off screen above it — the symmetric half of the view band
+    // (issue #129). Endless-only, because it only matters once a car can
+    // outlive its path: a same-direction car pulling away from the taxi
+    // used to stop at its path's end wherever that was; now it drives
+    // until it is a screen and a half ahead, where nobody can see it go.
+    // The view is ±400 px, so 1,000 px clears it with the same margin
+    // the behind cull keeps below.
+    if (game.environment != null &&
+        position.y < game.camera.viewfinder.position.y - 1000) {
+      shouldRemove = true;
+      removeFromParent();
+      return;
+    }
+
     _updateNearMissWatch();
+  }
+
+  /// Rebuilds [path] from the position the car actually holds — the
+  /// endless road's answer to a path that ran out under the camera
+  /// (issue #129). The schedule is the same
+  /// [RunEnvironment.trafficMergeWaypoints] merge the spawner laid the
+  /// original path from, re-anchored at the car's true distance
+  /// (`worldShift − y`, the same fold the spawn mapped its anchors
+  /// through) and at a lane centre of the road it stands on. The
+  /// re-centring matters: waypoint driving leaves the car a fraction of
+  /// a px off the lane a merge diagonal delivered it to (the 10 px
+  /// waypoint reach times the diagonal's slope), and the rebuilt path's
+  /// first constant-x stretch would hold that drift for its whole
+  /// 3,000 px — a car visibly off-lane to the sidewalk invariant and,
+  /// over many extensions, drifting without bound. A car farther off
+  /// every lane than that (mid-merge, on a diagonal) keeps its x: the
+  /// schedule's first leg is the diagonal that delivers it onto a lane,
+  /// exactly as a spawn-time cut leg does (#114). The list's *contents*
+  /// are replaced, never appended: the car owns one bounded schedule,
+  /// and the spawner's fold ([TrafficSpawner.shiftWorld]) keeps a short
+  /// list to walk.
+  void _extendPath(RunEnvironment env) {
+    final shift = game.worldShift;
+    final schedule = env.trafficMergeWaypoints(
+      shift - position.y,
+      _laneAnchoredX(env, shift - position.y),
+      oncoming: false,
+    );
+    path
+      ..clear()
+      ..addAll([for (final (d, x) in schedule) Vector2(x, shift - d)]);
+    currentWaypointIndex = 0;
+    // The first anchor sits at the car's own distance, so the steer to
+    // it is one quick lateral move onto the lane (the born-on-the-line
+    // snap the schedule itself uses); from there the legs drive as
+    // every spawned path does (issue #72's zero-offset first leg).
+    _updateVelocityTowardsWaypoint();
+  }
+
+  /// Max sideways drift [_extendPath] will re-centre onto a lane: the
+  /// reach of the waypoint advance (10 px) along a merge diagonal's
+  /// slope (~0.15 lateral per longitudinal) is ≤ 1.5 px, plus float
+  /// rounding — 4 px is ample headroom while staying far under the
+  /// ~20 px between two lanes' centres, so a car genuinely between
+  /// lanes (mid-merge) is never yanked sideways to a lane it has not
+  /// merged onto yet.
+  static const double _laneRecentreDrift = 4.0;
+
+  /// The x the rebuilt schedule anchors at: the car's own, unless it
+  /// sits within [_laneRecentreDrift] of a same-direction lane centre
+  /// of the road it stands on — then that lane centre, exactly, so the
+  /// rebuilt polyline holds the lane invariant from its first metre.
+  double _laneAnchoredX(RunEnvironment env, double d) {
+    final road = env.roadAt(d);
+    var best = position.x;
+    var bestDistance = _laneRecentreDrift;
+    for (var i = 0; i < road.laneCount; i++) {
+      if (road.isLaneOncoming(i)) continue;
+      final distance = (road.laneXs[i] - position.x).abs();
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = road.laneXs[i];
+      }
+    }
+    return best;
   }
 
   void _updateVelocityTowardsWaypoint() {

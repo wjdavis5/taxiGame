@@ -4,8 +4,10 @@ import 'package:flame/components.dart';
 import 'package:flame/events.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/bank_prompt.dart';
+import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
 import 'package:taxi_game/game/systems/lives.dart';
 import 'package:taxi_game/game/taxi_game.dart';
@@ -13,6 +15,7 @@ import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/widgets/bank_prompt_overlay.dart';
+import 'package:taxi_game/ui/widgets/hud_overlay.dart';
 
 /// The bank-or-push decision at every endless dropoff (issue #13): a
 /// timed choice that never stops the game, where banking is the only way
@@ -353,6 +356,118 @@ void main() {
     });
   });
 
+  group('the panel and the ghost badge (issue #130)', () {
+    /// Plants a daily ghost so a ghost race has a car to race — the
+    /// scoring HUD's pattern.
+    Future<void> plantGhost() async {
+      await gameState.recordDailyGhostRun(
+        dateKey: DailyShift.todayKey,
+        score: 500,
+        banked: true,
+        vehicleId: 'taxi_yellow',
+        samples: const [200, 0, 200, -100, 200, -200],
+      );
+    }
+
+    testWidgets('the panel parks below the live ghost gap readout',
+        (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await plantGhost();
+
+      // The ghost-race mount the badge tests use, with the fare armed
+      // through the real flow. All of it inside the test binding's
+      // real-async window: mounting loads real sprite assets, and the
+      // settle between the arming ticks awaits real futures — the
+      // fake-async zone outside would deadlock on both. Everything
+      // after is pumps and synchronous reads.
+      final mountedGame = await tester.runAsync<TaxiGame>(() async {
+        final game = TaxiGame(
+          levelLoader: LevelLoaderService(),
+          gameState: gameState,
+          endlessSeed: DailyShift.seedForDateKey(DailyShift.todayKey),
+          isGhostRace: true,
+        )
+          ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('pauseMenu', (_, __) => const SizedBox.shrink());
+        game.onGameResize(Vector2(400, 800));
+        await game.onLoad();
+        // ignore: invalid_use_of_internal_member
+        game.mount();
+        await game.ready();
+        await tickAndSettle(game);
+
+        // No GameWidget drives a headless game: tick the run by hand so
+        // the ghost runs off the start line and the gap goes live while
+        // the player holds it.
+        for (var i = 0; i < 30; i++) {
+          game.update(1 / 60);
+        }
+
+        // The save's first-ever delivery arms the choice — and being the
+        // primer, it freezes the world under the prompt, so the window
+        // cannot expire mid-measurement.
+        deliverFare(game, game.course!.fare(0));
+        return game;
+      });
+      final game = mountedGame!;
+      expect(game.bankPrompt.isActive, isTrue);
+      expect(game.ghostGapMetres, isNotNull,
+          reason: 'sanity: the race has a live gap to read');
+
+      // Both overlays in the game screen's stacking order — the HUD
+      // first, the prompt above it — at the narrowest and the widest
+      // iPhone widths, the band the issue was measured across. Text is
+      // scaled down 25%: the test font draws every glyph a full em
+      // square, so the panel's title row is wider than any phone at
+      // 1.0 and throws a horizontal overflow that has nothing to do
+      // with the vertical placement under test (the shipping font fits
+      // a 4-digit stake at 375 pt). Scaling only shortens the badge —
+      // the panel's top edge is the constant being measured.
+      for (final width in [375.0, 393.0, 430.0]) {
+        tester.view.physicalSize = Size(width, 812);
+        await tester.pumpWidget(
+          ChangeNotifierProvider<GameStateService>.value(
+            value: gameState,
+            child: MaterialApp(
+              home: MediaQuery(
+                data: const MediaQueryData(
+                  textScaler: TextScaler.linear(0.75),
+                ),
+                child: Scaffold(
+                  body: Stack(
+                    children: [
+                      HudOverlay(game: game),
+                      BankPromptOverlay(game: game),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 150)); // poll tick
+        expect(tester.takeException(), isNull,
+            reason: 'at $width pt the overlays must lay out cleanly');
+
+        // The panel's opaque card must clear the badge's line entirely:
+        // before the fix its fixed 120 px top sat 36 px into the badge's
+        // 37, hiding the gap readout for the whole decision window.
+        final badge =
+            tester.getRect(find.byKey(const ValueKey('ghost_badge')));
+        final panel =
+            tester.getRect(find.byKey(const ValueKey('bank_prompt_panel')));
+        expect(badge.bottom, lessThanOrEqualTo(panel.top),
+            reason: 'at $width pt the bank-or-push panel covered the '
+                'ghost gap readout');
+      }
+    });
+  });
+
   group("the primer: the first offer a save ever sees", () {
     test('stops traffic for the first offer and releases it on the answer',
         () async {
@@ -455,6 +570,42 @@ void main() {
       game.bankShift();
       expect(game.paused, isFalse,
           reason: 'the choice itself is still the way out');
+    });
+
+    testWidgets('hides the pause button while it holds the freeze '
+        '(issue #132)', (tester) async {
+      // Through the real flow, not set by hand: mount, deliver, and let
+      // the save's first-ever offer stop the world. Mounting loads real
+      // sprite assets, so it rides the test binding's real-async window
+      // (the pattern from the prompt-widget group above); everything
+      // after it is synchronous game ticks and pumps.
+      final fare0 = EndlessCourse(seed: 42).fare(0);
+      final game = (await tester.runAsync<TaxiGame>(() async {
+        final game = await mountGame(endlessGame(42));
+        await tickAndSettle(game);
+        deliverFare(game, fare0);
+        return game;
+      }))!;
+      expect(game.isBankPrimerActive, isTrue,
+          reason: 'sanity: the primer holds its freeze');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<GameStateService>.value(
+          value: gameState,
+          child: MaterialApp(home: Scaffold(body: HudOverlay(game: game))),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150)); // poll tick
+
+      // The primer's freeze makes pauseGame ignore the tap, so the
+      // button must not sit in the corner looking live.
+      expect(find.byIcon(Icons.pause), findsNothing);
+
+      // The answer releases the freeze, and the control returns with it.
+      game.pushOn();
+      await tester.pump(const Duration(milliseconds: 150)); // poll tick
+      expect(find.byIcon(Icons.pause), findsOneWidget,
+          reason: 'a live shift has its pause control back');
     });
   });
 

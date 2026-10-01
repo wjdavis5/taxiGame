@@ -986,6 +986,13 @@ class TaxiGame extends FlameGame
   /// prompt ([_dismissBankPrompt]).
   bool _bankPrimerActive = false;
 
+  /// Whether the primer is holding its freeze on the save's first-ever
+  /// choice (issue #132). See [_bankPrimerActive] — exposed the way
+  /// [isShiftOver] is, because [pauseGame] ignores taps for as long as
+  /// this is set: the HUD's pause button reads it to stand down instead
+  /// of sitting in the corner looking live while doing nothing.
+  bool get isBankPrimerActive => _bankPrimerActive;
+
   /// Puts the bank-or-push choice on screen after an endless dropoff.
   void _offerBankOrPush() {
     bankPrompt.offer();

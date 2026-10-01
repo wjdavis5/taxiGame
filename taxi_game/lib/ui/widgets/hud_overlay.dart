@@ -13,6 +13,16 @@ import '../../services/game_state_service.dart';
 class HudOverlay extends StatelessWidget {
   const HudOverlay({super.key, required this.game});
 
+  /// The vertical band the ghost-gap badge adds below the scoring row
+  /// in a ghost race (issue #130): the 6 px gap that opens the badge's
+  /// own line under the row, plus the pill itself (16 px of vertical
+  /// padding around a 15 px style's line — 37 px under the test font),
+  /// plus a few px of headroom because the shipping font's line runs
+  /// taller than the test font's. [BankPromptOverlay] parks below the
+  /// HUD's whole top band and adds this whenever the badge is showing,
+  /// so its panel clears the readout instead of painting over it.
+  static const double ghostBadgeBandHeight = 6 + 37 + 4;
+
   final TaxiGame game;
 
   @override
@@ -114,8 +124,10 @@ class HudOverlay extends StatelessWidget {
                 ),
                 
                 // Pause button: stands down while a summary owns the
-                // screen (issue #52) — the polling widget below reads
-                // the game's shift-over state on the HUD's short timer.
+                // screen (issue #52) or the first-ever bank-or-push
+                // primer holds its freeze (issue #132) — the polling
+                // widget below reads the game's state on the HUD's
+                // short timer.
                 _PauseButton(game: game),
               ],
             ),
@@ -193,6 +205,10 @@ class _LevelNameBadgeState extends State<_LevelNameBadge> {
 /// the top-right corner, so the button stayed tappable after a shift
 /// ended — and the pause menu it opened offered BANK & QUIT on a shift
 /// that had already paid out, banking the same score again on every tap.
+/// Since issue #132 it stands down for the first-ever bank-or-push primer
+/// too: the primer's freeze makes [TaxiGame.pauseGame] a no-op, so the
+/// button sat in the corner looking live while ignoring every tap — its
+/// visibility now reads the same two conditions that guard does.
 /// Polls the game on the HUD's short timer like the badges do; the
 /// underlying [TaxiGame.pauseGame] guard makes the button harmless even
 /// in the fraction of a second before the poll catches up.
@@ -224,7 +240,17 @@ class _PauseButtonState extends State<_PauseButton> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.game.isShiftOver) return const SizedBox.shrink();
+    // Both halves of [TaxiGame.pauseGame]'s guard, so the button never
+    // offers a tap the handler would ignore: a settled shift's summary
+    // owns the screen (issue #52), and the primer's freeze owns the
+    // world (issue #132).
+    // Both halves of [TaxiGame.pauseGame]'s guard, so the button never
+    // offers a tap the handler would ignore: a settled shift's summary
+    // owns the screen (issue #52), and the primer's freeze owns the
+    // world (issue #132).
+    if (widget.game.isShiftOver || widget.game.isBankPrimerActive) {
+      return const SizedBox.shrink();
+    }
     return IconButton(
       onPressed: () {
         widget.game.pauseGame();

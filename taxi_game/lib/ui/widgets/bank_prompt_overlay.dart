@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../game/systems/bank_prompt.dart';
 import '../../game/systems/fare_chain.dart';
 import '../../game/taxi_game.dart';
+import 'hud_overlay.dart';
 
 /// The bank-or-push choice at every endless dropoff (issue #13).
 ///
@@ -60,10 +61,21 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
 
     final nextMultiplier = chain.multiplier + FareChain.pushBonusStep;
 
+    // Parked below the HUD's whole top band — which in a ghost race is
+    // one line taller than the fixed 120 px accounted for: the
+    // ghost-gap badge sits on its own line under the scoring row
+    // (issues #43, #121), and the panel paints above the HUD (the
+    // overlays stack in the order they were added), so the old offset
+    // covered 36 of the badge's 37 px for the whole decision window
+    // (issue #130). The Stack passes every tap outside the panel
+    // straight through to the game.
+    final panelTop = 120.0 +
+        (widget.game.isEndless && widget.game.ghostGapMetres != null
+            ? HudOverlay.ghostBadgeBandHeight
+            : 0.0);
+
     return Stack(
       children: [
-        // Parked below the HUD's top bars; the Stack passes every tap
-        // outside the panel straight through to the game.
         Positioned(
           top: 0,
           left: 0,
@@ -71,8 +83,9 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
           child: SafeArea(
             bottom: false,
             child: Padding(
-              padding: const EdgeInsets.only(top: 120, left: 24, right: 24),
+              padding: EdgeInsets.only(top: panelTop, left: 24, right: 24),
               child: Container(
+                key: const ValueKey('bank_prompt_panel'),
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: Colors.black87,

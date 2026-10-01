@@ -677,6 +677,170 @@ void main() {
     }, timeout: longRun);
   });
 
+  group('traffic outlives its path while in view (issue #129)', () {
+    /// A same-direction sedan driving up-screen at exactly [speed] px/s
+    /// (its type multiplier is 1.0), its path ending [pathLength] px
+    /// above [position] — the geometry of the issue: the path's end is
+    /// road distance from the spawn, wherever that leaves it relative
+    /// to the camera.
+    TrafficVehicle carWithPath(
+      Vector2 position,
+      double speed,
+      double pathLength,
+    ) =>
+        TrafficVehicle(
+          position: position.clone(),
+          vehicleType: TrafficVehicleType.sedan,
+          baseSpeed: speed,
+          path: [
+            position.clone(),
+            Vector2(position.x, position.y - pathLength),
+          ],
+        );
+
+    /// Mounts a quiet endless run and settles it: the taxi stands on
+    /// the start line (so the camera does too — the endless camera has
+    /// no lead), its hitbox silenced so nothing collides with the test
+    /// cars, and the world's systems all mounted.
+    Future<TaxiGame> quietStreet(int seed) async {
+      final game = await mountGame(endlessGame(seed));
+      game.player.children.whereType<RectangleHitbox>().single.collisionType =
+          CollisionType.inactive;
+      await tickAndSettle(game);
+      return game;
+    }
+
+    test('a car that runs out of path on screen keeps driving', () async {
+      final game = await quietStreet(42);
+      final cameraY = game.camera.viewfinder.position.y;
+
+      // In view, path ending 100 px up — it runs out well inside the
+      // ±400 px view band. Before the fix the car was deleted at that
+      // end, in plain sight beside the cab.
+      final car = carWithPath(Vector2(200, cameraY - 300), 120, 100);
+      game.world.add(car);
+      await game.ready();
+
+      advanceGameTime(game, 2.0); // 240 px of driving, path ends at 100
+
+      expect(car.shouldRemove, isFalse, reason: 'the path ending is not '
+          'the car ending while it can still be seen');
+      expect(car.isMounted, isTrue, reason: 'the car is still on the road');
+      expect(car.position.y, lessThan(cameraY - 400),
+          reason: 'the car drove on past its original path end');
+      expect(car.currentWaypointIndex, lessThan(car.path.length),
+          reason: 'a live car still has road to drive');
+
+      // And it keeps moving, not parked at the old path's end.
+      final sampledAt = car.position.clone();
+      advanceGameTime(game, 0.5);
+      expect(car.position.distanceTo(sampledAt), greaterThan(5.0),
+          reason: 'the car drives on instead of idling at the path end');
+    });
+
+    test('the rebuilt schedule is anchored where the car stands', () async {
+      final game = await quietStreet(42);
+      final cameraY = game.camera.viewfinder.position.y;
+
+      final car = carWithPath(Vector2(200, cameraY - 300), 120, 100);
+      game.world.add(car);
+      await game.ready();
+
+      // Tick until the spawn path's last waypoint is replaced by the
+      // rebuilt merge schedule — the moment the extension fires. The
+      // detector is identity, not length: a rebuilt schedule may also
+      // have two anchors when no taper sits inside its span.
+      final originalEnd = car.path.last;
+      var extendedAtY = double.nan;
+      for (var i = 0; i < 240 && extendedAtY.isNaN; i++) {
+        game.update(1 / 60);
+        if (!identical(car.path.last, originalEnd)) {
+          extendedAtY = car.position.y;
+        }
+      }
+      expect(extendedAtY.isNaN, isFalse,
+          reason: 'the path ran out and was rebuilt');
+      // First anchor at the car's own distance, on its lane centre —
+      // the re-centring snaps the waypoint-reach drift a merge leaves
+      // (≤ ~1.5 px) back onto the lane so the rebuilt polyline holds
+      // the lane invariant from its first metre. The test car never
+      // merges, so its x never drifted: the anchor is exact.
+      expect(car.path.first.y, closeTo(car.position.y, 0.001));
+      expect((car.path.first.x - car.position.x).abs(), lessThan(4.001));
+      // And the fresh schedule drives the same 3,000 px extent from
+      // there (mapped through the same world fold the spawn used:
+      // last waypoint y = y − 3000).
+      expect(car.path.last.y, closeTo(extendedAtY - 3000, 0.5));
+      // The list is replaced, not appended: one bounded schedule.
+      expect(car.path.length, lessThan(12));
+    });
+
+    test('a car that pulls a screen and a half ahead is culled', () async {
+      final game = await quietStreet(42);
+      final cameraY = game.camera.viewfinder.position.y;
+
+      // Well outside the ±400 px view, 500 px past the ahead cull's
+      // line, with plenty of path left — only the cull can remove it.
+      final car = carWithPath(Vector2(200, cameraY - 1500), 120, 3000);
+      game.world.add(car);
+      await game.ready();
+
+      game.update(1 / 60);
+
+      expect(car.shouldRemove, isTrue,
+          reason: 'out of view ahead, the car goes (#18 kept: nothing '
+              'lingers past the view band)');
+      // Flame applies removals through its queue: settle and the car is
+      // gone from the world.
+      await tickAndSettle(game);
+      expect(game.world.children.whereType<TrafficVehicle>(),
+          isNot(contains(car)));
+    });
+
+    test('a car behind the camera still goes', () async {
+      final game = await quietStreet(42);
+      final cameraY = game.camera.viewfinder.position.y;
+
+      // The pre-existing rule, unchanged: a car the taxi has long since
+      // passed is culled a screen below the view.
+      final car = carWithPath(Vector2(200, cameraY + 1500), 120, 3000);
+      game.world.add(car);
+      await game.ready();
+
+      game.update(1 / 60);
+
+      expect(car.shouldRemove, isTrue);
+      await tickAndSettle(game);
+      expect(game.world.children.whereType<TrafficVehicle>(),
+          isNot(contains(car)));
+    });
+
+    test('a level car still despawns at its path\'s end', () async {
+      // Level mode has no living road (game.environment is null), so
+      // neither the extension nor the ahead cull applies: its paths are
+      // clamped to the street's end (#31) and arrival is the despawn.
+      final game = await mountGame(TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+      ));
+      await tickAndSettle(game);
+      final cameraY = game.camera.viewfinder.position.y;
+
+      final car = carWithPath(Vector2(200, cameraY - 300), 120, 100);
+      game.world.add(car);
+      await game.ready();
+
+      advanceGameTime(game, 1.2); // the 100 px path ends at ~0.83 s
+
+      expect(car.shouldRemove, isTrue,
+          reason: 'the level street ends (#31); its cars arrive, they '
+              'do not overflow');
+      await tickAndSettle(game);
+      expect(game.world.children.whereType<TrafficVehicle>(),
+          isNot(contains(car)));
+    });
+  });
+
   /// Asserts the live chunks cover the camera's visible band with no gap:
   /// every stretch of road the viewport shows falls inside some existing
   /// chunk, and the chunk indices are contiguous across the band (a hole

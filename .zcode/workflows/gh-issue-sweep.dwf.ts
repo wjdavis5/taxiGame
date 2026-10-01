@@ -1033,12 +1033,25 @@ if (commitSha === null) {
           tail(releaseJobs.stderr || releaseJobs.stdout);
       } else {
         try {
-          const jobs = JSON.parse(releaseJobs.stdout) as {
-            name: string;
-            conclusion: string;
-            steps: { name: string; conclusion: string }[];
-          }[];
-          const uploadJob = jobs.find((j) => j.name === "Build, sign, and upload");
+          // `gh run view --json <fields>` answers with an object keyed by
+          // the requested fields — the same shape `.headRefOid` and
+          // `.mergeCommit` are read through elsewhere in this script;
+          // only `gh run list --json` returns a bare array. The #124 fix
+          // cast this stdout as the array, `.find` threw into the catch
+          // below, and every green release run therefore read as
+          // "could not be parsed" — no deploy, no skip, and every merged
+          // fix rode the leave-open failed path with its issues still
+          // open for the next sweep (issue #128).
+          const runView = JSON.parse(releaseJobs.stdout) as {
+            jobs: {
+              name: string;
+              conclusion: string;
+              steps: { name: string; conclusion: string }[];
+            }[];
+          };
+          const uploadJob = runView.jobs.find(
+            (j) => j.name === "Build, sign, and upload",
+          );
           if (uploadJob === undefined) {
             unreadable = "the run reports no job named Build, sign, and upload";
           } else {

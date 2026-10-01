@@ -33,7 +33,9 @@ class PlayerVehicle extends PositionComponent
   bool isAccelerating = false;
 
   /// True while the stick is held in deliberate-brake territory (issue #29);
-  /// the falling edge at speed fires the brake squeal (issue #4).
+  /// the falling edge at speed fires the brake squeal (issue #4), and any
+  /// throttle in between re-arms it (issue #131) — the latch tracks the
+  /// pedal on every frame, not only the ones spent braking.
   bool _wasBraking = false;
 
   /// Analog throttle from the virtual stick (issue #29): 1 is full
@@ -268,6 +270,14 @@ class PlayerVehicle extends PositionComponent
   void _updateMovement(double dt) {
     final throttle =
         throttleInput != 0 ? throttleInput : (isAccelerating ? 1.0 : 0.0);
+    // Braking is read from the raw throttle on every frame, not only in
+    // the deceleration branch below (issue #131): the stick resolves to
+    // zero input only inside its dead zone, so a thumb crossing from
+    // brake straight to throttle — the normal case while steering — may
+    // never produce a zero-throttle frame. The latch used to be written
+    // only in that branch, stayed set through the flip, and every later
+    // brake squealed not at all until the thumb lifted.
+    final isBraking = throttle < 0;
     if (throttle > 0) {
       // Ramp up gradually (spec: ~0.5s from stop to full speed at full
       // throttle), scaled by how far the stick is pushed.
@@ -282,12 +292,13 @@ class PlayerVehicle extends PositionComponent
 
       // A deliberate brake biting from speed squeals once, at its falling
       // edge — holding the brake does not re-fire it (issue #4).
-      final isBraking = throttle < 0;
       if (isBraking && !_wasBraking && -velocity.y >= brakeSoundMinSpeed) {
         game.audio?.playBrakeSound();
       }
-      _wasBraking = isBraking;
     }
+    // Written on every frame, whichever pedal is down, so the falling
+    // edge above re-arms the moment the throttle returns (issue #131).
+    _wasBraking = isBraking;
 
     // Left/right steering, on whatever grip the street offers.
     final grip = isMounted ? game.gripMultiplier : 1.0;

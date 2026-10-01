@@ -257,8 +257,11 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   }
 
   /// Creates a straight path along the lane. Oncoming paths run down the
-  /// screen; same-direction paths run far up the road (those vehicles are
-  /// despawned once the player passes them).
+  /// screen; same-direction paths run far up the road (in an endless
+  /// run those vehicles outlive the path while in view — the schedule
+  /// is rebuilt and the car is culled only off either edge of the view
+  /// band, issue #129 — while on the level-mode paths they arrive at
+  /// the street's end and despawn).
   List<Vector2> _createStraightPath(Vector2 startPosition, {required bool oncoming}) {
     final step = oncoming ? 500.0 : -3000.0;
     // Same-direction traffic in an endless run lives only 3000 px past its
@@ -267,7 +270,11 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     // density is set by minutes of history, not by the difficulty curve at
     // the player's distance — the run simulator showed the curve's shape
     // drowning in stale stock. Level mode keeps the long paths; its levels
-    // are short enough that no wall forms.
+    // are short enough that no wall forms. Since issue #129 the 3000 px is
+    // a schedule, not a lifetime: a car whose path runs out inside the
+    // view band keeps driving on a rebuilt schedule ([TrafficVehicle]
+    // extends it), so the span bounds the *planning* horizon while the
+    // culls — a screen past either edge of the camera — bound the stock.
     final sameDirectionWaypoints = _profileOf != null ? 1 : 3;
     final path = <Vector2>[startPosition];
     for (var i = 1; i <= (oncoming ? 3 : sameDirectionWaypoints); i++) {

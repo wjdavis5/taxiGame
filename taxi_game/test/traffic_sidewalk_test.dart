@@ -813,6 +813,102 @@ void main() {
     }, timeout: const Timeout(Duration(minutes: 3)));
   });
 
+  group('a path rebuilt mid-drive (issue #129)', () {
+    // The live car outlives its schedule while it can still be seen:
+    // when the path runs out, [TrafficVehicle] rebuilds it through the
+    // same [RunEnvironment.trafficMergeWaypoints] helper, anchored at
+    // the position the car actually holds — which, since #114 cut the
+    // last leg at the extent's end, can be mid-diagonal, off every lane
+    // centre of either road. The sweep proves every such rebuild is a
+    // schedule the spawn-time rules would have accepted: anchors
+    // advancing in driving order, a full classic extent driven again,
+    // and the per-leg gate plus the fine sidewalk invariant holding for
+    // every body the gate accepts.
+    test('every exhaustion point rebuilds to a schedule that holds the '
+        'road', () {
+      for (final seed in [2, 7, 11]) {
+        final env = RunEnvironment(seed: seed);
+        final boundaries = <double>[];
+        for (var k = 2; k < 40; k++) {
+          if (env.profileForSegment(k) != env.profileForSegment(k - 1)) {
+            boundaries.add(k * RunEnvironment.geometrySegmentLength);
+          }
+        }
+        expect(boundaries, isNotEmpty,
+            reason: 'seed $seed draws some geometry variety');
+        for (final boundary in boundaries) {
+          for (final offset in [
+            -2600.0, -1400.0, -650.0, -300.0, -40.0, 0.0,
+            40.0, 300.0, 650.0, 1400.0, 2600.0,
+          ]) {
+            final spawn = boundary + offset;
+            final road = env.roadAt(spawn);
+            for (var i = 0; i < road.laneCount; i++) {
+              final oncoming = road.isLaneOncoming(i);
+              final waypoints = env.trafficMergeWaypoints(
+                spawn,
+                road.laneXs[i],
+                oncoming: oncoming,
+              );
+
+              // Every point the car stands at on some frame of the
+              // drive: each anchor, and the midpoint of each leg —
+              // the midpoints land on the merge diagonals, the exact
+              // off-lane starts a cut leg can leave behind (#114).
+              final stands = <(double, double)>[
+                for (var a = 0; a < waypoints.length; a++) ...[
+                  waypoints[a],
+                  if (a + 1 < waypoints.length)
+                    (
+                      (waypoints[a].$1 + waypoints[a + 1].$1) / 2,
+                      (waypoints[a].$2 + waypoints[a + 1].$2) / 2,
+                    ),
+                ],
+              ];
+
+              for (final (d, x) in stands) {
+                final rebuilt =
+                    env.trafficMergeWaypoints(d, x, oncoming: oncoming);
+                final extent = oncoming ? d - 1500 : d + 3000;
+                expect(rebuilt.first.$1, closeTo(d, 1e-9),
+                    reason: 'the rebuild is anchored where the car stands');
+                expect(rebuilt.last.$1, closeTo(extent, 1e-9),
+                    reason: 'the rebuild drives a full extent from '
+                        'wherever the old one ran out');
+                for (var r = 1; r < rebuilt.length; r++) {
+                  final step = rebuilt[r].$1 - rebuilt[r - 1].$1;
+                  expect(
+                    step,
+                    oncoming
+                        ? lessThanOrEqualTo(0)
+                        : greaterThanOrEqualTo(0),
+                    reason: 'anchors must advance in driving order',
+                  );
+                }
+                var anyAccepted = false;
+                for (final halfWidth in [25.0, 22.5, 21.0, 20.0, 19.0]) {
+                  if (!env.mergePathHoldsOnRoad(rebuilt, halfWidth,
+                      oncoming: oncoming)) {
+                    continue;
+                  }
+                  anyAccepted = true;
+                  expectScheduleHoldsInvariant(env, rebuilt,
+                      oncoming: oncoming, halfWidth: halfWidth);
+                }
+                expect(anyAccepted, isTrue,
+                    reason: 'seed $seed boundary '
+                        '${boundary.toStringAsFixed(0)} offset $offset lane '
+                        '$i stand d ${d.toStringAsFixed(0)}: at least the '
+                        'car-class bodies must fit every rebuild the '
+                        'extension performs');
+              }
+            }
+          }
+        }
+      }
+    });
+  });
+
   group('a flood at an avenue→narrow boundary (issue #87)', () {
     // The simulated window is long (30 s of frames plus hundreds of
     // drains); a loaded CI runner can outlast dart's default 30 s budget —
