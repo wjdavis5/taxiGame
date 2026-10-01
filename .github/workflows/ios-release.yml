@@ -3,7 +3,11 @@ name: iOS Release
 # Builds, signs, and ships an iOS build on every push to main.
 #
 # Two stages of delivery:
-#   - Every push to main uploads a build to TestFlight.
+#   - Every push to main uploads a build to TestFlight — while the
+#     version string in pubspec.yaml names a train Apple still accepts
+#     builds for. Once that version is approved or on sale Apple closes
+#     the train, so the run skips the whole build lane and stays green
+#     with a warning naming the bump that reopens shipping (issue #119).
 #   - App Store review submission fires only while App Store Connect shows no
 #     unfinished review submission for the app and no submitted/handled
 #     version matching the `version:` string in pubspec.yaml. Apple will not
@@ -141,6 +145,19 @@ jobs:
           # seen is treated the same way rather than guessed at.
           editable_states="PREPARE_FOR_SUBMISSION INVALID_BINARY"
 
+          # The states whose version trains still accept build uploads
+          # (issue #119): not-yet-submitted, in review, or back in the
+          # developer's hands after any flavor of rejection — exactly the
+          # states whose remedies arrive as new builds. Everything else is
+          # closed for good: approved (PENDING_APPLE_RELEASE,
+          # PENDING_DEVELOPER_RELEASE, PROCESSING_FOR_APP_STORE), on sale
+          # (READY_FOR_SALE, PREORDER_READY_FOR_SALE), removed
+          # (DEVELOPER_REMOVED_FROM_SALE, REMOVED_FROM_SALE),
+          # REPLACED_WITH_NEW_VERSION, the legacy ACCEPTED and
+          # NOT_APPLICABLE, and UNKNOWN — a state this list has never seen
+          # must not buy a doomed build, so it lands closed.
+          open_states="PREPARE_FOR_SUBMISSION INVALID_BINARY READY_FOR_REVIEW WAITING_FOR_REVIEW IN_REVIEW REJECTED METADATA_REJECTED DEVELOPER_REJECTED PENDING_CONTRACT WAITING_FOR_EXPORT_COMPLIANCE"
+
           # Apple's own record decides, not the git diff (issue #89). A diff
           # against the previous commit misses any bump whose own run died
           # before the Submit step — and its replacement run, and a
@@ -161,6 +178,15 @@ jobs:
           states="$(ruby tools/asc_version_state.rb "$current")"
 
           submit=false
+          # The build lane's own verdict (issue #119): true unless the
+          # version's train is closed, which only the per-record branch
+          # below can say. The sentinel verdicts leave it true — a review
+          # in flight or stuck belongs to a version whose train is still
+          # open, and NONE is a brand-new string with no train to close.
+          # A manual dispatch also leaves it true: the ticked box is a
+          # human insisting, and it cannot make Apple accept a build for
+          # a closed train — it fails honestly instead.
+          upload=true
           if [ "$manual" = "true" ]; then
             submit=true
             echo "Manual dispatch: submitting $current for App Store review."
@@ -189,13 +215,34 @@ jobs:
             echo "$current has no App Store Connect version yet: submitting for review."
           else
             blocking=""
+            closed=""
             for state in $states; do
               case " $editable_states " in
                 *" $state "*) ;;
                 *) blocking="${blocking:+$blocking }$state" ;;
               esac
+              # The upload half of the verdict: a state outside
+              # open_states means Apple has closed this version's train
+              # to new builds. One closed record closes the train — the
+              # string was approved — so a single hit is enough to stand
+              # the build lane down.
+              case " $open_states " in
+                *" $state "*) ;;
+                *) closed="${closed:+$closed }$state" ;;
+              esac
             done
-            if [ -z "$blocking" ]; then
+            if [ -n "$closed" ]; then
+              # Issue #119: approved, on sale, removed, or replaced. The
+              # old flow logged "TestFlight only" here and uploaded
+              # anyway, and Apple refused the build after the full macOS
+              # archive (a train closes for good at approval) — red on
+              # every push until a human bumped the version. Staying
+              # green while a human acts is the 4d35205 policy; the
+              # warning names the one act that reopens shipping, because
+              # no push can.
+              upload=false
+              echo "::warning::App Store version $current is closed to new builds ($closed): skipping build and TestFlight upload — Apple refuses new builds for an approved or on-sale version (issue #119). Bump the version in taxi_game/pubspec.yaml to open a new train; the next push builds, uploads, and submits it."
+            elif [ -z "$blocking" ]; then
               submit=true
               echo "App Store version $current is still editable ($states): submitting for review."
             else
@@ -204,8 +251,17 @@ jobs:
           fi
 
           echo "submit=$submit" >> "$GITHUB_OUTPUT"
+          echo "upload=$upload" >> "$GITHUB_OUTPUT"
 
+      # Everything from here to the TestFlight upload runs only while
+      # the gate's upload verdict is true (issue #119): a closed train
+      # makes the whole lane moot — Apple refuses the .ipa after the
+      # ten-minute build — so key, signing, dependencies, archive,
+      # export, verification, and upload all stand down together and the
+      # run stays green with the gate's warning instead. The cleanup and
+      # artifact steps at the end keep `if: always()`.
       - name: Install the App Store Connect API key
+        if: steps.review.outputs.upload == 'true'
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
@@ -218,6 +274,7 @@ jobs:
           chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
 
       - name: Import the signing certificate
+        if: steps.review.outputs.upload == 'true'
         env:
           CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
           CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
@@ -249,6 +306,7 @@ jobs:
           security find-identity -v -p codesigning "$keychain"
 
       - name: Install the provisioning profile
+        if: steps.review.outputs.upload == 'true'
         env:
           PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
         run: |
@@ -269,10 +327,12 @@ jobs:
           echo "Installed profile '$name' ($uuid)"
 
       - name: Get dependencies
+        if: steps.review.outputs.upload == 'true'
         working-directory: ${{ env.PROJECT_PATH }}
         run: flutter pub get
 
       - name: Build Flutter assets
+        if: steps.review.outputs.upload == 'true'
         working-directory: ${{ env.PROJECT_PATH }}
         # Runs first so Generated.xcconfig carries the version and build number
         # that the Xcode archive below reads.
@@ -282,10 +342,12 @@ jobs:
             --build-number=${{ steps.version.outputs.build }}
 
       - name: Install CocoaPods dependencies
+        if: steps.review.outputs.upload == 'true'
         working-directory: ${{ env.PROJECT_PATH }}/ios
         run: pod install
 
       - name: Archive
+        if: steps.review.outputs.upload == 'true'
         working-directory: ${{ env.PROJECT_PATH }}
         run: |
           set -euo pipefail
@@ -308,6 +370,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO
 
       - name: Export IPA
+        if: steps.review.outputs.upload == 'true'
         working-directory: ${{ env.PROJECT_PATH }}
         run: |
           set -euo pipefail
@@ -335,6 +398,7 @@ jobs:
           esac
 
       - name: Verify the exported bundle
+        if: steps.review.outputs.upload == 'true'
         working-directory: ${{ env.PROJECT_PATH }}
         run: |
           set -euo pipefail
@@ -356,6 +420,7 @@ jobs:
           [ -f "$app/PrivacyInfo.xcprivacy" ] || { echo "::error::privacy manifest missing from the bundle"; exit 1; }
 
       - name: Upload to TestFlight
+        if: steps.review.outputs.upload == 'true'
         working-directory: ${{ env.PROJECT_PATH }}
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -372,7 +437,7 @@ jobs:
             --apiIssuer "$ASC_ISSUER_ID"
 
       - name: Submit for App Store review
-        if: steps.review.outputs.submit == 'true'
+        if: steps.review.outputs.submit == 'true' && steps.review.outputs.upload == 'true'
         # Interim mitigation for issue #94 (the gate's ASC-state query and
         # deliver disagree about which versions exist; the attach is refused
         # and would fail every release run until a human untangles the ASC

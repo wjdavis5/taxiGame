@@ -234,6 +234,22 @@ void main() {
       // row, still exactly one of it.
       expect(find.byKey(const ValueKey('ghost_badge')), findsOneWidget);
       expect(find.text('AT RISK 1234'), findsOneWidget);
+      // And that line's badge is a pill sized to its content (issue
+      // #121), not a bar: the #43 move left it alone on the scoring
+      // Column's bounded-width line, where the badge Row's default
+      // mainAxisSize.max stretched the pill's black54 background to the
+      // full 343 px content width, dimming a strip of road for the whole
+      // race. The pill may be no wider than its own furniture — text,
+      // 16 px arrow, 4 px gap, 2 x 15 px pill padding.
+      final ghostRect =
+          tester.getRect(find.byKey(const ValueKey('ghost_badge')));
+      final ghostTextRect =
+          tester.getRect(find.textContaining(RegExp(r'^GHOST [+-]?\d+ m$')));
+      expect(
+        ghostRect.width,
+        lessThanOrEqualTo(ghostTextRect.width + 16 + 4 + 30 + 0.5),
+        reason: 'a badge twice as wide as its text is a bar, not a pill',
+      );
     });
   });
 }

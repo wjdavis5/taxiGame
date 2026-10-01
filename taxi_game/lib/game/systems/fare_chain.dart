@@ -201,8 +201,11 @@ class FareChain {
   /// [multiplierStep] for an ordinary fare, and by
   /// [FareType.chainStepBonus] extra for the kinds that boost the chain
   /// (issue #25): a delivered long-haul jumps the multiplier three steps
-  /// at once, which is its payout. Late ones score `fareValue x 1` (the
-  /// expiry in [update] already reset it) and leave the chain broken.
+  /// at once, which is its payout. Late ones score `fareValue x 1` and
+  /// leave the chain broken — a flat rate that holds even when the chain
+  /// rebuilt while this rider sat expired aboard (issue #120: the break
+  /// now fires once, at the crossing, so the multiplier standing at a
+  /// late dropoff is whatever the deliveries since then earned).
   /// Returns how it settled so callers can react.
   FareSettlement completeFare(
     PassengerData passenger, {
@@ -211,7 +214,7 @@ class FareChain {
     final timer = _timers.remove(passenger.id);
     final onTime = timer != null && !timer.isExpired;
 
-    score += fareValue * multiplier;
+    score += fareValue * (onTime ? multiplier : 1);
     multiplier = onTime
         ? multiplier + multiplierStep + passenger.fareType.chainStepBonus
         : 1;
@@ -264,17 +267,24 @@ class FareChain {
   }
 
   /// Ticks every live countdown. Any that runs out breaks the chain back to
-  /// 1x immediately, so the HUD shows the break the moment it happens.
+  /// 1x — once, on the frame the countdown crosses zero (issue #120), so
+  /// the HUD shows the break the moment it happens. An expired passenger
+  /// stays aboard until [completeFare] settles them late, and treating
+  /// "expired" as a state re-broke the chain on every frame they rode:
+  /// an on-time delivery or push bonus earned while they sat in the cab
+  /// held for exactly one tick before being quietly reset to 1x. Only
+  /// the crossing is the chain-breaking event; riding expired is not.
   void update(double dt) {
     if (_timers.isEmpty) return;
 
-    var expired = false;
+    var crossedZero = false;
     for (final timer in _timers.values) {
+      final wasExpired = timer.isExpired;
       timer.remainingSeconds =
           math.max(0.0, timer.remainingSeconds - dt);
-      if (timer.isExpired) expired = true;
+      if (!wasExpired && timer.isExpired) crossedZero = true;
     }
-    if (expired) multiplier = 1;
+    if (crossedZero) multiplier = 1;
   }
 
   /// Clears the chain: score, multiplier, best chain, close calls, and

@@ -509,34 +509,87 @@ if (toImplement.length === 0) {
 // ---------------------------------------------------------------- phase 3
 phase("Implement every fix on one branch");
 const sha = await world.run("git", ["rev-parse", "--short", "HEAD"]);
-// The name carries a beyond-the-sha uniqueness suffix (issue #108): the
-// sha alone collides with a leftover branch from a failed prior sweep —
-// same main, same sha — and `git checkout -b` then dies with "already
-// exists". Deleting the stale branch instead would be worse: the
-// leftover can also live on the remote (a closed-unmerged PR), where
-// removing only the local ref turns this sweep's later push into a
-// non-fast-forward rejection that wedges every subsequent sweep. A
+// The name carries a beyond-the-sha uniqueness suffix (issues #108 and
+// #118): the sha alone collides with a leftover branch from a failed
+// prior sweep — same main, same sha — and `git checkout -b` then dies
+// with "already exists". Deleting the stale branch instead would be
+// worse: the leftover can also live on the remote (a closed-unmerged
+// PR), where removing only the local ref turns this sweep's later push
+// into a non-fast-forward rejection that wedges every subsequent sweep.
+//
 // The suffix must be replay-safe: Date.now() is unique but the workflow
 // runtime forbids it, and a journal replay has to regenerate the same
-// name from the same world. Counting the leftover remote branches with
-// this sha prefix does both — a stale branch from a failed same-sha
-// sweep bumps the count, so this attempt gets a fresh, deterministic
-// name (and the checkout guard below still stops the sweep cleanly on
-// any residual collision).
-const staleBranches = await world.run(
+// name from the same world. Taking the highest suffix already used on
+// this sha's leftover branches, plus one, does both — deterministic
+// from journaled world.run results alone, and fresh against every
+// leftover. #118 fixed two things the f8a3e94 remote count got wrong:
+// it never looked at local refs, so a leftover whose push failed (and
+// so never reached the remote) recomputed the same name and the
+// checked checkout stopped every tick until main moved; and a count is
+// not a free index — a deleted -0 among live suffixes makes the count
+// name a branch that exists. Both sides are now listed — `git branch
+// --list` for the local leftovers, `ls-remote` for the remote ones —
+// and the suffix is max(existing)+1 over the union, gaps and all. (The
+// checkout guard below and commitAndPush's branch wall still backstop
+// any residual collision.)
+const branchPrefix = "automation/issue-sweep-" + sha.stdout.trim() + "-";
+const localStale = await world.run("git", ["branch", "--list", branchPrefix + "*"]);
+const remoteStale = await world.run(
   "git",
   [
     "ls-remote",
     "--heads",
     "origin",
-    "automation/issue-sweep-" + sha.stdout.trim() + "-*",
+    branchPrefix + "*",
   ],
 );
-const staleCount = staleBranches.stdout.trim() === ""
-    ? 0
-    : staleBranches.stdout.trim().split("\n").length;
-const branch =
-  "automation/issue-sweep-" + sha.stdout.trim() + "-" + staleCount;
+// A failed lookup is not "no leftovers": unread exit codes made an
+// empty ls-remote read as suffix 0, handing the sweep a name that may
+// collide — surfacing as the checked checkout failing every tick, or
+// worse as a rejected push after the whole implementation. Both exit
+// codes are read, and a failure stops the sweep before a single edit
+// with the same honest shape as the checkout failure below: the tree is
+// still clean, so stopping loses nothing.
+if (localStale.exitCode !== 0 || remoteStale.exitCode !== 0) {
+  const failures: string[] = [];
+  if (localStale.exitCode !== 0) {
+    failures.push("git branch --list exited " + localStale.exitCode);
+  }
+  if (remoteStale.exitCode !== 0) {
+    failures.push(
+      "git ls-remote exited " + remoteStale.exitCode + ": " +
+      tail(remoteStale.stderr || remoteStale.stdout),
+    );
+  }
+  for (const p of toImplement) {
+    report({ issue: p.number, title: p.title, status: "failed", note: "the leftover-branch lookup failed" }, "issues");
+  }
+  return {
+    conclusion:
+      "The sweep stopped before implementing anything: the leftover-branch lookup failed (" +
+      failures.join("; ") +
+      "), so the sweep could not prove which branch names are already taken. Guessing a name anyway " +
+      "risks git checkout -b colliding with a leftover branch (issue #118) — continuing would have " +
+      "committed the fixes onto local main with no PR, no CI, and no review.",
+    findings: [],
+    verified: ["the leftover-branch lookups (exit-code checked — issue #118)"],
+    notCovered: ["implementation, gates, review, merge and deploy — no branch was created"],
+  } as WorkflowReport;
+}
+// Both outputs feed one max: branch --list prints bare names (possibly
+// `* `-prefixed), ls-remote prints `<sha>\t<ref>` — the trailing-number
+// regex reads either shape, and any line without a trailing number is
+// ignored rather than guessed at.
+let maxSuffix = -1;
+for (
+  const line of localStale.stdout.split("\n").concat(
+    remoteStale.stdout.split("\n"),
+  )
+) {
+  const suffix = /-(\d+)$/.exec(line.trim());
+  if (suffix) maxSuffix = Math.max(maxSuffix, Number(suffix[1]));
+}
+const branch = branchPrefix + (maxSuffix + 1);
 // The checkout's exit code is checked before a single edit happens
 // (issue #108, applying issue #88's world.run lesson to the one git call
 // that still ignored it): on failure the tree is still clean, so
