@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// The issue-sweep workflow's push and CI contract (issue #88), its
 /// gate-log round trip (issue #97), its branch-safety pins (issues #108
-/// and #118), and its deploy-verdict pins (issue #124).
+/// and #118), and its deploy-verdict pins (issues #124 and #128).
 ///
 /// The sweep script (`.zcode/workflows/gh-issue-sweep.dwf.ts`) drives real
 /// git pushes and real CI waits, so this suite cannot execute it — the
@@ -20,7 +20,10 @@ import 'package:flutter_test/flutter_test.dart';
 /// watch`'s exit code, but the release workflow skips the upload while
 /// staying green when the App Store Connect train is closed (issue #119),
 /// so a green run with no build was reported — and the issues closed — as
-/// a TestFlight deploy.
+/// a TestFlight deploy. The #128 bug was one layer deeper: the jobs read
+/// back from the green run were cast as a bare array, but `gh run view
+/// --json jobs` answers `{"jobs":[…]}`, so the lookup threw into the catch
+/// and every verdict read as unreadable — no deploy ever recorded.
 void main() {
   // flutter test runs from the package directory (the assumption
   // vehicle_sprites_test.dart makes for assets); the workflow lives one
@@ -373,6 +376,58 @@ void main() {
       expect(script,
           contains('stayed green but skipped the Upload to TestFlight step'));
       expect(script, contains('claims no TestFlight upload'));
+    });
+  });
+
+  group('the run-view payload is read as gh shapes it (issue #128)', () {
+    // The #124 fix read the verdict from the right place but cast the
+    // payload wrong: `gh <noun> view --json <field>` answers with an
+    // object keyed by the requested fields — the same shape
+    // `.headRefOid` and `.mergeCommit` are read through elsewhere in the
+    // script — and only `gh run list --json` returns a bare array. The
+    // miscast `.find` threw into the catch, so stepConclusion and
+    // jobConclusion stayed null, `deployed` and `uploadSkipped` were
+    // both false, and every merged fix rode the leave-open failed path.
+    // The behavioral truth table — a real-shaped {"jobs":[…]} payload
+    // walked through the step-success, skipped, and other-conclusion
+    // outcomes — ran against the snippet bench when the fix landed;
+    // these pins keep the parse shape from regressing.
+    test('the parse casts the run-view stdout as {jobs: […]}', () {
+      expect(
+        RegExp(r'JSON\.parse\(releaseJobs\.stdout\) as \{\s*jobs:')
+            .hasMatch(script),
+        isTrue,
+        reason: 'gh run view --json jobs answers {"jobs":[…]}, so the '
+            'cast must name the jobs key, not assume an array',
+      );
+      expect(
+        script,
+        contains('runView.jobs.find'),
+        reason: 'the upload job is looked up inside the parsed object\'s '
+            'jobs array',
+      );
+    });
+
+    test('the bare-array cast on run-view stdout is gone', () {
+      expect(
+        RegExp(r'JSON\.parse\(releaseJobs\.stdout\) as \{\s*name: string;')
+            .hasMatch(script),
+        isFalse,
+        reason: 'casting the object payload as a bare array is the #128 '
+            'bug: .find throws into the catch and the verdict is always '
+            'unreadable, so no deploy is ever recorded',
+      );
+    });
+
+    test('the command still asks gh for the fields, not a jq projection',
+        () {
+      // Projecting with `--jq .jobs` would also fix the shape, but it
+      // needlessly rewrites the command the #124 pin holds to — and a
+      // projection silently answering [] (a gh/jq hiccup) would read as
+      // "no such job" instead of failing loudly. The raw field query is
+      // the contract; the shape is the script's to know.
+      expect(script, isNot(contains('"--jq"')),
+          reason: 'the jobs query must keep asking for the raw field');
     });
   });
 }

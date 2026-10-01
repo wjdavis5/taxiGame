@@ -774,10 +774,30 @@ class RunLengthSimulator {
         // and mis-measure the deep-run pressure around every narrowing.
         v.x = v.xAtY(v.y);
       }
-      // Cull: off the bottom of the view (oncoming, past the player), or
-      // beyond the same-direction path length (3000 px) ahead of its spawn
-      // point — the live game's two despawn reasons.
-      vehicles.removeWhere((v) => v.y > y + 1000 || v.y < v.spawnY - 3000);
+      // Cull: off either edge of the view band — 1000 px below the
+      // player (oncoming, past) or 1000 px above it (same-direction,
+      // dropped). The old ahead clause was spawn-relative, 3000 px past
+      // the spawn, because the live game despawned at its path's end;
+      // since issue #129 the live removal is position-relative (a car
+      // vanishes only where the player cannot see it, never mid-view),
+      // and this mirror follows.
+      vehicles.removeWhere((v) => v.y > y + 1000 || v.y < y - 1000);
+
+      // A same-direction car still inside the band when its schedule
+      // runs out keeps driving on a fresh one (issue #129's other
+      // half): rebuilt from where the car stands, through the same
+      // helper the spawn used. The rebuild's first anchor is the car's
+      // current (distance, x), so [xAtY] carries the held x straight
+      // across the swap and the merge legs beyond it land on the same
+      // lanes the live car merges onto.
+      for (final v in vehicles) {
+        final schedule = v.mergeWaypoints;
+        if (v.oncoming || schedule == null) continue;
+        if (-v.y >= schedule.last.$1) {
+          v.mergeWaypoints =
+              env.trafficMergeWaypoints(-v.y, v.x, oncoming: false);
+        }
+      }
 
       // --- Contacts: one scrape response per vehicle, every episode judged ---
       // Episode-scoped arming alone (rulingActive) re-arms the moment the
@@ -987,7 +1007,6 @@ class _SimVehicle {
     required this.type,
     this.mergeWaypoints,
   })  : vy = oncoming ? speed : -speed,
-        spawnY = y,
         halfW = type.size.x * CollisionRules.trafficHitboxScale / 2,
         halfH = type.size.y * CollisionRules.trafficHitboxScale / 2;
 
@@ -997,7 +1016,6 @@ class _SimVehicle {
   final double halfW;
   final double halfH;
   final bool oncoming;
-  final double spawnY;
   final TrafficVehicleType type;
 
   /// The lateral schedule from [RunEnvironment.trafficMergeWaypoints]
@@ -1005,8 +1023,10 @@ class _SimVehicle {
   /// preset traffic, which drives a fixed x. The live vehicle steers
   /// waypoint to waypoint at speed; this mirror interpolates the same
   /// schedule linearly in distance, so both cars merge across the same
-  /// tapers onto the same far lanes.
-  final List<(double, double)>? mergeWaypoints;
+  /// tapers onto the same far lanes. Replaced in place when a
+  /// same-direction car outlives it inside the view band (issue #129) —
+  /// the same rebuild the live car's path extension performs.
+  List<(double, double)>? mergeWaypoints;
 
   /// The x the schedule holds at world y — piecewise linear between
   /// anchors, clamped to the nearest end's x outside the schedule

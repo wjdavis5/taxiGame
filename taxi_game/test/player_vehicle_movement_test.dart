@@ -3,7 +3,9 @@ import 'dart:math' as math;
 import 'package:flame/game.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/player_vehicle.dart';
 import 'package:taxi_game/game/taxi_game.dart';
+import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -120,6 +122,67 @@ void main() {
       expect(player.velocity, Vector2.zero());
       expect(player.isAccelerating, isFalse);
       expect(player.steeringInput, 0);
+    });
+
+    test('a brake straight after throttle squeals again — no zero frame '
+        'needed (issue #131)', () async {
+      // A real headless AudioService: every platform call it makes is
+      // swallowed under flutter test (no audio plugin exists), and the
+      // attempts are what it records — audio_service_test's pattern.
+      final audio = AudioService();
+      final game = await mountGame(TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        audio: audio,
+      ));
+      final player = game.player;
+
+      // Full throttle from rest: the default cab tops out at 150 px/s,
+      // clear of the 120 px/s squeal threshold. Half a second of ramp
+      // is the whole drive — level 1 fails a cab that outruns its fare
+      // for much longer than the second the tests here stay on the
+      // road, so this test keeps its total driving under that.
+      player.setThrottle(1);
+      advanceGameTime(game, 0.5);
+      expect(-player.velocity.y, greaterThan(PlayerVehicle.brakeSoundMinSpeed));
+
+      // First brake from speed: one squeal, at its falling edge.
+      player.setThrottle(-1);
+      game.update(1 / 60);
+      expect(audio.attemptedPlays['brake'], 1);
+
+      // The issue's flip: brake straight back to full throttle, with no
+      // zero-throttle frame in between. On a real stick this is the
+      // normal crossing — the thumb is off-centre while steering, and
+      // VirtualStick.resolve outputs zero only inside its dead zone — so
+      // the pedals change sign without ever resting at zero. Four
+      // throttle frames put the 130 px/s the brake left back at the top
+      // speed; the latch clears on the first of them.
+      player.setThrottle(1);
+      advanceGameTime(game, 4 / 60);
+
+      // The second brake squeals again: the throttle re-armed the edge.
+      player.setThrottle(-1);
+      game.update(1 / 60);
+      expect(audio.attemptedPlays['brake'], 2,
+          reason: 'the brake-to-throttle flip must re-arm the squeal — '
+              'before issue #131 the latch stayed set until a '
+              'zero-throttle frame cleared it, and every later brake was '
+              'silent until the thumb lifted');
+
+      // And the re-armed edge fires once per crossing, not per frame
+      // (the issue #4 half of the contract): a light drag holds the cab
+      // above the threshold across the frames after the squeal, so the
+      // count staying put is the latch at work, not the speed floor.
+      player.setThrottle(1);
+      advanceGameTime(game, 4 / 60);
+      player.setThrottle(-0.05);
+      game.update(1 / 60); // the squeal frame — still at speed
+      expect(audio.attemptedPlays['brake'], 3);
+      game.update(1 / 60); // held, still above the threshold
+      game.update(1 / 60);
+      expect(audio.attemptedPlays['brake'], 3,
+          reason: 'holding the brake squeals once, at its falling edge');
     });
   });
 }
