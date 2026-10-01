@@ -6,8 +6,9 @@ description: Ship a Cab Hustle release. Bumps the version, pushes to main, watch
 # Release
 
 Ships an iOS release of Cab Hustle through the GitHub Actions pipeline. The
-user never handles an `.ipa` — pushing to `main` builds, signs, uploads, and
-(while the version is unsubmitted on App Store Connect) submits.
+user never handles an `.ipa` — pushing to `main` builds, signs, and uploads
+(while the version's train on App Store Connect still accepts builds), and
+submits while the version is unsubmitted.
 
 **Never upload manually when the pipeline can do it.** Manual Xcode Organizer
 uploads exist only as a fallback for when CI is broken.
@@ -38,9 +39,19 @@ closed on any answer it cannot trust — and decides like this:
 - No record for the version yet (`NONE`), or every matching record still
   machine-editable (`PREPARE_FOR_SUBMISSION`, `INVALID_BINARY`) → build,
   upload to TestFlight, **and submit for review**.
-- Any matching record already submitted or handled — `WAITING_FOR_REVIEW`,
-  `IN_REVIEW`, approved, on sale, `DEVELOPER_REJECTED`, or any state the
-  gate does not recognize → build and upload to TestFlight **only**.
+- Any matching record submitted or handled but still open to builds —
+  `WAITING_FOR_REVIEW`, `IN_REVIEW`, `REJECTED`, `METADATA_REJECTED`,
+  `DEVELOPER_REJECTED`, `PENDING_CONTRACT`, `WAITING_FOR_EXPORT_COMPLIANCE`,
+  `READY_FOR_REVIEW` → build and upload to TestFlight **only**.
+- Any matching record closed to new builds — approved
+  (`PENDING_APPLE_RELEASE`, `PENDING_DEVELOPER_RELEASE`,
+  `PROCESSING_FOR_APP_STORE`), on sale (`READY_FOR_SALE`,
+  `PREORDER_READY_FOR_SALE`), removed, `REPLACED_WITH_NEW_VERSION`, or any
+  state the gate does not recognize → **no build at all**: the run skips
+  the whole build lane, stays green, and emits a `::warning::` naming the
+  version bump as the only way to ship again (issue #119). Apple refuses
+  new builds for a closed train, so uploading is a guaranteed red after a
+  full macOS build.
 
 Human rejections (`REJECTED`, `METADATA_REJECTED`) are TestFlight-only on a
 routine push (issue #93): a person at Apple sent reasons someone must read
@@ -114,7 +125,10 @@ must have answered it in the App Store Connect UI.
 Ask the user, unless they already said which they want:
 
 - **TestFlight only** — no version change. For testing a build on device
-  before committing to a release.
+  before committing to a release. Only works while the current version's
+  train is open: once the shipped version is approved or on sale, the gate
+  skips the build entirely with a warning (issue #119) and nothing ships
+  until the version is bumped.
 - **Patch** (`1.0.0` → `1.0.1`) — bug fixes.
 - **Minor** (`1.0.0` → `1.1.0`) — new functionality.
 - **Major** (`1.0.0` → `2.0.0`) — a significant rework.
@@ -206,6 +220,13 @@ Tell the user, concretely:
 - **The gate answers `REVIEW_IN_FLIGHT`** — normal while any version is in
   review: the run ships TestFlight only and stays green. Nothing to fix;
   wait for Apple, or remove the submission in App Store Connect first.
+- **The gate reports a closed version train** (issue #119) — the pubspec
+  version is approved, on sale, removed, or replaced. Apple refuses new
+  builds for that train, so the run skips build, sign, export, and upload,
+  and stays green with a `::warning::`. Nothing was lost — nothing can ship
+  on this train again. Tell the user plainly: the next release needs a
+  version bump, and the push after the bump builds, uploads, and submits by
+  itself.
 - **The gate answers `REVIEW_STUCK`** (issue #102) — a submission sits in
   `UNRESOLVED_ISSUES` (the aftermath of a rejection) or `READY_FOR_REVIEW`
   (never confirmed). No review is running, but no new submission may be
@@ -236,7 +257,11 @@ gh workflow run ios-release.yml --repo wjdavis5/taxiGame -f submit_for_review=tr
 
 The ticked box submits regardless of what state Apple reports, so check
 `asc.rb version` first: if the version is already `WAITING_FOR_REVIEW` or
-later, this only crashes into Apple's duplicate-submission rejection.
+later, this only crashes into Apple's duplicate-submission rejection. If
+the version's train is closed (approved or on sale), the dispatch still
+builds and tries the upload — `altool` refuses it and the run goes red.
+The box forces a submission attempt; it cannot force Apple to accept a
+build for a closed train. Bump the version instead.
 
 ## Manual fallback
 

@@ -485,6 +485,16 @@ class _GhostBadge extends StatelessWidget {
     return _HudPill(
       key: const ValueKey('ghost_badge'),
       child: Row(
+        // Shrink-wrap (issue #121): the #43 fix moved this badge onto
+        // the scoring Column's line, giving it a bounded max width —
+        // and this Row's default mainAxisSize.max then stretched the
+        // pill's black54 background into a full-width bar (343 px on a
+        // 375 pt phone) dimming a strip of road for the whole race. The
+        // pill's siblings (_FareTimerBadge et al.) still sit inside the
+        // scoring Row, which shrink-wraps them, so only this badge
+        // grew; min sizes it to its icon and text again, with the
+        // Column's start alignment keeping it left like every pill.
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             gap > 0

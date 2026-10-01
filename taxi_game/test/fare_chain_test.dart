@@ -269,6 +269,53 @@ void main() {
       expect(chain.multiplier, 2);
     });
 
+    test('a stale expired rider no longer re-breaks the chain every '
+        'frame (issue #120)', () {
+      final chain = FareChain();
+
+      // Fare A's meter runs out while they are still aboard: the chain
+      // breaks on that crossing frame, and A rides on expired until the
+      // dropoff finally settles them late.
+      final stale = fareOf('stale', 400, -300);
+      chain.startFare(stale);
+      chain.update(FareChain.secondsForRide(700) + 5);
+      expect(chain.multiplier, 1, reason: 'the crossing frame broke it');
+
+      // Fare B, delivered on time while A rides: the delivery rebuilds
+      // the chain — and the rebuild must survive the frames after it.
+      // Before issue #120 those frames re-checked "is any timer
+      // expired", found A's floored clock, and wiped the x2 one tick
+      // after the delivery paid it.
+      final fresh = fareOf('fresh', 400, -300);
+      chain.startFare(fresh);
+      expect(chain.completeFare(fresh, fareValue: 50), FareSettlement.onTime);
+      expect(chain.multiplier, 2);
+      chain.update(1 / 60);
+      expect(chain.multiplier, 2,
+          reason: 'the rebuild must hold the frame after it is paid');
+
+      // Same for the push at the dropoff: the prompt promised PUSH ON
+      // at the stepped multiplier, so the push must be worth that much
+      // on the frames that follow it, not for exactly one tick.
+      chain.applyPushBonus();
+      expect(chain.multiplier, 3);
+      chain.update(1 / 60);
+      expect(chain.multiplier, 3,
+          reason: 'a push bonus that survives one frame earns nothing');
+      expect(chain.bestMultiplier, 3,
+          reason: 'the record now describes a chain that actually held');
+
+      // The stale passenger's own dropoff still settles late — and that
+      // settlement is still the break it always was: riding expired
+      // re-broke nothing, but delivering late does.
+      expect(chain.completeFare(stale, fareValue: 50), FareSettlement.late);
+      expect(chain.score, 100,
+          reason: 'B paid 50 x1 then the delivery stepped to 2x; A pays '
+              '50 x1 late');
+      expect(chain.multiplier, 1);
+      expect(chain.isCarryingFare, isFalse);
+    });
+
     test('reset clears score, multiplier, and live countdowns', () {
       final chain = FareChain();
       final passenger = fareOf('a', 400, -300);

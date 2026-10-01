@@ -33,6 +33,16 @@ import 'package:flutter_test/flutter_test.dart';
 /// untangles App Store Connect) but never silent — the run emits a
 /// `::warning::` naming the real recovery.
 ///
+/// #119 adds a second output to the same step: whether Apple will accept
+/// a build for the version string at all. Once a version is approved, on
+/// sale, removed, or replaced, its "train" is closed — `altool` refuses
+/// the upload after the full macOS build (ITMS-90186) — and the old flow
+/// was red on every push until a human bumped the version. Now the whole
+/// build lane stands down, the run stays green, and a `::warning::` names
+/// the bump as the only way to ship again. In review, developer-rejected,
+/// and human-rejected trains stay open: those are exactly the states
+/// whose remedies arrive as new builds.
+///
 /// The gate lives in YAML and Ruby, so these tests pin its contract two
 /// ways: text assertions over the workflow and the script (the exact set
 /// of Apple states that may submit, the ordering of the decision branches,
@@ -161,6 +171,46 @@ void main() {
   const stuckSubmissionStates = [
     'UNRESOLVED_ISSUES',
     'READY_FOR_REVIEW',
+  ];
+
+  /// #119: the appStoreStates whose version trains still accept build
+  /// uploads. Not-yet-submitted, actively in review, or back in the
+  /// developer's hands after any flavor of rejection — exactly the
+  /// states whose remedies arrive as new builds. UNKNOWN (the script's
+  /// print for a state it does not recognize) deliberately classifies
+  /// the other way: an unrecognized state must not buy a ten-minute
+  /// build whose upload Apple then refuses.
+  const openToBuildStates = [
+    'PREPARE_FOR_SUBMISSION',
+    'INVALID_BINARY',
+    'READY_FOR_REVIEW',
+    'WAITING_FOR_REVIEW',
+    'IN_REVIEW',
+    'REJECTED',
+    'METADATA_REJECTED',
+    'DEVELOPER_REJECTED',
+    'PENDING_CONTRACT',
+    'WAITING_FOR_EXPORT_COMPLIANCE',
+  ];
+
+  /// The closed complement of [openToBuildStates] over [appleStates]:
+  /// once Apple has approved, released, removed, or replaced a version,
+  /// `altool` refuses a new build for its train ("train version is
+  /// closed for new build submissions") — building it is a guaranteed
+  /// red after a full macOS build. ACCEPTED and NOT_APPLICABLE are
+  /// legacy values the live API should no longer return; they land
+  /// closed because that is what they meant.
+  const closedToBuildStates = [
+    'PENDING_APPLE_RELEASE',
+    'PENDING_DEVELOPER_RELEASE',
+    'PROCESSING_FOR_APP_STORE',
+    'READY_FOR_SALE',
+    'PREORDER_READY_FOR_SALE',
+    'DEVELOPER_REMOVED_FROM_SALE',
+    'REMOVED_FROM_SALE',
+    'REPLACED_WITH_NEW_VERSION',
+    'ACCEPTED',
+    'NOT_APPLICABLE',
   ];
 
   group('the submit gate decides from App Store Connect (issues #89, #93)',
@@ -392,6 +442,169 @@ void main() {
               'does not work while the submission sits there');
       expect(warning.toLowerCase(), contains('issue #102'),
           reason: 'the annotation names the issue that explains the state');
+    });
+
+    test('a closed version train stands the build lane down, green '
+        '(issue #119)', () {
+      final decision = stepBlock('Decide whether to submit for review');
+
+      // The upload verdict's state list is declared in the same greppable
+      // form as the submit one, so the partition is reviewable and this
+      // suite can pin it. It answers a different question than
+      // editable_states: not "may this version be submitted" but "will
+      // Apple accept a build for this version string at all".
+      final match = RegExp(r'open_states="([^"]+)"').firstMatch(workflow);
+      expect(match, isNotNull,
+          reason: 'the workflow must declare its open-train state list in '
+              'the greppable open_states="..." form this suite reads');
+      final open = match!.group(1)!.split(RegExp(r'\s+'));
+      expect(open, unorderedEquals(openToBuildStates),
+          reason: 'the open set is exactly the ten states whose trains '
+              'still accept builds; growing or shrinking it is a behavior '
+              'change that needs this test updated with it');
+
+      // The typo guard the editable list gets: an entry Apple cannot
+      // return would never match a real answer, quietly classifying every
+      // state as closed and shipping nothing.
+      for (final state in open) {
+        expect(appleStates, contains(state),
+            reason: '$state is not an appStoreState Apple can return');
+      }
+
+      // The two lists partition everything Apple defines: a known state
+      // falling between them would be an accident, not a policy — the
+      // shell classifies by membership in open_states alone.
+      for (final state in appleStates) {
+        final inOpen = open.contains(state);
+        final inClosed = closedToBuildStates.contains(state);
+        expect(inOpen || inClosed, isTrue,
+            reason: '$state is in neither the open nor the closed list — '
+                'the partition must classify every state Apple can return');
+        expect(inOpen && inClosed, isFalse,
+            reason: '$state is in both lists — each state must pick a side');
+      }
+
+      // UNKNOWN — the script's print for a nil or unrecognized state —
+      // must classify closed: fail-closed here skips a doomed build
+      // instead of paying for it.
+      expect(open, isNot(contains('UNKNOWN')));
+
+      // A submit verdict must never stand the build lane down: every
+      // editable state is also open, or the gate would say "submit" and
+      // then skip the build whose delivery the submission needs — the
+      // #89 lost-submission failure wearing a new coat.
+      for (final state in preSubmissionStates) {
+        expect(open, contains(state),
+            reason: '$state may submit, so its train must accept the '
+                'build the submission attaches');
+      }
+
+      // upload defaults true and flips exactly once, in the per-record
+      // branch. The sentinel verdicts leave it true: a review in flight
+      // or stuck belongs to a version whose train is still open, and
+      // NONE is a brand-new string with no train to close.
+      expect(decision, contains('upload=true'));
+      final flips =
+          RegExp('upload=false').allMatches(decision).toList();
+      expect(flips, hasLength(1),
+          reason: 'exactly one branch may stand the build lane down');
+      expect(
+        decision.indexOf('open_states="'),
+        lessThan(flips.first.start),
+        reason: 'the flip must come from the open/closed classification, '
+            'not exist free-floating',
+      );
+      expect(
+        decision,
+        contains(r'echo "upload=$upload" >> "$GITHUB_OUTPUT"'),
+        reason: 'the build lane steps read this output; a missing echo '
+            'gates them on an empty string and every step runs anyway',
+      );
+
+      // The closed branch wins over the editable check: a closed state is
+      // never editable, but the branch order is what makes the log say
+      // what actually happens — nothing ships, not "TestFlight only".
+      final closedAt = decision.indexOf(r'if [ -n "$closed" ]');
+      final editableAt = decision.indexOf(r'elif [ -z "$blocking" ]');
+      expect(closedAt, greaterThan(-1),
+          reason: 'the workflow must branch on the closed classification');
+      expect(editableAt, greaterThan(-1));
+      expect(closedAt, lessThan(editableAt));
+
+      // And the closed case may not pass silently — same rule as #102's
+      // stuck case: the run is green, so the warning is the only thing
+      // that tells the human why nothing shipped and what unblocks it.
+      final warning =
+          RegExp(r'::warning::([^\n]*issue #119[^\n]*)').firstMatch(decision);
+      expect(warning, isNotNull,
+          reason: 'the closed-train branch must carry a warning annotation '
+              'naming the issue that explains it');
+      final text = warning!.group(1)!;
+      expect(text, contains('closed'),
+          reason: 'the warning says what the state means for builds');
+      expect(text.toLowerCase(), contains('bump'),
+          reason: 'the warning names the one act that reopens shipping — '
+              'no push can');
+
+      /// Like [stepBlock] but anchored inside the release job: the
+      /// verify job upstream also has a "Get dependencies" step, and the
+      /// gating pin must read the release lane's.
+      String releaseStep(String stepName) {
+        final anchor = workflow.indexOf(
+            stepBlock('Decide whether to submit for review'));
+        final start = workflow.indexOf('- name: $stepName', anchor);
+        expect(start, greaterThan(-1),
+            reason: 'release step "$stepName" is missing');
+        final next = workflow.indexOf('\n      - name: ', start + 1);
+        return workflow.substring(start, next == -1 ? workflow.length : next);
+      }
+
+      // Every step from the key install to the TestFlight upload is
+      // gated on the upload verdict: a closed train makes the whole lane
+      // moot, and half a lane (say, building without uploading) would
+      // burn the macOS minutes for nothing.
+      const gatedSteps = [
+        'Install the App Store Connect API key',
+        'Import the signing certificate',
+        'Install the provisioning profile',
+        'Get dependencies',
+        'Build Flutter assets',
+        'Install CocoaPods dependencies',
+        'Archive',
+        'Export IPA',
+        'Verify the exported bundle',
+        'Upload to TestFlight',
+      ];
+      for (final step in gatedSteps) {
+        final block = releaseStep(step);
+        expect(block, contains("if: steps.review.outputs.upload == 'true'"),
+            reason: 'the "$step" step must not run on a closed train');
+      }
+
+      // The Submit step needs both verdicts: a gate that said submit and
+      // a build that happened. The shell never sets submit=true in the
+      // closed branch, but the paired condition defends the pairing
+      // explicitly against future branch edits.
+      final submitStep = releaseStep('Submit for App Store review');
+      expect(
+        submitStep,
+        contains("if: steps.review.outputs.submit == 'true' && "
+            "steps.review.outputs.upload == 'true'"),
+        reason: 'submitting a version whose build never uploaded is the '
+            '#94 attach failure waiting to happen again',
+      );
+
+      // Cleanup and artifact steps stay unconditional: a stood-down run
+      // must still tidy up after itself and not go looking for an .ipa
+      // it chose not to build (the artifact steps warn, not fail, on
+      // missing files — `if-no-files-found: warn` — and always() keeps
+      // that the only thing they do).
+      expect(releaseStep('Remove the signing keychain'),
+          contains('if: always()'));
+      expect(releaseStep('Upload the IPA as a build artifact'),
+          contains('if: always()'));
+      expect(releaseStep('Upload the dSYMs as a build artifact'),
+          contains('if: always()'));
     });
 
     test('the submit step fires on the gate output; dispatch overrides', () {

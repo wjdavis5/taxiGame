@@ -201,8 +201,12 @@ it and a version bump alone will not submit (issue #102). Second, the
 version's own records: submit when the version is not
 on Apple's side yet (`NONE`) or every matching record is still
 machine-editable (`PREPARE_FOR_SUBMISSION`, `INVALID_BINARY`). Any other
-state — in review, approved, on sale, developer-rejected — goes to
-TestFlight only. Human rejections (`REJECTED`, `METADATA_REJECTED`) no
+state goes to TestFlight only while the version's train still accepts
+builds — in review, rejected, developer-rejected. Once the version is
+approved or on sale (or removed or replaced), Apple closes the train to
+new builds entirely: the run skips the build and the upload, stays
+green, and warns that only a version bump reopens shipping
+(issue #119). Human rejections (`REJECTED`, `METADATA_REJECTED`) no
 longer auto-resubmit on a routine push: the issue sweep pushes about
 hourly, and resubmitting a rejection nobody has addressed must be a human
 act — bump the version or use the manual dispatch below, and clear the

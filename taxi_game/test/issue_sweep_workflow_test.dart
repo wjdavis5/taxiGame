@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// The issue-sweep workflow's push and CI contract (issue #88), its
 /// gate-log round trip (issue #97), and its branch-safety pins
-/// (issue #108).
+/// (issues #108 and #118).
 ///
 /// The sweep script (`.zcode/workflows/gh-issue-sweep.dwf.ts`) drives real
 /// git pushes and real CI waits, so this suite cannot execute it — the
@@ -165,7 +165,7 @@ void main() {
     });
   });
 
-  group('the sweep never commits off its own branch (issue #108)', () {
+  group('the sweep never commits off its own branch (issues #108, #118)', () {
     // The original bug: the branch name was sha-only, so a leftover
     // branch from a failed prior sweep (same main, same sha) made
     // `git checkout -b` exit non-zero with "already exists" — a result
@@ -174,40 +174,79 @@ void main() {
     // was the previous attempt's. Three structural pins keep that shape
     // from returning: the name can never collide, the checkout's exit
     // code is checked, and commitAndPush verifies the branch itself
-    // before committing anything.
-    test('the branch name is unique beyond the sha', () {
+    // before committing anything. #118 tightened the first pin: the
+    // f8a3e94 suffix counted only *remote* leftovers, so a local-only
+    // leftover (a sweep whose push failed) recomputed the same name and
+    // the checked checkout stopped every tick until main moved — honest,
+    // but the sweep could never start.
+    test('the branch name is the next free suffix on both sides '
+        '(issues #108, #118)', () {
       final start = script.indexOf('const branch =');
       expect(start, greaterThan(-1), reason: 'the branch assignment is missing');
       final line = script.substring(start, script.indexOf(';', start));
 
-      expect(line, contains('sha.stdout.trim()'),
-          reason: 'the sha stays in the name so the branch still reads '
-              'as "sweep of this commit"');
-      // The beyond-the-sha suffix counts this sha's leftover remote
-      // branches rather than reading the clock. The original #108 fix
-      // used Date.now(); the workflow runtime forbids clock reads and a
-      // tick that called one errored outright, so f8a3e94 moved to the
-      // count — the deterministic, replay-safe form of the same
-      // guarantee: a failed prior sweep that pushed leaves N remote
-      // branches for this sha, so this attempt names suffix N and
-      // collides with none of them. (A leftover that never pushed is
-      // invisible to ls-remote; the checked checkout below is the
-      // backstop that catches it honestly.)
-      expect(line, contains('staleCount'),
-          reason: 'a beyond-the-sha suffix is the only thing that makes a '
-              'leftover branch from a failed prior sweep unable to collide');
+      // The sha stays in the name so the branch still reads as "sweep of
+      // this commit"; both lookups and the final assembly share one
+      // prefix constant so they cannot drift out of scope with each
+      // other.
+      expect(
+          script,
+          contains(
+              '"automation/issue-sweep-" + sha.stdout.trim() + "-"'),
+          reason: 'the prefix (sha included) must be built once, shared by '
+              'the local lookup, the remote lookup, and the final name');
+      expect(line, contains('branchPrefix'),
+          reason: 'the final name assembles from the shared prefix');
       expect(line, isNot(contains('Date')),
           reason: 'the runtime forbids clock reads here (f8a3e94) — the '
               'uniqueness must come from the world, not the wall clock');
-      // And the count is derived from the remote branch list a leftover
-      // would actually appear in, scoped to this sha's own sweep
-      // branches — counting anything else would not name the next free
-      // suffix.
-      expect(script, contains('"ls-remote"'));
-      expect(
-          script,
-          contains('"automation/issue-sweep-" + sha.stdout.trim() + "-*"'),
-          reason: 'the counted pattern is this sha\'s own sweep branches');
+
+      // #118: BOTH sides are consulted. A local-only leftover (the
+      // failed-push sweep) appears in `git branch --list`; a remote one
+      // (the closed-unmerged PR) appears in `ls-remote`. Counting either
+      // side alone recomputes a name that already exists.
+      expect(script, contains('"branch", "--list"'),
+          reason: 'the local leftover branches must be looked up too');
+      expect(script, contains('"ls-remote"'),
+          reason: 'the remote leftover branches stay looked up');
+      expect(script, contains('branchPrefix + "*"'),
+          reason: 'both lookups are scoped to this sha\'s own sweep '
+              'branches');
+
+      // And the suffix is max(existing)+1, not a count: a count equals a
+      // live suffix whenever the existing suffixes are not exactly
+      // 0..n-1 (a deleted -0 leaves -1 counted as 1, colliding with the
+      // surviving -1). The trailing-number regex reads both line shapes
+      // — `git branch --list`'s bare names and ls-remote's
+      // `<sha>\t<ref>` pairs.
+      expect(script, contains(r'/-(\d+)$/.exec'),
+          reason: 'the suffix is parsed off each ref name');
+      expect(script, contains('Math.max'),
+          reason: 'the highest existing suffix wins, whatever the gaps');
+      expect(script, contains('maxSuffix + 1'),
+          reason: 'the name takes the next free suffix, not a count that '
+              'a gap can turn into a collision');
+    });
+
+    test('a failed leftover-branch lookup stops the sweep honestly '
+        '(issue #118)', () {
+      // The old code never read the ls-remote exit code, so a failed
+      // lookup printed nothing, read as suffix 0, and could hand the
+      // sweep a name that collides — surfacing only as a rejected push
+      // after the whole implementation, or as the checked checkout
+      // failing every tick. Both lookups' exit codes are now read, and
+      // a failure stops before any edit with the same honest shape as
+      // the checkout-failure return: planned issues marked failed, a
+      // conclusion that says why, and the lanes that never ran named.
+      expect(script, contains('localStale.exitCode !== 0'));
+      expect(script, contains('remoteStale.exitCode !== 0'),
+          reason: 'the ls-remote exit code must be read, not assumed');
+      expect(script, contains('the leftover-branch lookup failed'),
+          reason: 'the planned issues are marked failed on the board, not '
+              'silently dropped');
+      expect(script, contains('no branch was created'),
+          reason: 'the stop must name what never ran, as the checkout '
+              'failure does');
     });
 
     test('the checkout result is captured and exit-code checked', () {
