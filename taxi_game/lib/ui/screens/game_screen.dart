@@ -395,8 +395,10 @@ class LevelCompleteOverlay extends StatelessWidget {
   }
 }
 
-/// The crash overlay. Names what hit the player and how fast, from the
-/// telemetry recorded at the moment of contact (issue #6).
+/// The level-failure overlay. Names what ended the run — a crash, from
+/// the telemetry recorded at the moment of contact (issue #6), or a fare
+/// stranded behind the one-way cab (issue #112) — and offers the rung
+/// again: RETRY restarts it from below every zone.
 class LevelFailedOverlay extends StatelessWidget {
   const LevelFailedOverlay({super.key, required this.game});
 
@@ -404,6 +406,10 @@ class LevelFailedOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The two endings share the panel's machinery and differ in every
+    // word: a missed fare is the player's own route gone wrong, not
+    // something traffic did to them.
+    final missedFare = game.lastFailReason == LevelFailReason.fareMissed;
     return Center(
       child: Container(
         padding: const EdgeInsets.all(20),
@@ -421,9 +427,9 @@ class LevelFailedOverlay extends StatelessWidget {
               color: Colors.white,
             ),
             const SizedBox(height: 20),
-            const Text(
-              'CRASH!',
-              style: TextStyle(
+            Text(
+              missedFare ? 'FARE MISSED!' : 'CRASH!',
+              style: const TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
@@ -431,7 +437,11 @@ class LevelFailedOverlay extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Text(
-              game.lastImpact?.headline ?? 'You collided with traffic.',
+              missedFare
+                  ? 'You drove past a fare this level still needs — the '
+                      'street only runs one way.'
+                  : game.lastImpact?.headline ??
+                      'You collided with traffic.',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 14,

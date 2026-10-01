@@ -282,16 +282,27 @@ void main() {
       return game;
     }
 
+    /// Collects every fare the rung offers, then makes the first
+    /// delivery — the realistic route, and since issue #112 the required
+    /// one: a delivery made past an uncollected pickup strands that fare
+    /// behind the one-way cab and fails the level. Leaves the game one
+    /// delivery in with the bank choice armed (on the banking rungs) and
+    /// the remaining fare aboard.
+    Future<void> rideTheFirstDelivery(TaxiGame game) async {
+      final level = game.currentLevel;
+      await rideTo(game, level.pickupPoints.first, level.pickupPoints.last);
+      game.player.position = Vector2(
+          level.dropoffPoints.first.x, level.dropoffPoints.first.y + 30);
+      game.update(1 / 60);
+      await drain();
+    }
+
     test('a dropoff with fares still open arms the real choice', () async {
       final game = await mountBankLevel();
       final level = game.currentLevel;
       expect(level.bankPromptEnabled, isTrue);
 
-      await rideTo(
-        game,
-        level.pickupPoints.first,
-        level.dropoffPoints.first,
-      );
+      await rideTheFirstDelivery(game);
 
       expect(game.passengersDelivered, 1);
       expect(game.bankPrompt.isActive, isTrue);
@@ -307,11 +318,7 @@ void main() {
       final level = game.currentLevel;
       final coinsBefore = saveAtNine.totalCoins;
 
-      await rideTo(
-        game,
-        level.pickupPoints.first,
-        level.dropoffPoints.first,
-      );
+      await rideTheFirstDelivery(game);
       final score = game.score;
       expect(score, greaterThan(0));
 
@@ -341,11 +348,7 @@ void main() {
       final level = game.currentLevel;
       final coinsBefore = saveAtNine.totalCoins;
 
-      await rideTo(
-        game,
-        level.pickupPoints.first,
-        level.dropoffPoints.first,
-      );
+      await rideTheFirstDelivery(game);
       expect(game.fareChain.multiplier, 2, reason: 'the delivery stepped it');
 
       game.pushOn();
@@ -354,11 +357,13 @@ void main() {
       expect(game.bankPrompt.isActive, isFalse);
       expect(game.isGameActive, isTrue);
 
-      await rideTo(
-        game,
-        level.pickupPoints.last,
-        level.dropoffPoints.last,
-      );
+      // The remaining fare is already aboard (collected en route, as
+      // the one-way street now demands — issue #112): straight to its
+      // kerb for the completing delivery.
+      game.player.position = Vector2(
+          level.dropoffPoints.last.x, level.dropoffPoints.last.y + 30);
+      game.update(1 / 60);
+      await drain();
 
       expect(game.passengersDelivered, 2);
       expect(game.overlays.isActive('levelComplete'), isTrue);
@@ -374,12 +379,7 @@ void main() {
       final game = await mountBankLevel();
       final coinsBefore = saveAtNine.totalCoins;
 
-      final level = game.currentLevel;
-      await rideTo(
-        game,
-        level.pickupPoints.first,
-        level.dropoffPoints.first,
-      );
+      await rideTheFirstDelivery(game);
       expect(game.bankPrompt.isActive, isTrue);
       expect(game.score, greaterThan(0));
 
@@ -387,6 +387,9 @@ void main() {
 
       expect(game.bankPrompt.isActive, isFalse);
       expect(game.overlays.isActive('levelFailed'), isTrue);
+      expect(game.lastFailReason, LevelFailReason.crash,
+          reason: 'a collision is still worded as one (issue #112 split '
+              'the reasons)');
       expect(saveAtNine.totalCoins, coinsBefore,
           reason: 'nothing unbanked ever reached the wallet');
       expect(game.isGameActive, isFalse);
@@ -439,11 +442,7 @@ void main() {
       expect(level.pickupPoints.length, greaterThan(1),
           reason: 'a multi-fare level, so the offer would be possible');
 
-      await rideTo(
-        game,
-        level.pickupPoints.first,
-        level.dropoffPoints.first,
-      );
+      await rideTheFirstDelivery(game);
 
       expect(game.passengersDelivered, 1);
       expect(game.bankPrompt.isActive, isFalse);
@@ -543,6 +542,94 @@ void main() {
     });
   });
 
+  group('a stranded fare fails the level (issue #112)', () {
+    // The issue's own scenario: the cab misses one pickup or drop-off,
+    // and a level street runs one way — the fare behind it can never be
+    // completed, but nothing ended the run: the cab parked at the road's
+    // end with no fail, no retry, and no message. The verdict is the
+    // existing failure flow with a reason of its own; RETRY on the
+    // panel restarts the rung.
+
+    /// Rung 1 mounted and settled: a single fare whose pickup (y 400)
+    /// and dropoff (y -300) bracket the whole course.
+    Future<TaxiGame> mountRungOne() async {
+      final game = await mountGame(ladderGame());
+      await game.loadLevel(1);
+      await tickAndSettle(game);
+      expect(game.isEndless, isFalse);
+      expect(game.currentLevel.pickupPoints, hasLength(1));
+      return game;
+    }
+
+    test('sailing past the unpicked pickup fails with the missed-fare '
+        'reason, and RETRY answers', () async {
+      final game = await mountRungOne();
+      final pickupY = game.currentLevel.pickupPoints.first.y;
+
+      // Down the road's middle — nowhere near the kerb the pickup sits
+      // on — and 200 px beyond it: the fare can never be collected now.
+      game.player.position = Vector2(200, pickupY - 200);
+      game.update(1 / 60);
+
+      expect(game.isGameActive, isFalse,
+          reason: 'the one-way street makes the missed pickup '
+              'unreachable');
+      expect(game.lastFailReason, LevelFailReason.fareMissed);
+      expect(game.overlays.isActive('levelFailed'), isTrue);
+
+      // RETRY is the recovery the panel promises: the rung restarts
+      // below every zone, verdict cleared. (A plain bounded wait, not
+      // tickAndSettle — restartLevel kicks loadLevel off un-awaited.)
+      game.restartLevel();
+      for (var i = 0; i < 100 && !game.isGameActive; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(game.isGameActive, isTrue, reason: 'RETRY re-runs the rung');
+      expect(game.lastFailReason, isNull);
+      expect(game.overlays.isActive('levelFailed'), isFalse);
+    });
+
+    test('carrying a fare past its dropoff fails it the same way', () async {
+      final game = await mountRungOne();
+      final level = game.currentLevel;
+
+      // Collect the fare...
+      game.player.position = Vector2(
+          level.pickupPoints.first.x, level.pickupPoints.first.y + 30);
+      game.update(1 / 60);
+      await drain();
+      expect(game.player.hasPassenger, isTrue);
+
+      // ...then sail past its kerb down the middle of the road.
+      game.player.position =
+          Vector2(200, level.dropoffPoints.first.y - 200);
+      game.update(1 / 60);
+
+      expect(game.isGameActive, isFalse,
+          reason: 'the carried fare can never be delivered');
+      expect(game.lastFailReason, LevelFailReason.fareMissed);
+      expect(game.overlays.isActive('levelFailed'), isTrue);
+    });
+
+    test('the grace margin forgives a graze — 80 px, the endless rule',
+        () async {
+      final game = await mountRungOne();
+      final pickupY = game.currentLevel.pickupPoints.first.y;
+
+      // 79 px past the needed zone still counts as at it (the mirror
+      // of the endless passHysteresis); 81 px is stranded.
+      game.player.position = Vector2(200, pickupY - 79);
+      game.update(1 / 60);
+      expect(game.isGameActive, isTrue,
+          reason: 'inside the grace the fare is not yet stranded');
+
+      game.player.position = Vector2(200, pickupY - 81);
+      game.update(1 / 60);
+      expect(game.isGameActive, isFalse,
+          reason: 'past the grace, the fare is behind the cab for good');
+    });
+  });
+
   group('the completion panel', () {
     /// Loads [levelNumber] into a mounted game, inside [tester.runAsync]:
     /// mounting loads real sprite assets, and real IO can only complete
@@ -612,6 +699,56 @@ void main() {
       expect(game.isEndless, isTrue);
       expect(game.isGameActive, isTrue);
       expect(game.overlays.isActive('levelComplete'), isFalse);
+    });
+  });
+
+  group('the failure panel (issue #112)', () {
+    /// Rung 1 mounted inside [tester.runAsync] — mounting loads real
+    /// sprite assets, and real IO only completes in the test binding's
+    /// real-async window (the completion-panel group's pattern).
+    Future<TaxiGame> failureGame(WidgetTester tester) async {
+      return (await tester.runAsync<TaxiGame>(() async {
+        final game = await mountGame(ladderGame());
+        await game.loadLevel(1);
+        return game;
+      }))!;
+    }
+
+    Future<void> showPanel(WidgetTester tester, TaxiGame game) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: LevelFailedOverlay(game: game)),
+        ),
+      );
+      await tester.pump();
+    }
+
+    testWidgets('a missed fare is worded as one, not as a crash',
+        (tester) async {
+      final game = await failureGame(tester);
+      game.lastFailReason = LevelFailReason.fareMissed;
+      await showPanel(tester, game);
+
+      expect(find.text('FARE MISSED!'), findsOneWidget);
+      expect(
+          find.textContaining('the street only runs one way'),
+          findsOneWidget,
+          reason: 'the panel must say why the run ended, in the player\'s '
+              'own terms — a route gone wrong, not a collision');
+      expect(find.text('CRASH!'), findsNothing);
+      expect(find.text('RETRY'), findsOneWidget,
+          reason: 'the recovery the panel promises');
+    });
+
+    testWidgets('a crash still reads as a crash', (tester) async {
+      final game = await failureGame(tester);
+      game.lastFailReason = LevelFailReason.crash;
+      await showPanel(tester, game);
+
+      expect(find.text('CRASH!'), findsOneWidget);
+      // No telemetry on this run: the fallback collision line.
+      expect(find.text('You collided with traffic.'), findsOneWidget);
+      expect(find.text('FARE MISSED!'), findsNothing);
     });
   });
 }

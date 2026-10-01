@@ -47,6 +47,13 @@ import '../services/game_state_service.dart';
 import '../services/haptics_service.dart';
 import '../services/level_loader_service.dart';
 
+/// Why a tutorial level failed (issue #112): a judged crash, or a fare
+/// the level still needs stranded behind the one-way cab. The failure
+/// panel words itself from this. Endless runs never fail this way —
+/// their stranded dropoffs are relocated instead (issue #28) — so only
+/// [TaxiGame.onLevelFailed] and the missed-fare check ever set it.
+enum LevelFailReason { crash, fareMissed }
+
 /// Main game class that manages the entire game loop and components
 class TaxiGame extends FlameGame
     with HasCollisionDetection, KeyboardEvents {
@@ -366,6 +373,11 @@ class TaxiGame extends FlameGame
   /// (issue #6 contact legibility). Cleared whenever a level loads.
   CrashReport? lastImpact;
 
+  /// Why the level failed, when it has (issue #112): set by every level
+  /// failure path, cleared by every run start, read by the failure panel
+  /// to word a stranded fare differently from a collision.
+  LevelFailReason? lastFailReason;
+
   /// Rate-limits scrape feedback so a grinding push-match cannot spam
   /// particles, shake, sound, and markers at frame rate (issue #42).
   double _scrapeFeedbackCooldown = 0;
@@ -560,6 +572,7 @@ class TaxiGame extends FlameGame
   Future<void> startEndlessRun({required int seed}) async {
     isGameActive = false;
     lastImpact = null;
+    lastFailReason = null;
     _activeRunSeed = seed;
     // A daily shift pins the day it started on (issue #19): a run still
     // being driven at midnight belongs to the course — and the result —
@@ -686,6 +699,7 @@ class TaxiGame extends FlameGame
     isGameActive = false;
     currentLevelNumber = levelNumber;
     lastImpact = null;
+    lastFailReason = null;
     // Clear any impact juice left over from the previous level (issue
     // #7). The lives budget resets with it: a level has no failure
     // budget — its first crash still fails it — but the counter must
@@ -1365,6 +1379,7 @@ class TaxiGame extends FlameGame
   void onLevelFailed([CrashReport? report]) {
     if (!isGameActive) return;
     lastImpact = report;
+    lastFailReason = LevelFailReason.crash;
 
     // A crash forfeits everything unbanked (issue #13): the open choice
     // dies with the run, and whatever the chain held stays unbanked.
@@ -1393,6 +1408,60 @@ class TaxiGame extends FlameGame
       overlays.add('levelFailed');
     }
     // The wreck sting lands with the impact, panel or no panel (issue #4).
+    audio?.playLevelFailedSound();
+  }
+
+  // --- Stranded fares (issue #112) -----------------------------------------
+
+  /// Fails the level when a fare it still needs is behind the cab for
+  /// good (issue #112): level streets are one-way — no reverse, and
+  /// issue #31's end clamp exists because of it — so a pickup the cab
+  /// sailed past, or a carried dropoff it never stopped for, can never
+  /// be completed; every further delivery only postpones the discovery,
+  /// and the run used to end with the cab parked at the road's end, no
+  /// fail, no retry, no message. The endless course instead relocates
+  /// passed dropoffs (issue #28) — forgiveness for a mode whose fares
+  /// are offers; a level's fares are mandatory objectives, so the honest
+  /// verdict is the failure flow, with a reason of its own so the panel
+  /// can name it. The 80 px grace mirrors
+  /// [EndlessFareController.passHysteresis]: a cab grazing a zone's
+  /// edge is judged still at it, not past it. Level zones never move
+  /// (the world fold is endless-only, issue #30), so the stored route
+  /// points are the live zone positions.
+  void _checkForMissedFares() {
+    final playerY = player.position.y;
+    for (final passenger in passengers) {
+      if (passenger.isDelivered) continue;
+      // The zone this fare still needs: its kerb if not yet boarded,
+      // its destination if aboard.
+      final neededY = passenger.isPickedUp
+          ? passenger.dropoffLocation.y
+          : passenger.pickupLocation.y;
+      if (playerY < neededY - EndlessFareController.passHysteresis) {
+        _failLevelForMissedFare();
+        return;
+      }
+    }
+  }
+
+  /// The failure ending for a stranded fare (issue #112): the same
+  /// settle a crash performs — run over, cab halted, spawner paused,
+  /// engine off, any open bank choice dismissed — minus the impact
+  /// telemetry and FX, and with the reason the panel words itself from.
+  /// RETRY is the recovery: [restartLevel] re-runs the rung from its
+  /// start, below every zone again.
+  void _failLevelForMissedFare() {
+    if (!isGameActive) return;
+    lastFailReason = LevelFailReason.fareMissed;
+    debugPrint('[level] fare missed: a zone this level still needs is '
+        'behind the cab (cab y ${player.position.y.toStringAsFixed(0)})');
+    _dismissBankPrompt();
+    _shiftOver = true;
+    isGameActive = false;
+    _haltPlayerForShiftEnd();
+    trafficSpawner.pause();
+    audio?.setEngineRunning(false);
+    overlays.add('levelFailed');
     audio?.playLevelFailedSound();
   }
 
@@ -1721,6 +1790,13 @@ class TaxiGame extends FlameGame
     // isGameActive false first.)
     if (isGameActive) {
       fareChain.update(dt);
+
+      // The stranded-fare verdict (issue #112) rides the live clock with
+      // the meter: it must not tick (nor fire) through a crash stall, a
+      // hit-stop, or any panel — only while the level is actually being
+      // driven. Endless is exempt by route: its fares are offers, and a
+      // passed dropoff relocates (issue #28) instead of failing.
+      if (!isEndless) _checkForMissedFares();
 
       // The diagnostics heartbeat: one line of where the run stands per
       // heartbeatInterval of live play — the trail a hard kill cuts off.

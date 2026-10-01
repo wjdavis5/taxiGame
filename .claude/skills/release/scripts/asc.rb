@@ -6,8 +6,11 @@
 #   ruby asc.rb version   # the editable version and what is attached to it
 #
 # Auth comes from .env at the repo root (ASC_KEY_ID, ASC_ISSUER_ID) plus the
-# AuthKey_<KEY_ID>.p8 private key. Both are gitignored. The key is searched for
-# in ~/Downloads and ~/.appstoreconnect/private_keys.
+# AuthKey_<KEY_ID>.p8 private key. Both are gitignored. The key file is looked
+# up by that exact name in ~/Downloads and ~/.appstoreconnect/private_keys,
+# never by globbing AuthKey_*.p8 and taking the first hit (issue #115: the
+# first glob hit signed the JWT while its header still named ASC_KEY_ID, and
+# Apple answered 401 to every call).
 #
 # Uses only Ruby's stdlib - no gems, no bundler.
 
@@ -29,10 +32,20 @@ def env
   end
 end
 
+# Apple answers 401 whenever the JWT's kid header and the signing key
+# disagree, so the file used here must be the one ASC_KEY_ID names — not
+# whichever AuthKey_*.p8 a glob hits first (issue #115: a second key sitting
+# in ~/Downloads signed every request on a machine whose ASC_KEY_ID pointed
+# at the other one). Both folders below are the ones xcodebuild and fastlane
+# search by convention, and CI writes exactly this filename
+# (.github/workflows/ios-release.yml), so the name is not optional.
 def private_key_path
-  candidates = Dir[File.expand_path('~/Downloads/AuthKey_*.p8')] +
-               Dir[File.expand_path('~/.appstoreconnect/private_keys/AuthKey_*.p8')]
-  candidates.first or abort('no AuthKey_*.p8 found in ~/Downloads or ~/.appstoreconnect/private_keys')
+  name = "AuthKey_#{env.fetch('ASC_KEY_ID')}.p8"
+  dirs = [File.expand_path('~/Downloads'),
+          File.expand_path('~/.appstoreconnect/private_keys')]
+  dirs.map { |dir| File.join(dir, name) }.find { |path| File.exist?(path) } or
+    abort("missing #{name} in #{dirs.join(' or ')} - the .p8 must be named " +
+          'exactly AuthKey_<ASC_KEY_ID>.p8 for the ASC_KEY_ID in .env')
 end
 
 def jwt
@@ -84,8 +97,14 @@ def print_version
   v = editable_version
   return puts('VERSION: none') unless v
   a = v['attributes']
+  # Issue #111: AFTER_APPROVAL and SCHEDULED both put the build on the
+  # store without a human — approval (or the clock) is the release. MANUAL
+  # is what the submit lane writes. The raw releaseType reads as a harmless
+  # enum value, so say what it actually means next to it.
+  auto = ['AFTER_APPROVAL', 'SCHEDULED'].include?(a['releaseType'])
   puts 'VERSION'
-  puts "  #{a['versionString']}  state=#{a['appStoreState']}  release=#{a['releaseType']}"
+  puts "  #{a['versionString']}  state=#{a['appStoreState']}  " \
+       "release=#{a['releaseType']}#{auto ? ' (goes live automatically)' : ''}"
 
   code, full = get("/v1/appStoreVersions/#{v['id']}?include=build")
   attached = full.dig('data', 'relationships', 'build', 'data')

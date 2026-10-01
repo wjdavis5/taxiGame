@@ -300,4 +300,83 @@ void main() {
           reason: 'history is reachable even before today\'s shift ends');
     });
   });
+
+  group('the daily card survives the day rolling over (issue #113)', () {
+    // The bug the issue title describes: the card computed the day's
+    // state once inside a Consumer that only re-runs on save writes, so
+    // nothing rebuilt it when the day changed — the next morning's menu
+    // still said TODAY'S RESULT · DONE FOR TODAY, the new Daily Shift
+    // hidden behind yesterday's card until some unrelated save write
+    // happened along. The clock is pinned per the #96 convention so the
+    // rollover is a controlled step, not a sleep.
+
+    /// Day D played and the menu pumped: the card in its spent state.
+    Future<void> pumpPlayedDay(WidgetTester tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+      await gameStateService.recordDailyResult(DailyResult(
+        dateKey: DailyShift.todayKey,
+        score: 340,
+        banked: true,
+        completedAtMs: DateTime.now().millisecondsSinceEpoch,
+      ));
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(find.text("TODAY'S RESULT"), findsOneWidget,
+          reason: 'precondition: the card was built on the played day');
+      expect(find.textContaining('DONE FOR TODAY'), findsOneWidget);
+      expect(find.text('DAILY SHIFT'), findsNothing);
+    }
+
+    /// Moves the clock into tomorrow, restoring the real one afterwards.
+    void rollToTomorrow() {
+      DailyShift.clock = () => DateTime.now().add(const Duration(days: 1));
+      addTearDown(() => DailyShift.clock = DateTime.now);
+    }
+
+    /// The flipped card: the new day's course offered, the spent state
+    /// gone, and the history link back (it exists only while today is
+    /// unplayed).
+    void expectNewDayOffered() {
+      expect(find.text('DAILY SHIFT'), findsOneWidget,
+          reason: "the new day's shift is the button again");
+      expect(find.text("TODAY'S RESULT"), findsNothing);
+      expect(find.textContaining('DONE FOR TODAY'), findsNothing);
+      expect(find.textContaining('ONE SHIFT'), findsOneWidget);
+      expect(find.textContaining(DailyShift.todayKey), findsOneWidget,
+          reason: 'the status names the new day\'s date');
+      expect(
+          find.byKey(const ValueKey('daily_history_button')), findsOneWidget);
+    }
+
+    testWidgets('an app resumed the next day shows the new daily, not '
+        "yesterday's DONE FOR TODAY", (tester) async {
+      await pumpPlayedDay(tester);
+
+      // Midnight passed while the app was backgrounded; the owner
+      // reopens it the next day. No save change fires — only the
+      // lifecycle does.
+      rollToTomorrow();
+      tester.binding
+          .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+
+      expectNewDayOffered();
+    });
+
+    testWidgets('midnight passing in the foreground flips the card on the '
+        'minute tick', (tester) async {
+      await pumpPlayedDay(tester);
+
+      // The app stays open across midnight: no lifecycle event will
+      // ever come, so the one-minute timer is the only witness.
+      rollToTomorrow();
+      await tester.pump(const Duration(minutes: 1));
+
+      expectNewDayOffered();
+    });
+  });
 }

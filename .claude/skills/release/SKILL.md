@@ -177,9 +177,14 @@ Tell the user, concretely:
 - The build number that landed and its processing state.
 - Whether the App Store submission fired, or that it was TestFlight-only and
   why.
-- For a submission: that the version is `WAITING_FOR_REVIEW` and that release
-  is `AFTER_APPROVAL`, so nothing reaches users without them pressing the
-  button.
+- For a submission: that the version is `WAITING_FOR_REVIEW`, and what its
+  release type means for the user — read the actual value from
+  `asc.rb version`, never assume. `release=MANUAL` (what the submit lane
+  writes) means the approved build ships only when a human presses Release
+  in App Store Connect. `release=AFTER_APPROVAL` or `release=SCHEDULED` —
+  which `asc.rb` flags as "goes live automatically" — means approval itself
+  puts the build on the store, so the release moment belongs to Apple, not
+  the user.
 
 ## Known failure modes
 

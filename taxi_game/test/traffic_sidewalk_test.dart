@@ -118,6 +118,44 @@ void main() {
     return null;
   }
 
+  /// First distance where a standard segment gives way to an avenue one —
+  /// the native habitat of issue #114: a same-direction span ending a few
+  /// px into the widening taper merges toward the avenue's kerb lane
+  /// (250 → 288), and it was that whole 38 px move the old schedule
+  /// dropped onto the path's last few px. Seed 7 draws it at 24 000 px
+  /// (verified this session); the scan keeps the test honest should the
+  /// profile rolls ever change.
+  double? firstStandardToAvenue(RunEnvironment env) {
+    for (var k = 2; k < 60; k++) {
+      if (env.profileForSegment(k - 1) == RoadProfile.standard &&
+          env.profileForSegment(k) == RoadProfile.avenue) {
+        return k * RunEnvironment.geometrySegmentLength;
+      }
+    }
+    return null;
+  }
+
+  /// The lane centre of [road] nearest [x] among the lanes flowing the
+  /// same direction — the (private) rule [trafficMergeWaypoints] uses to
+  /// pick each merge's target, mirrored here so the #114 pins can name
+  /// the exact x the schedule should reach for. (The public
+  /// sameDirectionLaneX is the *first* such lane, not the nearest — on
+  /// the avenue that is 200, while a car at 250 merges onto 288.)
+  double nearestSameRoleLane(RoadGeometry road, double x,
+      {required bool oncoming}) {
+    var best = oncoming ? road.oncomingLaneX : road.sameDirectionLaneX;
+    var bestDistance = double.infinity;
+    for (var i = 0; i < road.laneCount; i++) {
+      if (road.isLaneOncoming(i) != oncoming) continue;
+      final d = (road.laneXs[i] - x).abs();
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = road.laneXs[i];
+      }
+    }
+    return best;
+  }
+
   /// The issue's invariant, walked finely over a pure merge schedule:
   /// the body (of [halfWidth] — the walker judges the schedule for the
   /// bodies the gate accepts it for) stays on the road over the whole
@@ -579,6 +617,200 @@ void main() {
         }
       }
     });
+  });
+
+  group('a path ending inside a taper (issue #114)', () {
+    // The #107 schedule merged across each taper onto the far road's
+    // lanes — but only paths that live long enough to finish the merge.
+    // When the path's extent clamps the align anchor (the path ends t px
+    // into a taper), the old code still emitted the *full* target at the
+    // clamped distance: the whole lateral move squeezed into the sliver
+    // of road left, a crab-walk visible just before the car despawns,
+    // and the body's half-length hanging past the end sat 13 px over a
+    // kerb the car never drove to — waved through because the gate
+    // skipped a final diagonal leg outright. The fix cuts the merge at
+    // the extent's end, ON the merge's own diagonal (the taper's slope),
+    // and the gate judges the final leg's end x over the body pad past
+    // the path's end — the mirror of its behind-the-spawn check.
+
+    test('the last merge is cut at the path\'s end, not squeezed into it',
+        () {
+      final env = RunEnvironment(seed: 7);
+      final boundary = firstStandardToAvenue(env)!;
+      expect(boundary, 24000, reason: 'seed 7 standard→avenue at 24 000 px');
+
+      // The issue's spawn: the same-direction span (3 000 px up-screen)
+      // ends 5 px into the taper, on the standard right lane (x 250).
+      final spawn = boundary - 3000 + 5;
+      final laneX = env.roadAt(spawn).laneXs.last;
+      expect(laneX, closeTo(250, 0.01),
+          reason: 'precondition: the standard road\'s right lane');
+      expect(env.roadAt(spawn).isLaneOncoming(env.roadAt(spawn).laneCount - 1),
+          isFalse,
+          reason: 'precondition: the kerb lane flows with the player');
+
+      final waypoints =
+          env.trafficMergeWaypoints(spawn, laneX, oncoming: false);
+      final taperEnd = boundary + RunEnvironment.taperLength;
+      final target =
+          nearestSameRoleLane(env.roadAt(taperEnd), laneX, oncoming: false);
+      expect(target, closeTo(288, 0.01),
+          reason: 'precondition: the avenue kerb lane is the merge target');
+
+      // Shape: the lane held to the boundary, the extent unchanged —
+      // cutting a merge never changes how far a path drives.
+      expect(waypoints.first, (spawn, laneX));
+      expect(waypoints, contains((boundary, laneX)));
+      expect(waypoints.last.$1, closeTo(spawn + 3000, 1e-9));
+
+      // The pin: 5 px of taper buys 5/600 of the 38 px merge. The
+      // pre-#114 schedule parked all 38 px at the path's end — x 288 on
+      // a road still ~200 px wide — which is the sideways slide the
+      // issue's title names.
+      final endX = waypoints.last.$2;
+      expect(endX, closeTo(laneX + (target - laneX) * 5 / 600, 1e-6));
+      final step = waypoints.last.$1 - waypoints[waypoints.length - 2].$1;
+      final slide = endX - waypoints[waypoints.length - 2].$2;
+      expect(slide / step, closeTo((target - laneX) / 600, 1e-9),
+          reason: 'the last leg climbs at the full diagonal\'s slope — '
+              'the taper\'s own, not a crab-walk\'s');
+    });
+
+    test('a final diagonal is judged past the path\'s end — no bus over '
+        'the kerb', () {
+      final env = RunEnvironment(seed: 7);
+      final boundary = firstStandardToAvenue(env)!;
+      final spawn = boundary - 3000 + 5;
+      final laneX = env.roadAt(spawn).laneXs.last;
+      final target = nearestSameRoleLane(
+          env.roadAt(boundary + RunEnvironment.taperLength), laneX,
+          oncoming: false);
+      final waypoints =
+          env.trafficMergeWaypoints(spawn, laneX, oncoming: false);
+
+      // The pre-#114 schedule: the full target dropped at the clamped
+      // align. The body's half-length hangs 50 px past the path's end at
+      // that x, over a taper only 5 px deep — the bus overhangs the kerb
+      // by 13 px — and the gate answered true for every body because a
+      // final diagonal was never asked. It must be turned away now, for
+      // every body it would burn.
+      final squeezed = <(double, double)>[
+        (spawn, laneX),
+        (boundary, laneX),
+        (spawn + 3000, target),
+      ];
+      for (final halfWidth in [25.0, 22.5, 21.0, 20.0, 19.0]) {
+        expect(env.mergePathHoldsOnRoad(squeezed, halfWidth, oncoming: false),
+            isFalse,
+            reason: 'half-width $halfWidth: the end x '
+                '${target.toStringAsFixed(0)} must be judged over the body '
+                'pad past the path\'s end');
+      }
+
+      // The cut schedule is sound: accepted for every body, and the
+      // widest body's fine walk finds no kerb crossing anywhere on the
+      // padded span — the merge has only 0.3 px of it left by the end.
+      for (final halfWidth in [25.0, 22.5, 21.0, 20.0, 19.0]) {
+        expect(env.mergePathHoldsOnRoad(waypoints, halfWidth, oncoming: false),
+            isTrue,
+            reason: 'half-width $halfWidth: the cut schedule is contained');
+      }
+      expectScheduleHoldsInvariant(env, waypoints, oncoming: false,
+          halfWidth: 25);
+
+      // The unclamped neighbour — the path ending exactly at the taper's
+      // far end — still gets the whole merge and passes: cutting legs
+      // short must not tighten the gate on sound schedules.
+      final whole = env.trafficMergeWaypoints(
+          boundary - 3000 + RunEnvironment.taperLength, laneX,
+          oncoming: false);
+      expect(whole, contains((boundary + RunEnvironment.taperLength, target)));
+      expect(env.mergePathHoldsOnRoad(whole, 25, oncoming: false), isTrue);
+    });
+
+    test('every boundary face, both directions, path end swept through the '
+        'whole taper', () {
+      // The structural sweep of the cut: for every geometry change the
+      // seed draws, every lane, and the path's end at every offset across
+      // the full 0–600 px taper (same-direction spawn = boundary + t −
+      // 3000, oncoming = boundary + t + 1500 — each puts the extent's
+      // end exactly t px past the boundary), the schedule stays monotone
+      // in driving order, drives exactly its classic extent, and every
+      // body the per-leg gate accepts keeps the invariant's fine walk.
+      for (final seed in [2, 7, 11]) {
+        final env = RunEnvironment(seed: seed);
+        final boundaries = <double>[];
+        for (var k = 2; k < 40; k++) {
+          if (env.profileForSegment(k) != env.profileForSegment(k - 1)) {
+            boundaries.add(k * RunEnvironment.geometrySegmentLength);
+          }
+        }
+        expect(boundaries, isNotEmpty,
+            reason: 'seed $seed draws some geometry variety');
+        for (final boundary in boundaries) {
+          for (var t = 0.0; t <= RunEnvironment.taperLength; t += 25) {
+            for (final oncoming in [false, true]) {
+              final spawn =
+                  oncoming ? boundary + t + 1500 : boundary + t - 3000;
+              final road = env.roadAt(spawn);
+              for (var i = 0; i < road.laneCount; i++) {
+                if (road.isLaneOncoming(i) != oncoming) continue;
+                final waypoints = env.trafficMergeWaypoints(
+                  spawn,
+                  road.laneXs[i],
+                  oncoming: oncoming,
+                );
+                final extent = oncoming ? spawn - 1500 : spawn + 3000;
+                expect(waypoints.first.$1, closeTo(spawn, 1e-9));
+                expect(waypoints.first.$2, closeTo(road.laneXs[i], 1e-9));
+                expect(waypoints.last.$1, closeTo(extent, 1e-9),
+                    reason: 'the cut never changes how far a path drives');
+                for (var i2 = 1; i2 < waypoints.length; i2++) {
+                  final step = waypoints[i2].$1 - waypoints[i2 - 1].$1;
+                  // A zero step is the born-on-the-line sideways snap; a
+                  // step the wrong way round would mean a car driving
+                  // backwards along its own path.
+                  expect(
+                      step,
+                      oncoming
+                          ? lessThanOrEqualTo(0)
+                          : greaterThanOrEqualTo(0),
+                      reason: 'anchors must advance (or snap sideways) in '
+                          'driving order');
+                  expect(
+                      waypoints[i2].$1 == waypoints[i2 - 1].$1 &&
+                          (waypoints[i2].$2 - waypoints[i2 - 1].$2).abs() <
+                              1e-9,
+                      isFalse,
+                      reason: 'no duplicate anchors');
+                }
+                // Per body (every half-width the type table rolls: bus
+                // 25, truck 22.5, suv 21, sedan 20, sports 19): the
+                // gate-accepted bodies keep the invariant, and something
+                // must always be accepted — the cut's end x sits within
+                // a fraction of a contained lane, and over the 50 px pad
+                // past the end the kerb moves well under a body's margin.
+                var anyAccepted = false;
+                for (final halfWidth in [25.0, 22.5, 21.0, 20.0, 19.0]) {
+                  if (!env.mergePathHoldsOnRoad(waypoints, halfWidth,
+                      oncoming: oncoming)) {
+                    continue;
+                  }
+                  anyAccepted = true;
+                  expectScheduleHoldsInvariant(env, waypoints,
+                      oncoming: oncoming, halfWidth: halfWidth);
+                }
+                expect(anyAccepted, isTrue,
+                    reason: 'seed $seed boundary '
+                        '${boundary.toStringAsFixed(0)} t ${t.toStringAsFixed(0)} '
+                        'lane $i: at least the car-class bodies must fit '
+                        'every cut schedule the helper builds');
+              }
+            }
+          }
+        }
+      }
+    }, timeout: const Timeout(Duration(minutes: 3)));
   });
 
   group('a flood at an avenue→narrow boundary (issue #87)', () {

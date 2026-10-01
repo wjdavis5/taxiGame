@@ -5,6 +5,7 @@ import '../../game/taxi_game.dart';
 import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
 import '../../services/haptics_service.dart';
+import '../widgets/day_key_builder.dart';
 import 'credits_screen.dart';
 import 'daily_screen.dart';
 import 'game_screen.dart';
@@ -116,11 +117,23 @@ class MainMenuScreen extends StatelessWidget {
                             _buildEndlessBlock(context, gameState,
                                 primary: false),
                             const SizedBox(height: 20),
-                            _buildDailyBlock(context, gameState,
-                                primary: false),
+                            // The daily block is day-dependent, so it
+                            // rebuilds when the calendar day does —
+                            // resumed or left open across midnight —
+                            // instead of showing yesterday's DONE FOR
+                            // TODAY until an unrelated save write comes
+                            // along (issue #113).
+                            DayKeyBuilder(
+                              builder: (context, dayKey) => _buildDailyBlock(
+                                  context, gameState, dayKey,
+                                  primary: false),
+                            ),
                           ] else ...[
-                            _buildDailyBlock(context, gameState,
-                                primary: true),
+                            DayKeyBuilder(
+                              builder: (context, dayKey) => _buildDailyBlock(
+                                  context, gameState, dayKey,
+                                  primary: true),
+                            ),
                             const SizedBox(height: 20),
                             _buildEndlessBlock(context, gameState,
                                 primary: true),
@@ -286,9 +299,15 @@ class MainMenuScreen extends StatelessWidget {
   /// — labelled as the destination it opens, not the state it is in. The
   /// history link exists only while today is unplayed; once the button
   /// itself opens the result screen, a second path to it is clutter.
+  ///
+  /// Built under a [DayKeyBuilder] (issue #113): [dayKey] is the day the
+  /// card is being laid out for, so a day that rolls over under a live
+  /// menu rebuilds the card rather than leaving yesterday's DONE FOR
+  /// TODAY to hide the new course.
   Widget _buildDailyBlock(
     BuildContext context,
-    GameStateService gameState, {
+    GameStateService gameState,
+    String dayKey, {
     required bool primary,
   }) {
     final result = gameState.todayDailyResult;
@@ -327,7 +346,7 @@ class MainMenuScreen extends StatelessWidget {
         const SizedBox(height: 10),
         Text(
           result == null
-              ? '${DailyShift.todayKey} \u00b7 ONE SHIFT, '
+              ? '$dayKey \u00b7 ONE SHIFT, '
                   'SAME FOR EVERYONE'
               : '${result.score} PTS \u00b7 DONE FOR TODAY',
           key: const ValueKey('daily_status'),
