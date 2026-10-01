@@ -186,42 +186,57 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     const types = TrafficVehicleType.values;
     final type = types[random.nextInt(types.length)];
 
+    // The waypoints the vehicle will follow: the endless road's merge
+    // schedule, or the level street's straight lanes.
+    late final List<Vector2> path;
+
     if (env != null) {
-      // A straight path never re-reads the road as it drives, so the
-      // rolled body has to hold this lane for the whole span its
-      // waypoints cover — or the next narrowing would put it on the
-      // sidewalk mid-drive, the exact defect the remap above fixes at
-      // the spawn point (issue #87). The gate is the body's own full
-      // sprite width, the thing a player would see crossing the kerb:
-      // a sedan's footprint fits a narrowing street where a bus's
-      // would overhang, and gating every spawn on the widest body
-      // emptied kilometres of lane before every width change the bus
-      // alone cannot make — traffic the difficulty curve meant to
-      // place. The span itself stays padded by half the longest body
-      // any spawn can roll, so either end is judged with the deepest
-      // nose any car has. A skipped spawn has already spent its rolls;
-      // they produced nothing, and the stream stays deterministic per
-      // seed.
-      final (spanFrom, spanTo) = RunEnvironment.trafficPathSpan(
+      // The merge schedule (issue #107): #95 fixed where cars spawn —
+      // the lane set comes from the road at the spawn distance — but
+      // the path stayed fixed-x, so an avenue middle-lane car (x 200)
+      // drove that x straight onto the two-lane street's centre
+      // divider past the taper, exactly the defect the schedule's
+      // merges remove. The gate below asks the shared per-leg form:
+      // each constant-x stretch gets the fixed-x [laneHoldsOnRoad]
+      // question over the stretch it holds (the body's own full sprite
+      // width — a sedan's footprint fits a narrowing a bus's would
+      // overhang), while the diagonal merge legs are structural by
+      // convexity, documented on [RunEnvironment.trafficMergeWaypoints]
+      // — which is what lets an avenue kerb-lane car merge through a
+      // narrowing the old whole-span fixed-x gate had to turn away. A
+      // skipped spawn has already spent its rolls; they produced
+      // nothing, and the stream stays deterministic per seed.
+      final merge = env.trafficMergeWaypoints(
         spawnDistance!,
+        laneConfig.laneX,
         oncoming: laneConfig.oncoming,
       );
-      if (!env.laneHoldsOnRoad(
-        spanFrom,
-        spanTo,
-        spawnX,
+      if (!env.mergePathHoldsOnRoad(
+        merge,
         type.size.x / 2,
+        oncoming: laneConfig.oncoming,
       )) {
         return;
       }
-    }
 
-    // Oncoming traffic drives down toward the player; same-direction
-    // traffic drives up and gets caught from behind.
-    final path = _createStraightPath(
-      Vector2(spawnX, spawnY),
-      oncoming: laneConfig.oncoming,
-    );
+      // Oncoming traffic drives down toward the player; same-direction
+      // traffic drives up and gets caught from behind. The schedule's
+      // (distance, x) anchors become world waypoints through the same
+      // shift the spawn distance came from, so the road a waypoint
+      // names is the road the car is on when it reaches it.
+      final shift = game.worldShift;
+      final mergedPath = <Vector2>[
+        for (final (d, x) in merge) Vector2(x, shift - d),
+      ]..[0] = Vector2(spawnX, spawnY);
+      path = mergedPath;
+    } else {
+      // Level mode has no living road — fixed lanes on a fixed street —
+      // so its paths stay straight (issue #31's end clamps included).
+      path = _createStraightPath(
+        Vector2(spawnX, spawnY),
+        oncoming: laneConfig.oncoming,
+      );
+    }
 
     // Create or reuse vehicle. The game reference is pinned at
     // construction (issue #32): a retired spawner's last spawn may outlive

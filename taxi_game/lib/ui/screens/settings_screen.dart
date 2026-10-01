@@ -169,9 +169,21 @@ class SettingsScreen extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              // The ladder's end is a state, not a rung
+                              // (issue #16): finishing level 10 parks the
+                              // stored counter at 11 — the deliberate
+                              // "done" sentinel the menu branches on — so
+                              // printing it raw told players about a
+                              // "Level 11" that does not exist (issue
+                              // #109). The card says what the menu says,
+                              // in this card's sentence case: the ladder
+                              // is finished, Endless is the game now.
                               Text(
-                                'Level ${gameState.currentLevel} · '
-                                '${gameState.totalCoins} coins',
+                                gameState.tutorialComplete
+                                    ? 'Tutorial complete · '
+                                        '${gameState.totalCoins} coins'
+                                    : 'Level ${gameState.currentLevel} · '
+                                        '${gameState.totalCoins} coins',
                                 style: const TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,

@@ -734,16 +734,21 @@ class RunLengthSimulator {
             const types = TrafficVehicleType.values;
             final type = types[random.nextInt(types.length)];
             // The rolled body's own footprint, full sprite width — the
-            // thing a player would see crossing the kerb (issue #87).
-            final (spanFrom, spanTo) = RunEnvironment.trafficPathSpan(
+            // thing a player would see crossing the kerb (issue #87) —
+            // asked of the merge schedule per constant-x leg (issue
+            // #107, mirroring the live spawner exactly: the same
+            // helpers, the same verdicts, so the simulator's traffic
+            // merges across the same tapers the player sees and the
+            // harness measures what ships).
+            final merge = env.trafficMergeWaypoints(
               spawnDistance,
+              laneX,
               oncoming: lane.oncoming,
             );
-            if (!env.laneHoldsOnRoad(
-              spanFrom,
-              spanTo,
-              laneX,
+            if (!env.mergePathHoldsOnRoad(
+              merge,
               type.size.x / 2,
+              oncoming: lane.oncoming,
             )) {
               continue;
             }
@@ -753,6 +758,7 @@ class RunLengthSimulator {
               speed: laneSpeed * type.speedMultiplier,
               oncoming: lane.oncoming,
               type: type,
+              mergeWaypoints: merge,
             ));
           }
         }
@@ -761,6 +767,12 @@ class RunLengthSimulator {
       // --- Move traffic ---
       for (final v in vehicles) {
         v.y += v.vy * dt;
+        // The lateral schedule (issue #107): x follows the path's
+        // anchors, not the spawn lane, so simulated traffic crosses a
+        // taper by merging exactly like the live cars do — a fixed-x
+        // sim car here would ride the two-lane divider the fix removes
+        // and mis-measure the deep-run pressure around every narrowing.
+        v.x = v.xAtY(v.y);
       }
       // Cull: off the bottom of the view (oncoming, past the player), or
       // beyond the same-direction path length (3000 px) ahead of its spawn
@@ -973,6 +985,7 @@ class _SimVehicle {
     required double speed,
     required this.oncoming,
     required this.type,
+    this.mergeWaypoints,
   })  : vy = oncoming ? speed : -speed,
         spawnY = y,
         halfW = type.size.x * CollisionRules.trafficHitboxScale / 2,
@@ -986,6 +999,50 @@ class _SimVehicle {
   final bool oncoming;
   final double spawnY;
   final TrafficVehicleType type;
+
+  /// The lateral schedule from [RunEnvironment.trafficMergeWaypoints]
+  /// (issue #107): (distance, x) anchors in driving order, or null for
+  /// preset traffic, which drives a fixed x. The live vehicle steers
+  /// waypoint to waypoint at speed; this mirror interpolates the same
+  /// schedule linearly in distance, so both cars merge across the same
+  /// tapers onto the same far lanes.
+  final List<(double, double)>? mergeWaypoints;
+
+  /// The x the schedule holds at world y — piecewise linear between
+  /// anchors, clamped to the nearest end's x outside the schedule
+  /// (distances and y are mirrored: a car's true distance is `−y`, so
+  /// rising-distance paths walk y downward and oncoming ones walk it
+  /// upward; either way the anchors are monotone in y and the sign test
+  /// below finds the segment).
+  double xAtY(double yy) {
+    final schedule = mergeWaypoints;
+    if (schedule == null) return x;
+    final firstY = -schedule.first.$1;
+    final lastY = -schedule.last.$1;
+    final lo = math.min(firstY, lastY);
+    final hi = math.max(firstY, lastY);
+    if (yy <= lo || yy >= hi) {
+      return (yy - firstY).abs() <= (yy - lastY).abs()
+          ? schedule.first.$2
+          : schedule.last.$2;
+    }
+    var (d, laneX) = schedule.first;
+    for (var i = 1; i < schedule.length; i++) {
+      final (nextD, nextX) = schedule[i];
+      final y1 = -d;
+      final y2 = -nextD;
+      if ((yy - y1) * (yy - y2) <= 0) {
+        final span = y2 - y1;
+        final t =
+            span.abs() < 1e-9 ? 0.0 : ((yy - y1) / span).clamp(0.0, 1.0);
+        return laneX + (nextX - laneX) * t;
+      }
+      d = nextD;
+      laneX = nextX;
+    }
+    return laneX; // unreachable: a monotone schedule covers (lo, hi)
+  }
+
   bool rulingActive = false;
 
   /// True once this vehicle has ever ruled on a contact (issue #42):

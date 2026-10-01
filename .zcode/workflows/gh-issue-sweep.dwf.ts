@@ -136,6 +136,34 @@ interface Landed {
 }
 
 const commitAndPush = async (message: string): Promise<Landed> => {
+  // The branch wall (issue #108): world.run reports git failures as exit
+  // codes, not throws, and the one call that still ignored its result was
+  // `checkout -b` — a leftover branch from a failed prior sweep (same
+  // main, same sha) made it die with "already exists" while the sweep
+  // carried on committing straight onto local main and opening a PR
+  // whose diff was the previous attempt's. The checkout is now exit-code
+  // checked where it happens (phase 3); this guard is the backstop for
+  // any future failure that slips past a check — nothing may ever commit
+  // while HEAD sits anywhere but the sweep branch. `--show-current`
+  // prints the branch name, or nothing on a detached HEAD; either way it
+  // must equal `branch` or the commit refuses to run at all.
+  const on = await world.run("git", ["branch", "--show-current"]);
+  if (on.exitCode !== 0 || on.stdout.trim() !== branch) {
+    const where = on.exitCode !== 0
+      ? "an unreadable branch (git branch --show-current exited " + on.exitCode + ")"
+      : on.stdout.trim() === ""
+        ? "a detached HEAD"
+        : "'" + on.stdout.trim() + "'";
+    return {
+      ok: false,
+      pushed: false,
+      head: "",
+      error:
+        "refusing to commit: HEAD is on " + where +
+        ", not the sweep branch '" + branch + "' — committing here would land " +
+        "changes on a branch with no PR, no CI, and no review (issue #108)",
+    };
+  }
   await world.run("git", ["add", "-A"]);
   const commit = await world.run("git", ["commit", "-m", message]);
   if (commit.exitCode !== 0) {
@@ -481,8 +509,39 @@ if (toImplement.length === 0) {
 // ---------------------------------------------------------------- phase 3
 phase("Implement every fix on one branch");
 const sha = await world.run("git", ["rev-parse", "--short", "HEAD"]);
-const branch = "automation/issue-sweep-" + sha.stdout.trim();
-await world.run("git", ["checkout", "-b", branch]);
+// The name carries a beyond-the-sha uniqueness suffix (issue #108): the
+// sha alone collides with a leftover branch from a failed prior sweep —
+// same main, same sha — and `git checkout -b` then dies with "already
+// exists". Deleting the stale branch instead would be worse: the
+// leftover can also live on the remote (a closed-unmerged PR), where
+// removing only the local ref turns this sweep's later push into a
+// non-fast-forward rejection that wedges every subsequent sweep. A
+// Date.now suffix is compact, sorts readable next to the sha, and can
+// never collide across sweep ticks.
+const branch =
+  "automation/issue-sweep-" + sha.stdout.trim() + "-" + Date.now().toString(36);
+// The checkout's exit code is checked before a single edit happens
+// (issue #108, applying issue #88's world.run lesson to the one git call
+// that still ignored it): on failure the tree is still clean, so
+// stopping loses nothing — and, crucially, nothing can be committed
+// onto local main by mistake. commitAndPush re-verifies the branch as a
+// backstop for any future slip past this check.
+const checkout = await world.run("git", ["checkout", "-b", branch]);
+if (checkout.exitCode !== 0) {
+  for (const p of toImplement) {
+    report({ issue: p.number, title: p.title, status: "failed", note: "creating the sweep branch failed" }, "issues");
+  }
+  return {
+    conclusion:
+      "The sweep stopped before implementing anything: git checkout -b " + branch +
+      " exited " + checkout.exitCode + ", so there was no branch to work on — " +
+      "continuing would have committed the fixes onto local main with no PR, " +
+      "no CI, and no review.\n" + tail(checkout.stderr || checkout.stdout),
+    findings: [],
+    verified: ["git checkout -b (exit-code checked — issue #108)"],
+    notCovered: ["implementation, gates, review, merge and deploy — no branch was created"],
+  } as WorkflowReport;
+}
 const coder = agent("the coder", { system: CODER_PERSONA });
 for (const plan of toImplement) {
   await coder.ask(

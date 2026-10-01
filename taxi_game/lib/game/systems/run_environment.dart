@@ -294,7 +294,7 @@ class RunEnvironment {
   double rightCurbXAt(double distance) =>
       roadAt(distance).rightX + curbOffset;
 
-  // --- Traffic containment (issue #87) -------------------------------------
+  // --- Traffic containment (issues #87, #95, #107) -------------------------
 
   /// Half the length of the longest traffic body any lane can spawn —
   /// the pad that keeps a vehicle centred at either end of its path
@@ -361,6 +361,214 @@ class RunEnvironment {
       }
     }
     return true;
+  }
+
+  /// The lateral schedule a traffic path drives from
+  /// ([spawnDistance], [laneX]): the spawn lane held, and across each
+  /// taper the span covers a merge onto the nearest same-role lane
+  /// centre of the settled road past the taper (issue #107).
+  ///
+  /// #95 fixed where cars *spawn* — the lane set comes from the road at
+  /// the spawn distance — but the path stayed fixed-x, so a car born on
+  /// the avenue's middle lane (x 200) drove that x straight through the
+  /// narrowing and rode the two-lane street's centre divider for the
+  /// rest of its life: the kerbs-only [laneHoldsOnRoad] waved it
+  /// through, because x 200 with any body fits every kerb. The schedule
+  /// is the fix for where cars *drive*.
+  ///
+  /// Returns (distance, x) anchors in driving order — distances rising
+  /// for same-direction paths, falling for oncoming ones — starting at
+  /// [spawnDistance] on [laneX] and ending at the extent
+  /// [trafficPathSpan] covers without its body pads: oncoming 1 500 px
+  /// down-screen, same-direction 3 000 px up, the live path steps.
+  /// Interpolate x linearly in distance between anchors and two
+  /// properties hold structurally:
+  ///
+  ///  - *Lane centres off-taper.* Every merge lives entirely inside its
+  ///    taper — same-direction traffic aligns at the taper's far end
+  ///    (the boundary plus [taperLength]), oncoming traffic at the
+  ///    boundary itself, each arriving on the far road's lanes exactly
+  ///    when the far road begins — so outside tapers the schedule is
+  ///    constant-x on a lane centre of the settled road there.
+  ///  - *Containment by convexity.* Each kerb condition (the body band
+  ///    inside the road) is linear in (x, width); both anchors of a
+  ///    merge are lane centres their own settled roads contain with any
+  ///    body this game spawns; and the taper's width is monotone
+  ///    between exactly those two widths. The straight blend between
+  ///    the anchors therefore cannot leave the road — the smoothstep's
+  ///    deviation from the width chord is bounded by ~0.1·Δw/2 ≈ 6 px
+  ///    against ≥ 12 px of margin for the widest body on the tightest
+  ///    lane — which is also what lets an avenue kerb-lane car (x 288)
+  ///    survive a narrowing the fixed-x gate had to turn it away from:
+  ///    it merges instead of overhanging.
+  List<(double, double)> trafficMergeWaypoints(
+    double spawnDistance,
+    double laneX, {
+    required bool oncoming,
+  }) {
+    final (paddedFrom, paddedTo) =
+        trafficPathSpan(spawnDistance, oncoming: oncoming);
+    // The driving extent: the span minus the body pads that only exist
+    // so a vehicle centred at either end is fully on the road.
+    final from = paddedFrom + longestTrafficHalfLength;
+    final to = paddedTo - longestTrafficHalfLength;
+
+    final anchors = <(double, double)>[(spawnDistance, laneX)];
+    // The x the car currently holds, and the distance it was last
+    // anchored at — a hold anchor is only emitted ahead of both.
+    var x = laneX;
+    var last = spawnDistance;
+
+    // Same-direction paths drive up-screen through rising distances:
+    // each taper's far side is the settled road above it. Oncoming
+    // paths drive down through falling distances: the far side is the
+    // settled road below the boundary (the oncoming narrow→avenue face
+    // and the oncoming avenue→narrow face alike — the helper never
+    // cares which way the width swings, only where the next road is).
+    // Both start at the taper of the segment the spawn lands in — for
+    // an oncoming car born exactly on a boundary that is the boundary's
+    // own taper (floor, not floor-of-one-below: the car at the taper's
+    // bottom edge needs its sideways snap, or it holds its blended-lane
+    // x off every lane of the settled road below for the whole drive).
+    final first =
+        math.max(1, (spawnDistance / geometrySegmentLength).floor());
+    final lastTaper = oncoming ? 1 : (to / geometrySegmentLength).floor();
+    for (var i = first; oncoming ? i >= lastTaper : i <= lastTaper;
+        oncoming ? i-- : i++) {
+      final boundary = i * geometrySegmentLength;
+      // Hold the lane up to the taper's near edge, align on the far
+      // road's lane by its far edge — both clamped into the driven
+      // extent, so a path that starts inside a taper merges from its
+      // spawn and one that ends inside merges only as far as it drives.
+      final hold = oncoming
+          ? math.min(boundary + taperLength, spawnDistance)
+          : math.max(boundary, spawnDistance);
+      final align = oncoming
+          ? math.max(boundary, from)
+          : math.min(boundary + taperLength, to);
+      final room = oncoming ? hold - align : align - hold;
+      if (room < -1e-9) continue; // the taper sits wholly behind or beyond the path
+      // Zero room is real for exactly one case: a car born exactly on
+      // the boundary, driving down. Its spawn lane is the incoming
+      // layout laid on the outgoing width — not a lane of the settled
+      // road below, and with no taper stretch ahead there is nothing to
+      // merge across. The merge collapses to a sideways step at the
+      // spawn: two anchors at the same distance, lane then target,
+      // which the live car drives as one quick lateral move and both
+      // interpolators read as the target from just past the boundary.
+      // (A same-direction car born on the taper's far end already sits
+      // on the far road's lanes; skipping it below is correct.)
+      if (room <= 1e-9) {
+        final bornOnTheLine =
+            oncoming && (hold - spawnDistance).abs() <= 1e-9;
+        if (!bornOnTheLine) continue;
+      }
+      final target = _nearestSameRoleLaneX(
+        oncoming ? roadAt(boundary - 1) : roadAt(boundary + taperLength),
+        x,
+        oncoming: oncoming,
+      );
+      // A taper between equal profiles rolls no width change and the
+      // nearest lane is the one the car already holds: no anchors, no
+      // phantom merge.
+      if ((target - x).abs() < 1e-9) continue;
+      if ((hold - last).abs() > 1e-9) anchors.add((hold, x));
+      anchors.add((align, target));
+      x = target;
+      last = align;
+    }
+    // The extent's end, holding whatever the last merge left it on —
+    // skipped when a clamped align already sits exactly there.
+    final end = oncoming ? from : to;
+    if ((end - last).abs() > 1e-9) anchors.add((end, x));
+    return anchors;
+  }
+
+  /// Whether a [trafficMergeWaypoints] schedule keeps a body of
+  /// [halfWidth] on the road — the per-leg form of the #87 gate the
+  /// spawner and the run simulator both ask before materialising a car
+  /// (issue #107).
+  ///
+  /// Every constant-x stretch between anchors is exactly the fixed-x
+  /// question [laneHoldsOnRoad] answers, asked over the stretch the x
+  /// actually holds — the first and last stretches extended through the
+  /// body pads [trafficPathSpan] adds past the path's ends (the pad
+  /// behind the spawn for same-direction paths, ahead of it for
+  /// oncoming ones — the direction each path drives off its start
+  /// line). The diagonal merge legs between them are not asked at all:
+  /// their containment is structural, by the convexity documented on
+  /// [trafficMergeWaypoints]. Gating the old way — the whole span at
+  /// the spawn x — is what turned avenue spawns away from narrowings
+  /// their merge would have carried them through.
+  bool mergePathHoldsOnRoad(
+    List<(double, double)> waypoints,
+    double halfWidth, {
+    required bool oncoming,
+  }) {
+    final (spanFrom, spanTo) =
+        trafficPathSpan(waypoints.first.$1, oncoming: oncoming);
+    // The body hangs half its length behind the spawn too — and when
+    // the car was born inside a taper, that sliver sits on the settled
+    // road *before* the taper while the spawn x belongs to the taper's
+    // blended layout: a lane centre of the blend can sit a hair off
+    // that road's own lanes, or a hair over its kerb. The first leg is
+    // the merge itself (skipped below), so the fixed-x question is
+    // asked here, over exactly that sliver.
+    final spawnD = waypoints.first.$1;
+    final spawnX = waypoints.first.$2;
+    final behindSpawn = oncoming
+        ? laneHoldsOnRoad(spawnD, spawnD + longestTrafficHalfLength, spawnX,
+            halfWidth)
+        : laneHoldsOnRoad(
+            spawnD - longestTrafficHalfLength, spawnD, spawnX, halfWidth);
+    if (!behindSpawn) return false;
+    for (var i = 0; i + 1 < waypoints.length; i++) {
+      final (d1, x1) = waypoints[i];
+      final (d2, x2) = waypoints[i + 1];
+      // A merge leg: contained by construction, not by the gate.
+      if ((x1 - x2).abs() > 1e-9) continue;
+      var lo = math.min(d1, d2);
+      var hi = math.max(d1, d2);
+      if (i == 0) {
+        if (oncoming) {
+          hi = math.max(hi, spanTo);
+        } else {
+          lo = math.min(lo, spanFrom);
+        }
+      }
+      if (i + 2 == waypoints.length) {
+        if (oncoming) {
+          lo = math.min(lo, spanFrom);
+        } else {
+          hi = math.max(hi, spanTo);
+        }
+      }
+      if (!laneHoldsOnRoad(lo, hi, x1, halfWidth)) return false;
+    }
+    return true;
+  }
+
+  /// The lane centre of [road] nearest [x] that carries traffic in the
+  /// same direction the car already drives — a same-direction car
+  /// merges onto a same-direction lane, an oncoming one onto an
+  /// oncoming lane, so a merge never makes a car cross roles mid-road.
+  static double _nearestSameRoleLaneX(
+    RoadGeometry road,
+    double x, {
+    required bool oncoming,
+  }) {
+    var best = oncoming ? road.oncomingLaneX : road.sameDirectionLaneX;
+    var bestDistance = double.infinity;
+    final xs = road.laneXs;
+    for (var i = 0; i < xs.length; i++) {
+      if (road.isLaneOncoming(i) != oncoming) continue;
+      final d = (xs[i] - x).abs();
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = xs[i];
+      }
+    }
+    return best;
   }
 
   // --- Weather ------------------------------------------------------------

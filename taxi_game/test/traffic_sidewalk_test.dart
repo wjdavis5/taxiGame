@@ -14,7 +14,8 @@ import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
-/// Traffic and the road's width and lane-count changes (issues #87, #95).
+/// Traffic and the road's width and lane-count changes (issues #87,
+/// #95, #107).
 ///
 /// Endless traffic materialises 500 px ahead of the taxi on a straight
 /// path that never re-reads the road. Two defects came from that: lane
@@ -26,10 +27,18 @@ import 'package:taxi_game/services/storage_service.dart';
 /// per-side split — from the road at the spawn distance (the difficulty
 /// core stays at the taxi's distance), and a spawn is skipped outright
 /// when the body it rolled leaves the road anywhere over the span its
-/// waypoints cover. These tests cover the containment helper exactly,
-/// the spawn-road lane set, and — flood-spawning at real
-/// avenue→narrow boundaries — the live invariants that no car ever sits
-/// on the sidewalk or between lanes.
+/// waypoints cover. #107 closed the remaining gap — the fixes covered
+/// where cars spawn, not where they drive: a car born on the avenue's
+/// middle lane still drove that fixed x onto the two-lane street's
+/// centre divider past the taper, because the kerbs-only gate waved x
+/// 200 through every road in the game. Now the path is a merge
+/// schedule: the spawn lane held, and across each taper a merge onto
+/// the nearest same-role lane centre of the road past it. These tests
+/// cover the containment helper exactly, the spawn-road lane set, the
+/// merge schedule's own invariant — every point outside a taper on a
+/// lane centre of the road at that distance — and, flood-spawning at
+/// real boundaries, the live invariants that no car ever sits on the
+/// sidewalk or between lanes.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -107,6 +116,47 @@ void main() {
       }
     }
     return null;
+  }
+
+  /// The issue's invariant, walked finely over a pure merge schedule:
+  /// the body (of [halfWidth] — the walker judges the schedule for the
+  /// bodies the gate accepts it for) stays on the road over the whole
+  /// padded span, and outside a taper every point *of the path itself*
+  /// sits on a lane centre of the road at that distance (issue #107).
+  /// The lane-centre claim is scoped to the schedule's own span: the
+  /// body pads past the ends are overhang, not driving, and a car born
+  /// inside a taper carries its blended-lane x a hair off the settled
+  /// road behind it — the gate's behind-the-spawn check judges that
+  /// sliver's containment instead.
+  void expectScheduleHoldsInvariant(
+    RunEnvironment env,
+    List<(double, double)> waypoints, {
+    required bool oncoming,
+    double halfWidth = 25,
+  }) {
+    final (paddedFrom, paddedTo) = RunEnvironment.trafficPathSpan(
+        waypoints.first.$1, oncoming: oncoming);
+    final lo = math.min(waypoints.first.$1, waypoints.last.$1);
+    final hi = math.max(waypoints.first.$1, waypoints.last.$1);
+    for (var d = paddedFrom; d <= paddedTo; d += 5) {
+      final road = env.roadAt(d);
+      final x = xAtDistance(waypoints, d);
+      expect(x - halfWidth, greaterThanOrEqualTo(road.leftX - 0.5),
+          reason: 'the body leaves the road at distance '
+              '${d.toStringAsFixed(0)} (x ${x.toStringAsFixed(1)})');
+      expect(x + halfWidth, lessThanOrEqualTo(road.rightX + 0.5),
+          reason: 'the body leaves the road at distance '
+              '${d.toStringAsFixed(0)} (x ${x.toStringAsFixed(1)})');
+      if (!insideTaper(d) && d >= lo && d <= hi) {
+        expect(
+          road.laneXs.any((lane) => (lane - x).abs() < 0.001),
+          isTrue,
+          reason: 'x ${x.toStringAsFixed(1)} at distance '
+              '${d.toStringAsFixed(0)} is not on a lane of the road there '
+              '(lanes ${road.laneXs}) — between lanes, or on the divider',
+        );
+      }
+    }
   }
 
   /// The reference implementation of containment: sample the road finely
@@ -339,6 +389,198 @@ void main() {
     });
   });
 
+  group('the merge schedule (issue #107)', () {
+    test('an avenue middle-lane car merges off the two-lane divider', () {
+      // The issue's exact defect: #95 hands the spawner the spawn road's
+      // own lanes, but the car born on the avenue's middle lane (x 200)
+      // then drives that fixed x through the narrowing — straight onto
+      // the two-lane street's centre divider, which the kerbs-only gate
+      // waves through because x 200 with any body fits every kerb in
+      // the game. The schedule must hold the lane to the taper, then
+      // merge onto the road past it.
+      final env = RunEnvironment(seed: 7);
+      final boundary = firstAvenueToNarrow(env)!;
+      final spawn = boundary - 300;
+      final laneX = env.roadAt(spawn).laneXs[1];
+      expect(laneX, closeTo(200, 0.01),
+          reason: 'precondition: the avenue middle lane sits at x 200');
+
+      final waypoints =
+          env.trafficMergeWaypoints(spawn, laneX, oncoming: false);
+      final taperEnd = boundary + RunEnvironment.taperLength;
+      final narrowSame = env.roadAt(taperEnd).sameDirectionLaneX;
+      expect(narrowSame, closeTo(237, 0.01));
+
+      // The spawn lane held to the boundary, the far lane reached
+      // exactly at the taper's end, and the extent unchanged from the
+      // straight paths (3000 px up-screen).
+      expect(waypoints.first, (spawn, laneX));
+      expect(waypoints, contains((boundary, laneX)));
+      expect(waypoints, contains((taperEnd, narrowSame)));
+      expect(waypoints.last.$1, closeTo(spawn + 3000, 1e-9));
+
+      // And the defect itself: past the taper, no point of the path
+      // sits at x 200 — the divider is gone from the car's life.
+      for (var d = taperEnd; d <= spawn + 3000; d += 5) {
+        expect((xAtDistance(waypoints, d) - 200).abs(), greaterThan(1),
+            reason: 'a car past the avenue\'s end rode the two-lane '
+                'divider at distance ${d.toStringAsFixed(0)}');
+      }
+    });
+
+    test('an avenue kerb-lane bus survives a narrowing by merging', () {
+      // The rescue the merge buys: x 288 with a bus's 25 px half-width
+      // overhangs the narrow kerb past the taper, so the fixed-x gate
+      // had to turn the spawn away — the merge carries it through
+      // instead, on the narrow road's own lane. The gate is not looser;
+      // the path is better.
+      final env = RunEnvironment(seed: 7);
+      final boundary = firstAvenueToNarrow(env)!;
+      final spawn = boundary - 200;
+      final kerbLaneX = env.roadAt(spawn).laneXs.last;
+      expect(kerbLaneX, closeTo(288, 0.01));
+
+      final waypoints =
+          env.trafficMergeWaypoints(spawn, kerbLaneX, oncoming: false);
+      expect(env.mergePathHoldsOnRoad(waypoints, 25, oncoming: false), isTrue,
+          reason: 'the merge carries the widest body through the '
+              'narrowing');
+
+      // The old question — does x 288 fit the whole span — still
+      // answers no, and a fixed-x path shape still fails the per-leg
+      // gate: the gate guards, the schedule rescues.
+      final (spanFrom, spanTo) =
+          RunEnvironment.trafficPathSpan(spawn, oncoming: false);
+      expect(env.laneHoldsOnRoad(spanFrom, spanTo, kerbLaneX, 25), isFalse,
+          reason: 'precondition: the fixed-x path the old gate judged '
+              'genuinely does not fit');
+      expect(
+        env.mergePathHoldsOnRoad(
+          [(spawn, kerbLaneX), (spawn + 3000, kerbLaneX)],
+          25,
+          oncoming: false,
+        ),
+        isFalse,
+        reason: 'a constant-x leg that overhangs is still turned away',
+      );
+    });
+
+    test('the oncoming narrow→avenue face merges down onto the avenue', () {
+      // The other driving direction over the #87 boundary: same
+      // avenue→narrow taper (the avenue below, the narrow above), an
+      // oncoming car born on the narrow street's left lane (x 163)
+      // above it. Driving down it must land on the avenue's own
+      // oncoming lane (112) by the boundary — its fixed x is not even
+      // contained down there (163 − 25 < the avenue's left kerb? no:
+      // the narrow's lane overhangs nothing on the wider avenue, but it
+      // sits between the avenue's 1/6 and 3/6 lanes, off every lane
+      // centre for the whole lower street).
+      final env = RunEnvironment(seed: 7);
+      final boundary = firstAvenueToNarrow(env)!;
+      final spawn = boundary + 700; // settled narrow road above the taper
+      final laneX = env.roadAt(spawn).oncomingLaneX;
+      expect(laneX, closeTo(163, 0.01));
+      expect(env.roadAt(spawn).profile, RoadProfile.narrow,
+          reason: 'precondition: the car is born on the narrow street');
+
+      final waypoints =
+          env.trafficMergeWaypoints(spawn, laneX, oncoming: true);
+      final avenueOncoming = env.roadAt(boundary - 1).oncomingLaneX;
+      expect(avenueOncoming, closeTo(112, 0.01));
+
+      // Held to the taper's near edge (its top, for a downward drive),
+      // on the avenue's lane at the boundary itself, extent 1500 px
+      // down-screen.
+      expect(waypoints.first, (spawn, laneX));
+      expect(
+          waypoints, contains((boundary + RunEnvironment.taperLength, laneX)));
+      expect(waypoints, contains((boundary, avenueOncoming)));
+      expect(waypoints.last.$1, closeTo(spawn - 1500, 1e-9));
+      expectScheduleHoldsInvariant(env, waypoints, oncoming: true);
+    });
+
+    test('every boundary face, both directions, holds the invariant', () {
+      // The structural sweep: for every geometry change the seed draws,
+      // every spawn offset around it (settled approach, taper interior,
+      // either side), and every lane of the spawn road, the schedule
+      // keeps the widest body on the road everywhere and sits on a lane
+      // centre of the local road at every off-taper point — and the
+      // per-leg gate agrees every such path fits.
+      for (final seed in [2, 7, 11]) {
+        final env = RunEnvironment(seed: seed);
+        final boundaries = <double>[];
+        for (var k = 2; k < 40; k++) {
+          if (env.profileForSegment(k) != env.profileForSegment(k - 1)) {
+            boundaries.add(k * RunEnvironment.geometrySegmentLength);
+          }
+        }
+        expect(boundaries, isNotEmpty,
+            reason: 'seed $seed draws some geometry variety');
+        for (final boundary in boundaries) {
+          for (final offset in [
+            -2600.0, -1400.0, -650.0, -300.0, -40.0, 0.0,
+            40.0, 300.0, 650.0, 1400.0, 2600.0,
+          ]) {
+            final spawn = boundary + offset;
+            final road = env.roadAt(spawn);
+            for (var i = 0; i < road.laneCount; i++) {
+              final oncoming = road.isLaneOncoming(i);
+              final waypoints = env.trafficMergeWaypoints(
+                spawn,
+                road.laneXs[i],
+                oncoming: oncoming,
+              );
+              // Driving order: anchors strictly monotone in the driving
+              // direction, starting at the spawn and ending at the
+              // classic extent.
+              final extent = oncoming ? spawn - 1500 : spawn + 3000;
+              expect(waypoints.first.$1, closeTo(spawn, 1e-9));
+              expect(waypoints.last.$1, closeTo(extent, 1e-9),
+                  reason: 'the merge never changes how far a path drives');
+              for (var i2 = 1; i2 < waypoints.length; i2++) {
+                final step = waypoints[i2].$1 - waypoints[i2 - 1].$1;
+                // A zero step is the born-on-the-line sideways snap; a
+                // step the wrong way round would mean a car driving
+                // backwards along its own path.
+                expect(step, oncoming ? lessThanOrEqualTo(0) : greaterThanOrEqualTo(0),
+                    reason: 'anchors must advance (or snap sideways) in '
+                        'driving order');
+                expect(
+                    waypoints[i2].$1 == waypoints[i2 - 1].$1 &&
+                            (waypoints[i2].$2 - waypoints[i2 - 1].$2).abs() <
+                                1e-9,
+                    isFalse,
+                    reason: 'no duplicate anchors');
+              }
+              // Per body (every half-width the type table rolls: bus
+              // 25, truck 22.5, suv 21, sedan 20, sports 19): whenever
+              // the per-leg gate accepts the schedule, the invariant
+              // must hold for that body — and something must always be
+              // accepted, because the schedule itself is sound and only
+              // a genuinely overhanging body (a bus's pad sliver at a
+              // taper it was born inside) is ever turned away.
+              var anyAccepted = false;
+              for (final halfWidth in [25.0, 22.5, 21.0, 20.0, 19.0]) {
+                if (!env.mergePathHoldsOnRoad(waypoints, halfWidth,
+                    oncoming: oncoming)) {
+                  continue;
+                }
+                anyAccepted = true;
+                expectScheduleHoldsInvariant(env, waypoints,
+                    oncoming: oncoming, halfWidth: halfWidth);
+              }
+              expect(anyAccepted, isTrue,
+                  reason: 'seed $seed boundary '
+                      '${boundary.toStringAsFixed(0)} offset $offset lane '
+                      '$i: at least the car-class bodies must fit every '
+                      'schedule the helper builds');
+            }
+          }
+        }
+      }
+    });
+  });
+
   group('a flood at an avenue→narrow boundary (issue #87)', () {
     // The simulated window is long (30 s of frames plus hundreds of
     // drains); a loaded CI runner can outlast dart's default 30 s budget —
@@ -402,38 +644,45 @@ void main() {
         }
       }
 
-      // The window was not vacuous, and the traffic that survived sits
-      // on the spawn road's own lanes — never the centre line. Only the
-      // oncoming lane can carry cars here: its span runs down-screen and
-      // never reaches the taper's end, while the same-direction lane's
-      // x at the taper's still-wide road (≈265) overhangs the narrow
-      // kerb over its 3 050 px path, so the containment gate turns every
-      // body on it away — the gate doing exactly its job. (The old
-      // probability-1.0 test kept its second lane alive through the bug
-      // itself: the avenue middle lane re-laid onto x 200 fit the
-      // narrowing precisely because it straddled the centre.)
+      // The window was not vacuous, and the traffic that survived lives
+      // on the roads' own lanes (issue #107): the same-direction cars —
+      // turned away wholesale by the fixed-x gate, whose taper-entry x
+      // (≈265) overhangs the narrow kerb over the whole 3 050 px span —
+      // now merge across the taper onto the narrow street's own 0.75
+      // lane and drive on; the oncoming cars merge down onto the
+      // avenue's left lane (1/6) instead of driving the spawn-road x out
+      // into the wide. And no sampled car ever sits at a two-lane road's
+      // 0.5 — the divider the avenue's middle lane used to ride —
+      // because the per-car walk asserts every off-taper path point is
+      // a lane centre of the road there.
       expect(vehiclesSeen, greaterThan(3),
           reason: 'the flood must have spawned traffic for the invariant '
               'to mean anything');
-      expect(laneFractionsSeen, contains(closeTo(0.25, 0.001)),
-          reason: 'the oncoming lane — the one lane whose span holds the '
-              'narrowing — carried traffic');
+      expect(laneFractionsSeen, contains(closeTo(0.75, 0.001)),
+          reason: 'same-direction traffic survives past the avenue\'s '
+              'end now — it merges onto the narrow road\'s own lane');
+      expect(laneFractionsSeen, contains(closeTo(1 / 6, 0.001)),
+          reason: 'oncoming traffic merges down onto the avenue\'s own '
+              'left lane');
       expect(laneFractionsSeen, isNot(contains(closeTo(0.5, 0.001))),
-          reason: 'no car ever took the centre line the old re-lay '
-              'landed the avenue\'s middle lane on');
+          reason: 'no car ever took a two-lane road\'s centre line — '
+              'the one the avenue\'s middle lane used to ride');
     }, timeout: const Timeout(Duration(minutes: 3)));
   });
 
   group('a flood before a standard→narrow boundary (issue #87)', () {
-    // The economy-regression face of the gate: the standard lane x
-    // (250) overhangs the narrow kerb by exactly one pixel for the bus
-    // and fits for every other body — so an approach like this is where
-    // "gate every spawn on the widest body" emptied 2.5 km of
-    // same-direction traffic the difficulty curve meant to place,
-    // lengthened every simulated chain, and flipped the economy
-    // instrument's new-below-median ordering. The gate must ask about
-    // the body the spawn rolled, not the worst body on the road.
-    test('the lane carries every body that fits — only the bus is turned away',
+    // The economy-regression face: the standard lane x (250) overhangs
+    // the narrow kerb by exactly one pixel for the bus and fits for
+    // every other body — so an approach like this is where "gate every
+    // spawn on the widest body" emptied 2.5 km of same-direction
+    // traffic the difficulty curve meant to place, lengthened every
+    // simulated chain, and flipped the economy instrument's
+    // new-below-median ordering. The gate still asks about the body the
+    // spawn rolled — but since #107 the bus no longer dies here: it
+    // merges onto the narrow road's own lane like everything else, and
+    // the per-car walk proves every body that spawns rides through
+    // inside the kerbs and on a lane centre past the taper.
+    test('the lane carries every body through the narrowing — by merging',
         () async {
       // A clean window: the first standard→narrow boundary whose spawn
       // point (1.5 km short of it, the taxi parked 2 km short) sits on
@@ -490,7 +739,6 @@ void main() {
 
       var vehiclesSeen = 0;
       final laneFractionsSeen = <double>{};
-      final typesOnTheKerbLine = <String>{};
 
       for (var i = 0; i < 1800; i++) {
         game.update(1 / 60);
@@ -500,17 +748,19 @@ void main() {
               game.world.children.whereType<TrafficVehicle>().toList();
           vehiclesSeen = math.max(vehiclesSeen, vehicles.length);
           for (final v in vehicles) {
-            final f = expectOnRoadAndOnALane(game, env, v);
-            laneFractionsSeen.add(f);
-            if ((f - 0.75).abs() < 0.001) {
-              typesOnTheKerbLine.add(v.vehicleType.name);
-            }
+            laneFractionsSeen.add(expectOnRoadAndOnALane(game, env, v));
           }
         }
       }
 
       // Not vacuous, and the same-direction lane carried traffic: the
-      // 0.75 line is the one the widest-body gate used to empty here.
+      // 0.75 line is the one the widest-body gate used to empty here,
+      // and the fraction reads 0.75 on both roads — the standard's lane
+      // at 250 before the taper, the narrow's own at 237 past it, which
+      // is the merge. The per-car walk already proved every sampled
+      // body — the bus included, whose fixed x 250 overhung the narrow
+      // kerb by exactly one pixel — rides inside the kerbs and on a
+      // lane centre at every off-taper point of its path.
       expect(vehiclesSeen, greaterThan(3),
           reason: 'the flood must have spawned traffic for the invariant '
               'to mean anything');
@@ -518,63 +768,136 @@ void main() {
           reason: 'the same-direction lane line at fraction 0.75 carried '
               'traffic through the narrowing approach — the widest-body '
               'gate emptied exactly this stretch');
-      // And the bus never appeared on it: its 25 px half-width is the
-      // one body that overhangs the narrow kerb (275 > 274).
-      expect(typesOnTheKerbLine, isNot(contains('bus')),
-          reason: 'a bus at x 250 overhangs the narrow kerb by 1 px — '
-              'the gate must still turn it away');
     }, timeout: const Timeout(Duration(minutes: 3)));
   });
 }
 
-/// The whole invariant, per car: its body (full sprite width, the thing
-/// a player sees over the kerb) stays inside roadAt at every distance
-/// its path covers, its own half-length beyond each end waypoint
-/// included. 25 px sampling — finer than any taper moves. Returns the
-/// lane fraction the car took on its own spawn road, for the caller's
-/// lane-line census, and asserts the car's x is one of that road's lane
-/// xs — never an avenue x pasted onto a narrow street, and never the
-/// centre divider between a two-lane road's lanes (issue #95).
+/// The whole invariant, per car (issues #95 and #107): its body (full
+/// sprite width, the thing a player sees over the kerb) stays inside
+/// roadAt at every distance its path covers, its own half-length beyond
+/// each end waypoint included — sampled along the waypoint polyline at
+/// 25 px, finer than any taper moves. And outside a taper, every point
+/// of that polyline sits on a lane centre of the road *right there*:
+/// the spawn road's lanes matter only at the spawn, and past a taper
+/// the car must be on the new road's lanes — exactly what merging
+/// provides and what fixed-x driving (#95's gap, #107's defect) could
+/// not. The live position is checked against the same kerbs (a
+/// half-pixel for the steering lag between waypoints); the strict
+/// lane-centre check runs on the polyline, where it holds exactly.
+/// Returns the nearest lane fraction of the road under the car, for the
+/// caller's census.
 double expectOnRoadAndOnALane(
   TaxiGame game,
   RunEnvironment env,
   TrafficVehicle v,
 ) {
   final shift = game.worldShift;
+  final halfLength = v.vehicleSize.y / 2;
+  final halfWidth = v.vehicleSize.x / 2;
+
+  // The live position, against the road it stands on now.
+  final nowDistance = shift - v.position.y;
+  final nowRoad = env.roadAt(nowDistance);
+  expect(v.position.x - halfWidth,
+      greaterThanOrEqualTo(nowRoad.leftX - 0.5),
+      reason: 'vehicle at x ${v.position.x.toStringAsFixed(1)} '
+          '(${v.vehicleType.name}) leaves the road at distance '
+          '${nowDistance.toStringAsFixed(0)}');
+  expect(v.position.x + halfWidth,
+      lessThanOrEqualTo(nowRoad.rightX + 0.5),
+      reason: 'vehicle at x ${v.position.x.toStringAsFixed(1)} '
+          '(${v.vehicleType.name}) leaves the road at distance '
+          '${nowDistance.toStringAsFixed(0)}');
+
+  // The whole path, point by point — the polyline through the spawner's
+  // waypoints, whose off-taper legs are exactly the schedule's holds.
+  final schedule = <(double, double)>[
+    for (final waypoint in v.path) (shift - waypoint.y, waypoint.x),
+  ];
   var minDistance = double.infinity;
   var maxDistance = double.negativeInfinity;
-  for (final waypoint in v.path) {
-    final d = shift - waypoint.y;
+  for (final (d, _) in schedule) {
     minDistance = math.min(minDistance, d);
     maxDistance = math.max(maxDistance, d);
   }
-  final halfLength = v.vehicleSize.y / 2;
-  final halfWidth = v.vehicleSize.x / 2;
-  final from = minDistance - halfLength;
-  final to = maxDistance + halfLength;
-  for (var d = from; d <= to; d += 25) {
+  for (var d = minDistance - halfLength; d <= maxDistance + halfLength;
+      d += 25) {
     final road = env.roadAt(d);
-    expect(v.position.x - halfWidth,
-        greaterThanOrEqualTo(road.leftX - 0.5),
-        reason: 'vehicle at x ${v.position.x.toStringAsFixed(1)} '
-            '(${v.vehicleType.name}) leaves the road at distance '
-            '${d.toStringAsFixed(0)}');
-    expect(v.position.x + halfWidth, lessThanOrEqualTo(road.rightX + 0.5),
-        reason: 'vehicle at x ${v.position.x.toStringAsFixed(1)} '
-            '(${v.vehicleType.name}) leaves the road at distance '
-            '${d.toStringAsFixed(0)}');
+    final x = xAtDistance(schedule, d);
+    expect(x - halfWidth, greaterThanOrEqualTo(road.leftX - 0.5),
+        reason: 'the ${v.vehicleType.name}\'s path leaves the road at '
+            'distance ${d.toStringAsFixed(0)} (x ${x.toStringAsFixed(1)})');
+    expect(x + halfWidth, lessThanOrEqualTo(road.rightX + 0.5),
+        reason: 'the ${v.vehicleType.name}\'s path leaves the road at '
+            'distance ${d.toStringAsFixed(0)} (x ${x.toStringAsFixed(1)})');
+    if (!insideTaper(d)) {
+      expect(
+        road.laneXs.any((lane) => (lane - x).abs() < 0.001),
+        isTrue,
+        reason: 'path x ${x.toStringAsFixed(1)} at distance '
+            '${d.toStringAsFixed(0)} is not on a lane of the road there '
+            '(lanes ${road.laneXs}) — between lanes, or on the divider',
+      );
+    }
   }
 
-  final spawnDistance = shift - v.path.first.y;
-  final spawnRoad = env.roadAt(spawnDistance);
-  final f = spawnRoad.fractionOf(v.position.x);
-  expect(
-    spawnRoad.laneXs.any((x) => (x - v.position.x).abs() < 0.001),
-    isTrue,
-    reason: 'x ${v.position.x.toStringAsFixed(1)} at spawn distance '
-        '${spawnDistance.toStringAsFixed(0)} is not on a lane of the '
-        'spawn road (lanes ${spawnRoad.laneXs}) — between lanes, or on '
-        'the divider',
-  );
-  return f;
+  return nearestLaneFraction(nowRoad, v.position.x);
+}
+
+/// Whether [distance] sits inside a road-geometry taper — the stretch
+/// where two cross-sections blend and neither road's lane centres are
+/// expected to hold. Exactly where #107's merges live.
+bool insideTaper(double distance) {
+  if (distance <= 0) return false;
+  if ((distance / RunEnvironment.geometrySegmentLength).floor() < 1) {
+    return false;
+  }
+  return distance % RunEnvironment.geometrySegmentLength <
+      RunEnvironment.taperLength;
+}
+
+/// The x a merge schedule holds at [distance] — the same piecewise
+/// linear interpolation the run simulator's _SimVehicle performs
+/// (issue #107), duplicated here so tests can walk every point of a
+/// path without mounting a game.
+double xAtDistance(List<(double, double)> waypoints, double distance) {
+  // The schedule is monotone in distance (anchors are in driving
+  // order, either direction). Outside its span the nearest end's x
+  // holds: a body overhangs its path's end without the car driving
+  // any further — falling through to the last segment instead would
+  // read the overhang past the *start* as the far end's lane.
+  final firstD = waypoints.first.$1;
+  final lastD = waypoints.last.$1;
+  final lo = math.min(firstD, lastD);
+  final hi = math.max(firstD, lastD);
+  if (distance <= lo || distance >= hi) {
+    return (distance - firstD).abs() <= (distance - lastD).abs()
+        ? waypoints.first.$2
+        : waypoints.last.$2;
+  }
+  var (d, laneX) = waypoints.first;
+  for (var i = 1; i < waypoints.length; i++) {
+    final (nextD, nextX) = waypoints[i];
+    if ((distance - d) * (distance - nextD) <= 0) {
+      final span = nextD - d;
+      final t = span.abs() < 1e-9
+          ? 0.0
+          : ((distance - d) / span).clamp(0.0, 1.0).toDouble();
+      return laneX + (nextX - laneX) * t;
+    }
+    d = nextD;
+    laneX = nextX;
+  }
+  return laneX; // unreachable: a monotone schedule covers (lo, hi)
+}
+
+/// The fraction of [road]'s nearest lane centre to [x] — the census
+/// bucket for a live car, which can lag its path's polyline by the
+/// waypoint capture radius (issue #107).
+double nearestLaneFraction(RoadGeometry road, double x) {
+  var best = road.laneXs.first;
+  for (final lane in road.laneXs) {
+    if ((lane - x).abs() < (best - x).abs()) best = lane;
+  }
+  return road.fractionOf(best);
 }
