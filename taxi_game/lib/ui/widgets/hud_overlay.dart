@@ -554,9 +554,16 @@ class _MultiplierBadge extends StatelessWidget {
   }
 }
 
-/// The most urgent fare countdown (issue #12). Counts down in tenths;
-/// heats up as it runs out, and reads LATE once the window has closed
-/// (the chain is already broken — the badge only explains it).
+/// The most urgent fare countdown (issue #12): counts down in tenths,
+/// heats up as it runs out, and reads LATE once the window has closed.
+/// The timer it renders is [FareChain.mostUrgentTimer] — since issue
+/// #126 the soonest countdown still live — so a late rider aboard with a
+/// second passenger can no longer park the badge on LATE and run that
+/// passenger's meter out with no warning. LATE here means every rider
+/// aboard is expired (a lone late passenger still reads it); it does not
+/// mean the chain is broken *now* — #120 breaks it once at the crossing,
+/// and a delivery since may have rebuilt the multiplier beside this
+/// badge while the late rider sat on.
 class _FareTimerBadge extends StatelessWidget {
   const _FareTimerBadge({required this.timer});
 
