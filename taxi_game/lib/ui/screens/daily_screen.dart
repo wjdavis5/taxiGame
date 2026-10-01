@@ -7,6 +7,7 @@ import '../../models/ghost_trace.dart';
 import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
 import '../../services/haptics_service.dart';
+import '../widgets/day_key_builder.dart';
 import 'game_screen.dart';
 
 /// The Daily Shift screen (issue #19): today's result up top, the player's
@@ -73,10 +74,18 @@ class DailyScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              Consumer<GameStateService>(
-                builder: (context, gameState, _) => _TodayCard(
-                  result: gameState.todayDailyResult,
-                  ghost: gameState.todayGhost,
+              // Both cards below are snapshots of the day they were
+              // built for, and the day can change under a screen left
+              // open or an app resumed the next morning (issue #113):
+              // each rebuilds when the calendar day does, so a new day
+              // shows its own unplayed card and moves yesterday's
+              // result into the history below.
+              DayKeyBuilder(
+                builder: (context, _) => Consumer<GameStateService>(
+                  builder: (context, gameState, _) => _TodayCard(
+                    result: gameState.todayDailyResult,
+                    ghost: gameState.todayGhost,
+                  ),
                 ),
               ),
               const Padding(
@@ -92,27 +101,34 @@ class DailyScreen extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: Consumer<GameStateService>(
-                  builder: (context, gameState, _) {
-                    final today = DailyShift.todayKey;
-                    // Today has its card above; the history is the days
-                    // behind it, newest first.
-                    final past = gameState.dailyHistory
-                        .where((result) => result.dateKey != today)
-                        .toList()
-                      ..sort((a, b) => b.dateKey.compareTo(a.dateKey));
-                    return past.isEmpty
-                        ? _EmptyHistory(
-                            todayPlayed: gameState.todayDailyComplete,
-                          )
-                        : ListView.builder(
-                            padding:
-                                const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                            itemCount: past.length,
-                            itemBuilder: (context, index) =>
-                                _HistoryRow(result: past[index]),
-                          );
-                  },
+                child: DayKeyBuilder(
+                  builder: (context, dayKey) =>
+                      Consumer<GameStateService>(
+                    builder: (context, gameState, _) {
+                      // The day whose result belongs to the history's
+                      // "past" — the day this block was built for, so
+                      // the rows can never disagree with the today card
+                      // above them mid-rebuild.
+                      final today = dayKey;
+                      // Today has its card above; the history is the days
+                      // behind it, newest first.
+                      final past = gameState.dailyHistory
+                          .where((result) => result.dateKey != today)
+                          .toList()
+                        ..sort((a, b) => b.dateKey.compareTo(a.dateKey));
+                      return past.isEmpty
+                          ? _EmptyHistory(
+                              todayPlayed: gameState.todayDailyComplete,
+                            )
+                          : ListView.builder(
+                              padding:
+                                  const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                              itemCount: past.length,
+                              itemBuilder: (context, index) =>
+                                  _HistoryRow(result: past[index]),
+                            );
+                    },
+                  ),
                 ),
               ),
             ],

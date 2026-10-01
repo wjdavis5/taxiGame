@@ -634,9 +634,17 @@ void main() {
       await tickAndSettle(game);
       gameState.markBankPromptSeen(); // no primer: the lesson runs live
 
+      // Collect both fares en route, then deliver the first (issue
+      // #112): a delivery made past an uncollected pickup strands that
+      // fare behind the one-way street and fails the level, so the
+      // realistic route — each fare collected as the cab reaches it —
+      // is the one this test must ride too.
       final pickup = game.currentLevel.pickupPoints.first;
+      final secondPickup = game.currentLevel.pickupPoints.last;
       final dropoff = game.currentLevel.dropoffPoints.first;
       game.player.position = Vector2(pickup.x, pickup.y + 30);
+      game.update(1 / 60);
+      game.player.position = Vector2(secondPickup.x, secondPickup.y + 30);
       game.update(1 / 60);
       game.player.position = Vector2(dropoff.x, dropoff.y + 30);
       game.update(1 / 60);

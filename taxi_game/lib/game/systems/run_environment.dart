@@ -380,7 +380,10 @@ class RunEnvironment {
   /// for same-direction paths, falling for oncoming ones — starting at
   /// [spawnDistance] on [laneX] and ending at the extent
   /// [trafficPathSpan] covers without its body pads: oncoming 1 500 px
-  /// down-screen, same-direction 3 000 px up, the live path steps.
+  /// down-screen, same-direction 3 000 px up, the live path steps. A
+  /// path whose extent ends inside a taper still merges — cut at the
+  /// extent's end, on the merge's own diagonal (issue #114) — instead of
+  /// squeezing the whole lateral move into the sliver of road left.
   /// Interpolate x linearly in distance between anchors and two
   /// properties hold structurally:
   ///
@@ -400,7 +403,10 @@ class RunEnvironment {
   ///    against ≥ 12 px of margin for the widest body on the tightest
   ///    lane — which is also what lets an avenue kerb-lane car (x 288)
   ///    survive a narrowing the fixed-x gate had to turn it away from:
-  ///    it merges instead of overhanging.
+  ///    it merges instead of overhanging. A cut leg — the #114 case,
+  ///    where the extent ends partway down the diagonal — is an exact
+  ///    sub-segment of it (the same points over fewer px), so the
+  ///    property covers paths that end mid-taper unchanged.
   List<(double, double)> trafficMergeWaypoints(
     double spawnDistance,
     double laneX, {
@@ -472,9 +478,29 @@ class RunEnvironment {
       // nearest lane is the one the car already holds: no anchors, no
       // phantom merge.
       if ((target - x).abs() < 1e-9) continue;
+      // The merge's full diagonal runs hold → the taper's far edge; when
+      // the extent clamps align the path stops partway down it, and the
+      // anchor must stop there too — ON the diagonal, at the fraction of
+      // it actually driven. Emitting the full target at a cut align
+      // squeezed the whole merge into the last few px of road (issue
+      // #114: 38 px in 5 px of travel, a sideways crab-walk just before
+      // despawn, the bus's body 13 px over a kerb the car never drove
+      // to). The cut leg is an exact sub-segment of the contained
+      // diagonal — the convexity above carries over — and it climbs at
+      // the taper's own slope. Unclamped paths keep bit-identical
+      // anchors: align there IS the far edge (the same expression), so
+      // the fraction is exactly one and the target is emitted as before.
+      // The far edge meets hold only for the born-on-the-line snap,
+      // where the whole merge is that snap — the target itself.
+      final farEdge = oncoming ? boundary : boundary + taperLength;
+      final fullDiagonal = farEdge - hold;
+      final driven = fullDiagonal.abs() <= 1e-9
+          ? 1.0
+          : (align - hold) / fullDiagonal;
+      final endX = driven >= 1 ? target : x + (target - x) * driven;
       if ((hold - last).abs() > 1e-9) anchors.add((hold, x));
-      anchors.add((align, target));
-      x = target;
+      anchors.add((align, endX));
+      x = endX;
       last = align;
     }
     // The extent's end, holding whatever the last merge left it on —
@@ -497,8 +523,13 @@ class RunEnvironment {
   /// oncoming ones — the direction each path drives off its start
   /// line). The diagonal merge legs between them are not asked at all:
   /// their containment is structural, by the convexity documented on
-  /// [trafficMergeWaypoints]. Gating the old way — the whole span at
-  /// the spawn x — is what turned avenue spawns away from narrowings
+  /// [trafficMergeWaypoints] — with one exception. The final leg of a
+  /// path ending inside a taper is a diagonal (issue #114), and the
+  /// body's half-length hangs past that end at exactly the leg's end x,
+  /// on road the car never drives to: that x gets the fixed-x question
+  /// over the pad past the path's end, the mirror of the
+  /// behind-the-spawn sliver below. Gating the old way — the whole span
+  /// at the spawn x — is what turned avenue spawns away from narrowings
   /// their merge would have carried them through.
   bool mergePathHoldsOnRoad(
     List<(double, double)> waypoints,
@@ -525,8 +556,23 @@ class RunEnvironment {
     for (var i = 0; i + 1 < waypoints.length; i++) {
       final (d1, x1) = waypoints[i];
       final (d2, x2) = waypoints[i + 1];
-      // A merge leg: contained by construction, not by the gate.
-      if ((x1 - x2).abs() > 1e-9) continue;
+      // A merge leg between anchors: contained by construction, not by
+      // the gate — except when it is the last leg. A path whose extent
+      // ends inside a taper finishes on a diagonal (issue #114), and the
+      // body's half-length hangs past that end at exactly the leg's end
+      // x, on road the car never drives to: the mirror of the
+      // behind-the-spawn sliver above, asked the same fixed-x way.
+      // Skipping final diagonals wholesale is what let a schedule park a
+      // bus 13 px over the kerb with the gate saying true for every
+      // body.
+      if ((x1 - x2).abs() > 1e-9) {
+        if (i + 2 < waypoints.length) continue;
+        final pastTheEnd = oncoming
+            ? laneHoldsOnRoad(spanFrom, d2, x2, halfWidth)
+            : laneHoldsOnRoad(d2, spanTo, x2, halfWidth);
+        if (!pastTheEnd) return false;
+        continue;
+      }
       var lo = math.min(d1, d2);
       var hi = math.max(d1, d2);
       if (i == 0) {

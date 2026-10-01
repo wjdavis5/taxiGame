@@ -183,9 +183,31 @@ void main() {
       expect(line, contains('sha.stdout.trim()'),
           reason: 'the sha stays in the name so the branch still reads '
               'as "sweep of this commit"');
-      expect(line, contains('Date.now()'),
+      // The beyond-the-sha suffix counts this sha's leftover remote
+      // branches rather than reading the clock. The original #108 fix
+      // used Date.now(); the workflow runtime forbids clock reads and a
+      // tick that called one errored outright, so f8a3e94 moved to the
+      // count — the deterministic, replay-safe form of the same
+      // guarantee: a failed prior sweep that pushed leaves N remote
+      // branches for this sha, so this attempt names suffix N and
+      // collides with none of them. (A leftover that never pushed is
+      // invisible to ls-remote; the checked checkout below is the
+      // backstop that catches it honestly.)
+      expect(line, contains('staleCount'),
           reason: 'a beyond-the-sha suffix is the only thing that makes a '
               'leftover branch from a failed prior sweep unable to collide');
+      expect(line, isNot(contains('Date')),
+          reason: 'the runtime forbids clock reads here (f8a3e94) — the '
+              'uniqueness must come from the world, not the wall clock');
+      // And the count is derived from the remote branch list a leftover
+      // would actually appear in, scoped to this sha's own sweep
+      // branches — counting anything else would not name the next free
+      // suffix.
+      expect(script, contains('"ls-remote"'));
+      expect(
+          script,
+          contains('"automation/issue-sweep-" + sha.stdout.trim() + "-*"'),
+          reason: 'the counted pattern is this sha\'s own sweep branches');
     });
 
     test('the checkout result is captured and exit-code checked', () {

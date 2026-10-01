@@ -288,4 +288,71 @@ void main() {
               'not be re-offered here');
     });
   });
+
+  group('the screen survives the day rolling over (issue #113)', () {
+    // Like the menu's card, this screen's two day-dependent blocks were
+    // Consumers that only re-ran on save writes, so a day that changed
+    // under them left yesterday's result in the today card and
+    // yesterday out of the history. The clock is pinned per the #96
+    // convention; both rollover witnesses — resume and the minute tick
+    // — must flip the screen.
+
+    /// Day D played and the screen pumped: the card in its spent state,
+    /// D not yet in the history.
+    Future<String> pumpPlayedDay(WidgetTester tester) async {
+      final dayD = DailyShift.todayKey;
+      await gameState.recordDailyResult(resultFor(dayD, score: 340));
+      await pumpScreen(tester);
+      expect(find.byKey(const Key('daily_today_score')), findsOneWidget,
+          reason: 'precondition: the card was built on the played day');
+      expect(find.byKey(const Key('daily_empty_history')), findsOneWidget,
+          reason: 'precondition: the played day has no history yet');
+      return dayD;
+    }
+
+    void rollToTomorrow() {
+      DailyShift.clock = () => DateTime.now().add(const Duration(days: 1));
+      addTearDown(() => DailyShift.clock = DateTime.now);
+    }
+
+    /// The flipped screen: the new day is unplayed — invitation, start
+    /// button, no score in the today card — and yesterday's result has
+    /// joined the history rows.
+    void expectNewDayUnplayed(String dayD) {
+      expect(find.byKey(const Key('daily_today_unplayed')), findsOneWidget);
+      expect(find.byKey(const Key('daily_start_button')), findsOneWidget,
+          reason: "the new day's one attempt is unspent");
+      expect(find.byKey(const Key('daily_today_score')), findsNothing);
+      expect(find.byKey(const Key('daily_empty_history')), findsNothing,
+          reason: 'the played day left the card and joined the history');
+      expect(find.text(dayD), findsOneWidget,
+          reason: 'yesterday is one of the past days now');
+      expect(find.text('340'), findsOneWidget,
+          reason: 'the score lives on as a history row');
+      expect(find.text(DailyShift.todayKey), findsOneWidget,
+          reason: "the today card's date is the new day's");
+    }
+
+    testWidgets('an app resumed the next day shows the new day unplayed, '
+        'yesterday moved to the history', (tester) async {
+      final dayD = await pumpPlayedDay(tester);
+
+      rollToTomorrow();
+      tester.binding
+          .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+
+      expectNewDayUnplayed(dayD);
+    });
+
+    testWidgets('midnight passing with the screen open flips it on the '
+        'minute tick', (tester) async {
+      final dayD = await pumpPlayedDay(tester);
+
+      rollToTomorrow();
+      await tester.pump(const Duration(minutes: 1));
+
+      expectNewDayUnplayed(dayD);
+    });
+  });
 }

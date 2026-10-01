@@ -255,8 +255,10 @@ ruby .claude/skills/release/scripts/asc.rb builds
 ruby .claude/skills/release/scripts/asc.rb version
 ```
 
-It needs `.env` (gitignored) with `ASC_KEY_ID` and `ASC_ISSUER_ID`, plus the
-`AuthKey_*.p8` in `~/Downloads` or `~/.appstoreconnect/private_keys`.
+It needs `.env` (gitignored) with `ASC_KEY_ID` and `ASC_ISSUER_ID`, plus that
+key's file — named exactly `AuthKey_<ASC_KEY_ID>.p8` (any other `AuthKey_*.p8`
+on the machine is ignored) — in `~/Downloads` or
+`~/.appstoreconnect/private_keys`.
 
 ### Raw API
 

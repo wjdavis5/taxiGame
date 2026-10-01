@@ -24,6 +24,10 @@ platform :ios do
 
     wait_until_processed(version, build_number)
 
+    # Deliver cannot be trusted with the release type under skip_metadata
+    # (issue #111) — set it on the version record before the submit.
+    set_manual_release(version)
+
     deliver(
       api_key: api_key,
       app_identifier: APP_IDENTIFIER,
@@ -31,8 +35,11 @@ platform :ios do
       build_number: build_number,
       submit_for_review: true,
 
-      # Release manually once approved, so shipping to users stays a decision
-      # rather than a side effect of a merge.
+      # Decorative under `skip_metadata: true` (issue #111): deliver reads
+      # this flag only inside the metadata upload that skip skips, so the
+      # release type is set explicitly by `set_manual_release` above. Kept
+      # so the intent still reads in the call — and so it takes effect
+      # automatically if skip_metadata ever comes off.
       automatic_release: false,
 
       # Listing copy and screenshots are maintained in App Store Connect. This
@@ -124,4 +131,47 @@ def wait_until_processed(version, build_number, timeout_minutes: 45)
     )
     sleep(60)
   end
+end
+
+# Pins the App Store version's release type to MANUAL (issue #111).
+#
+# `automatic_release: false` in the deliver call is inert here: deliver
+# reads it only inside Deliver::UploadMetadata#upload, whose first line
+# is `return if options[:skip_metadata]` — and this lane submits with
+# `skip_metadata: true` so it never overwrites the listing maintained in
+# App Store Connect. Left to deliver, the version keeps ASC's default
+# releaseType (AFTER_APPROVAL) and an approved build would go live on
+# its own — shipping becomes a side effect of a merge, exactly what the
+# flag was meant to prevent.
+#
+# So the lane writes the release type itself, through the Spaceship
+# token `app_store_connect_api_key` has already left in place (the same
+# global `wait_until_processed` rides). `ensure_version!` is deliver's
+# own find-or-create primitive for the editable App Store version — it
+# returns whether anything changed, not the version, so the editable
+# record is fetched afterwards and PATCHed to MANUAL. The write lands
+# before `deliver`, so the review submission carries it; nothing in
+# deliver's submit path (`SubmitForReview#submit!`) touches releaseType,
+# and the metadata upload that would returns before reading it.
+#
+# An ASC-side failure here surfaces inside the workflow's submit step,
+# which carries `continue-on-error` — the TestFlight build the run
+# already uploaded is never stranded by it.
+def set_manual_release(version)
+  app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+  UI.user_error!("No App Store Connect app found for #{APP_IDENTIFIER}.") if app.nil?
+
+  platform = Spaceship::ConnectAPI::Platform::IOS
+  app.ensure_version!(version, platform: platform)
+  editable = app.get_edit_app_store_version(platform: platform)
+  UI.user_error!("No editable App Store version for #{version}.") if editable.nil?
+  editable.update(
+    attributes: {
+      releaseType: Spaceship::ConnectAPI::AppStoreVersion::ReleaseType::MANUAL,
+    },
+  )
+  UI.success(
+    "Release type for #{version} is MANUAL — the approved build ships " \
+    "only when a human releases it in App Store Connect.",
+  )
 end

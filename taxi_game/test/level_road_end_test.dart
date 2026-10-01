@@ -141,9 +141,13 @@ void main() {
     test('full throttle past the topmost zone noses against the street end',
         () async {
       final game = await mountLevel8Game();
-      // Geometry under test, not traffic: clear the spawner so no crash
-      // can end the level mid-drive.
+      // Geometry under test, not traffic or fares: clear the spawner so
+      // no crash can end the level mid-drive, and the fares so the
+      // stranded-fare verdict (issue #112) cannot either — this drive
+      // sails past every zone on purpose, which would otherwise be a
+      // miss, not a road-end test.
       game.trafficSpawner.clear();
+      game.passengers.clear();
       final player = game.player;
 
       player.startAccelerating();
@@ -261,6 +265,12 @@ void main() {
 
     test('nothing spawns past the course end', () async {
       final game = await mountLevel8Game();
+      // The taxi parks past every zone the level needs (the end lies
+      // beyond them all), so clear the fares too — exactly as the test
+      // clears the spawner — or the stranded-fare verdict (issue #112)
+      // would end the level and pause the spawner, proving nothing
+      // about the end itself.
+      game.passengers.clear();
       final spawner = await installFloodSpawner(game, 7);
 
       // Park the taxi against the street end; the camera follows it
@@ -292,6 +302,11 @@ void main() {
       final game = await mountLevel8Game();
       final spawner = await installFloodSpawner(game, 11);
 
+      // Park the taxi mid-street — which on level 8 is above the first
+      // pickup's kerb, a stranded fare by the #112 rule — so clear the
+      // fares as the spawner was flooded: the test is about where
+      // traffic dies, not the verdict on a missed pickup.
+      game.passengers.clear();
       // Park the taxi mid-street: waves spawn ahead of it and drive up
       // toward the course end.
       game.player.position = Vector2(TaxiGame.roadCenterX, 0);
