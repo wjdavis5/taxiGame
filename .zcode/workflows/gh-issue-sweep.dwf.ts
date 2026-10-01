@@ -516,10 +516,28 @@ const sha = await world.run("git", ["rev-parse", "--short", "HEAD"]);
 // leftover can also live on the remote (a closed-unmerged PR), where
 // removing only the local ref turns this sweep's later push into a
 // non-fast-forward rejection that wedges every subsequent sweep. A
-// Date.now suffix is compact, sorts readable next to the sha, and can
-// never collide across sweep ticks.
+// The suffix must be replay-safe: Date.now() is unique but the workflow
+// runtime forbids it, and a journal replay has to regenerate the same
+// name from the same world. Counting the leftover remote branches with
+// this sha prefix does both — a stale branch from a failed same-sha
+// sweep bumps the count, so this attempt gets a fresh, deterministic
+// name (and the checkout guard below still stops the sweep cleanly on
+// any residual collision).
+const staleBranches = await world.run(
+  "git",
+  [
+    "ls-remote",
+    "--heads",
+    "origin",
+    "automation/issue-sweep-" + sha.stdout.trim() + "-*",
+  ],
+);
+const staleCount = staleBranches.stdout.trim() === ""
+    ? 0
+    : staleBranches.stdout.trim().split("
+").length;
 const branch =
-  "automation/issue-sweep-" + sha.stdout.trim() + "-" + Date.now().toString(36);
+  "automation/issue-sweep-" + sha.stdout.trim() + "-" + staleCount;
 // The checkout's exit code is checked before a single edit happens
 // (issue #108, applying issue #88's world.run lesson to the one git call
 // that still ignored it): on failure the tree is still clean, so
