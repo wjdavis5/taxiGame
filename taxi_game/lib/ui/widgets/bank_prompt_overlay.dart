@@ -1,11 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../../game/systems/bank_prompt.dart';
 import '../../game/systems/fare_chain.dart';
 import '../../game/taxi_game.dart';
-import 'hud_overlay.dart';
 
 /// The bank-or-push choice at every endless dropoff (issue #13).
 ///
@@ -61,146 +61,207 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
 
     final nextMultiplier = chain.multiplier + FareChain.pushBonusStep;
 
-    // Parked below the HUD's whole top band — which in a ghost race is
-    // one line taller than the fixed 120 px accounted for: the
-    // ghost-gap badge sits on its own line under the scoring row
-    // (issues #43, #121), and the panel paints above the HUD (the
-    // overlays stack in the order they were added), so the old offset
-    // covered 36 of the badge's 37 px for the whole decision window
-    // (issue #130). The Stack passes every tap outside the panel
-    // straight through to the game.
-    final panelTop = 120.0 +
-        (widget.game.isEndless && widget.game.ghostGapMetres != null
-            ? HudOverlay.ghostBadgeBandHeight
-            : 0.0);
+    // The panel's lane, measured against the cab it must never cover
+    // (issue #134). The fixed-resolution camera renders the 400×800
+    // world at min(w/400, h/800) and the endless camera follows the cab
+    // vertically only, so the cab sits centred on screen and its nose —
+    // half its body height, in screen px — is where the panel's bottom
+    // must stop. #130's fix parked the panel below the ghost badge with
+    // no lower bound, and on a 667 pt phone the badge-to-nose gap is
+    // narrower than the panel itself: it slid down over the cab. The
+    // badge now stands down for the window (hud_overlay.dart, the
+    // fare-offer bar's pattern), and this cap holds regardless of the
+    // text scale or the phone. The level ladder's camera follows a lead
+    // point above the cab, parking it *below* centre — the centred-cab
+    // nose computed here is the stricter bound, so the cap protects
+    // both modes. The Stack passes every tap outside the panel straight
+    // through to the game.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final screenW = constraints.maxWidth;
+        final screenH = constraints.maxHeight;
+        final worldScale = math.min(screenW / 400, screenH / 800);
+        final noseY = screenH / 2 -
+            (widget.game.player.stats.height / 2) * worldScale;
 
-    return Stack(
-      children: [
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: EdgeInsets.only(top: panelTop, left: 24, right: 24),
-              child: Container(
-                key: const ValueKey('bank_prompt_panel'),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.black87,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.amber.shade700, width: 1.5),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // The choice, and what it is worth.
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'BANK OR PUSH?',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.5,
-                          ),
+        // Below the HUD's fixed top band (plus whatever the status bar
+        // takes), and never below a 12 px clearance above the cab's
+        // nose. Where the panel at full size does not fit that lane —
+        // 667 pt at large text — the FittedBox shrinks it uniformly
+        // instead of letting it overflow onto the cab.
+        const cabClearance = 12.0;
+        final top = MediaQuery.paddingOf(context).top + 120.0;
+        final laneHeight = math.max(0.0, noseY - cabClearance - top);
+
+        return Stack(
+          children: [
+            Positioned(
+              top: top,
+              left: 0,
+              right: 0,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: laneHeight),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.topCenter,
+                    // The panel's natural width is the padded street
+                    // width — FittedBox lays its child out unbounded, so
+                    // the width has to be named here, not inherited.
+                    child: SizedBox(
+                      width: screenW - 48,
+                      child: Container(
+                        key: const ValueKey('bank_prompt_panel'),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.black87,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: Colors.amber.shade700, width: 1.5),
                         ),
-                        Text(
-                          'AT RISK ${chain.score}',
-                          style: const TextStyle(
-                            color: Colors.amber,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    // The stake, in one line: banking is the only way to
-                    // keep it. In the tutorial ladder (issue #16) the run
-                    // being settled is a level; in a shift, the shift.
-                    // The biggest sentence on the panel on purpose — it
-                    // is the choice being priced.
-                    Text(
-                      widget.game.isEndless
-                          ? 'Bank ends the shift and keeps it — a crash '
-                              'loses it.'
-                          : 'Bank ends the level and keeps it — a crash '
-                              'loses it.',
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 13),
-                    ),
-                    const SizedBox(height: 8),
-                    // The window closing: pushes itself toward a default.
-                    ClipRRect(
-                      key: const ValueKey('bank_prompt_bar'),
-                      borderRadius: BorderRadius.circular(3),
-                      child: SizedBox(
-                        height: 6,
-                        child: Stack(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Container(color: Colors.white24),
-                            FractionallySizedBox(
-                              alignment: Alignment.centerLeft,
-                              widthFactor: prompt.fractionRemaining,
-                              child: Container(
-                                color: _barColorFor(prompt.remainingSeconds),
+                            // The choice, and what it is worth. Both ends
+                            // yield (the HUD title's pattern, issue #57):
+                            // the stake grows with the score, and a wide
+                            // one must scale down rather than shove the
+                            // title off the panel.
+                            Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Flexible(
+                                  fit: FlexFit.loose,
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      'BANK OR PUSH?',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.bold,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Flexible(
+                                  fit: FlexFit.loose,
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      'AT RISK ${chain.score}',
+                                      style: const TextStyle(
+                                        color: Colors.amber,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.bold,
+                                        fontFeatures: [
+                                          FontFeature.tabularFigures()
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            // The stake, in one line: banking is the only
+                            // way to keep it. In the tutorial ladder
+                            // (issue #16) the run being settled is a
+                            // level; in a shift, the shift. The biggest
+                            // sentence on the panel on purpose — it is
+                            // the choice being priced.
+                            Text(
+                              widget.game.isEndless
+                                  ? 'Bank ends the shift and keeps it — a '
+                                      'crash loses it.'
+                                  : 'Bank ends the level and keeps it — a '
+                                      'crash loses it.',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 13),
+                            ),
+                            const SizedBox(height: 8),
+                            // The window closing: pushes itself toward a
+                            // default.
+                            ClipRRect(
+                              key: const ValueKey('bank_prompt_bar'),
+                              borderRadius: BorderRadius.circular(3),
+                              child: SizedBox(
+                                height: 6,
+                                child: Stack(
+                                  children: [
+                                    Container(color: Colors.white24),
+                                    FractionallySizedBox(
+                                      alignment: Alignment.centerLeft,
+                                      widthFactor:
+                                          prompt.fractionRemaining,
+                                      child: Container(
+                                        color: _barColorFor(
+                                            prompt.remainingSeconds),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton(
+                                    onPressed: widget.game.bankShift,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor:
+                                          Colors.amber.shade700,
+                                      foregroundColor: Colors.black,
+                                    ),
+                                    child: Text(
+                                      'BANK ${chain.score}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontFeatures: [
+                                          FontFeature.tabularFigures()
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: widget.game.pushOn,
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.white,
+                                      side: const BorderSide(
+                                          color: Colors.white54),
+                                    ),
+                                    child: Text(
+                                      'PUSH ON \u00d7$nextMultiplier',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontFeatures: [
+                                          FontFeature.tabularFigures()
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: widget.game.bankShift,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.amber.shade700,
-                              foregroundColor: Colors.black,
-                            ),
-                            child: Text(
-                              'BANK ${chain.score}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontFeatures: [FontFeature.tabularFigures()],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: widget.game.pushOn,
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.white,
-                              side: const BorderSide(color: Colors.white54),
-                            ),
-                            child: Text(
-                              'PUSH ON \u00d7$nextMultiplier',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontFeatures: [FontFeature.tabularFigures()],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
-      ],
+        ],
+        );
+      },
     );
   }
 }

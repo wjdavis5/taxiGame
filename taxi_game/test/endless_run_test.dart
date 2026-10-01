@@ -749,13 +749,18 @@ void main() {
       // Tick until the spawn path's last waypoint is replaced by the
       // rebuilt merge schedule — the moment the extension fires. The
       // detector is identity, not length: a rebuilt schedule may also
-      // have two anchors when no taper sits inside its span.
+      // have two anchors when no taper sits inside its span. The y it
+      // records is the car's position *before* that update — where the
+      // car stood when the rebuild anchored — because the extension
+      // frame now drives on like any other (issue #135) instead of
+      // freezing the car at its old path's end.
       final originalEnd = car.path.last;
       var extendedAtY = double.nan;
       for (var i = 0; i < 240 && extendedAtY.isNaN; i++) {
+        final yBefore = car.position.y;
         game.update(1 / 60);
         if (!identical(car.path.last, originalEnd)) {
-          extendedAtY = car.position.y;
+          extendedAtY = yBefore;
         }
       }
       expect(extendedAtY.isNaN, isFalse,
@@ -764,8 +769,10 @@ void main() {
       // the re-centring snaps the waypoint-reach drift a merge leaves
       // (≤ ~1.5 px) back onto the lane so the rebuilt polyline holds
       // the lane invariant from its first metre. The test car never
-      // merges, so its x never drifted: the anchor is exact.
-      expect(car.path.first.y, closeTo(car.position.y, 0.001));
+      // merges, so its x never drifted: the anchor is exact. The car
+      // itself has since driven on past the anchor (one frame at
+      // 120 px/s by the time the detector reads it).
+      expect(car.path.first.y, closeTo(extendedAtY, 0.001));
       expect((car.path.first.x - car.position.x).abs(), lessThan(4.001));
       // And the fresh schedule drives the same 3,000 px extent from
       // there (mapped through the same world fold the spawn used:
@@ -773,6 +780,60 @@ void main() {
       expect(car.path.last.y, closeTo(extendedAtY - 3000, 0.5));
       // The list is replaced, not appended: one bounded schedule.
       expect(car.path.length, lessThan(12));
+    });
+
+    test('the extension frame drives like every other frame (issue #135)',
+        () async {
+      final game = await quietStreet(42);
+      final cameraY = game.camera.viewfinder.position.y;
+
+      // Same car as the anchor test: on the lane centre, path ending
+      // 100 px up. It sits at true distance ~400, so the rebuilt
+      // schedule's span [400, 3400] lies wholly inside the opening
+      // segment (4,000 px, no taper) — its first real leg is exactly
+      // vertical, which is what lets the velocity assertions below be
+      // exact rather than directional.
+      final car = carWithPath(Vector2(200, cameraY - 300), 120, 100);
+      game.world.add(car);
+      await game.ready();
+
+      // The anchor test's extension detector — identity of the last
+      // waypoint — with a per-frame watch on either side of it: every
+      // frame must read as a moving, up-screen car. The extension frame
+      // used to break both halves at once: aiming at the on-car anchor
+      // left velocity at zero (stopped) or pure sideways within the
+      // 4 px re-centre drift, and the branch returned before the
+      // position step — so for that one frame the car neither read nor
+      // moved as driving, and a touch on it was ruled on a velocity the
+      // car does not have (a scrape's closing crossing the crash
+      // threshold).
+      final originalEnd = car.path.last;
+      var extended = false;
+      for (var i = 0; i < 240; i++) {
+        final yBefore = car.position.y;
+        game.update(1 / 60);
+        if (!extended && !identical(car.path.last, originalEnd)) {
+          extended = true;
+          // The extension frame itself: the on-car anchor is skipped
+          // and the first real leg driven — straight up this road, at
+          // exactly the car's speed.
+          expect(car.currentWaypointIndex, 1,
+              reason: 'the rebuild aims past the anchor that sits on '
+                  'the car');
+          expect(car.velocity.x, closeTo(0, 0.001),
+              reason: 'no sideways lurch on the re-centre');
+          expect(car.velocity.y, closeTo(-120, 0.001),
+              reason: 'the extension frame drives at full speed');
+        }
+        expect(car.velocity.y, lessThan(0),
+            reason: 'frame $i: a same-direction car in motion reads as '
+                'moving up-screen, never stopped or crabbing sideways');
+        expect(car.position.y, lessThan(yBefore),
+            reason: 'frame $i: y strictly decreases — no frozen frame '
+                'while the schedule is rebuilt');
+      }
+      expect(extended, isTrue,
+          reason: 'the path ran out and was rebuilt inside the window');
     });
 
     test('a car that pulls a screen and a half ahead is culled', () async {

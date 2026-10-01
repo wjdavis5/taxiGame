@@ -228,7 +228,10 @@ git commit -am "release: 1.0.1" && git push
 ```
 
 Build numbers come from `github.run_number + 1000`, so they are monotonic and
-cannot collide with anything uploaded by hand.
+cannot collide with anything uploaded by hand. `run_number` is stable across
+re-runs, so re-running a run whose upload already succeeded recomputes the
+same number and Apple refuses it as a duplicate — recover by fixing forward
+and pushing, never by re-running the failed run (issue #137).
 
 To force a submission without a version bump: Actions → **iOS Release** → Run
 workflow → tick *Submit for App Store review*.

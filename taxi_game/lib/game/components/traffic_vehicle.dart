@@ -227,7 +227,17 @@ class TrafficVehicle extends PositionComponent
         removeFromParent();
         return;
       }
+      // Rebuild, then drive this frame like any other (issue #135): the
+      // extension used to end the update here, so for one frame the car
+      // stood still — and a touch ruled on that frame read a
+      // same-direction car with a velocity it does not actually have,
+      // closing at the cab's full speed instead of the two vehicles'
+      // difference. A scrape's worth of closing crossed the crash
+      // threshold on that frame alone. With the on-car anchor skipped
+      // inside the rebuild (below), the velocity it leaves behind is
+      // the first real leg's, so the car simply drives on.
       _extendPath(env);
+      position += velocity * dt;
     }
 
     // Check if vehicle is off screen (below player view)
@@ -283,11 +293,22 @@ class TrafficVehicle extends PositionComponent
     path
       ..clear()
       ..addAll([for (final (d, x) in schedule) Vector2(x, shift - d)]);
-    currentWaypointIndex = 0;
-    // The first anchor sits at the car's own distance, so the steer to
-    // it is one quick lateral move onto the lane (the born-on-the-line
-    // snap the schedule itself uses); from there the legs drive as
-    // every spawned path does (issue #72's zero-offset first leg).
+    // Skip the schedule's first anchor (issue #135): it sits at the
+    // car's own distance and lane — on the car — so aiming at it left
+    // the rebuild's velocity degenerate for the frame it took: zero
+    // when the re-centring landed exactly on the car (it reads as
+    // stopped), or pure sideways at full speed within the 4 px
+    // re-centre drift. Either way a touch on that frame was ruled on a
+    // velocity the car does not have. A same-direction schedule always
+    // has a second, strictly-ahead anchor — the extent's end 3,000 px
+    // up at minimum — so index 1 aims at the first real leg, exactly as
+    // a fresh spawn's first update steps past its zero-offset waypoint
+    // (#72); the ≥ length guard in _updateVelocityTowardsWaypoint
+    // stays the fallback if a schedule ever arrives with no leg. The
+    // ≤ 4 px re-centre still happens — delivered as a sliver of
+    // diagonal over that leg instead of one lurch — and the schedule's
+    // contents, first anchor included, are exactly as before.
+    currentWaypointIndex = 1;
     _updateVelocityTowardsWaypoint();
   }
 

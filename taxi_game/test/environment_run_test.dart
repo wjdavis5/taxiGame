@@ -236,6 +236,84 @@ void main() {
           lessThan(120 * CollisionRules.scrapeSpeedKeep + 10),
           reason: 'the cone shed the taxi\'s speed');
     });
+
+    test('a cone scrape shoves the cab away from the cone, in world space '
+        '(issue #136)', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      final env = game.environment!;
+
+      final worksDistance = findDistance(
+        env,
+        (d) => env.constructionAt(d) != null,
+      );
+      expect(worksDistance, isNotNull, reason: 'seed 42 has roadworks');
+
+      // Same warm-up as the softness test above: park the taxi near the
+      // zone off the cone line and walk the real loop's beats so the
+      // chunk and its cones mount. The fold (issue #30) the teleport
+      // across ~worksDistance px provokes settles in these ticks —
+      // before the ruling under test reads or writes any position.
+      game.player.position =
+          Vector2(env.roadAt(worksDistance!).leftX + 20, -worksDistance);
+      for (var i = 0; i < 4; i++) {
+        game.update(1 / 60);
+        await drain();
+      }
+      final cone = game.world.children
+          .whereType<RoadSegment>()
+          .expand((chunk) => chunk.children.whereType<RoadObstacle>())
+          .first;
+
+      /// The cone's world centre via the chunk's own transform — the same
+      /// ground truth the softness test uses, and deliberately not the
+      /// absoluteCentre the fix reads, so these assertions judge the fix
+      /// instead of mirroring it.
+      Vector2 coneWorld() =>
+          (cone.parent as RoadSegment).positionOf(cone.position);
+
+      // Drive up-screen into the cone from below: the cab's centre
+      // starts 12 px under the cone's (the boxes already overlap), at
+      // scrape speed. "Away" is down-screen — back the way it came.
+      final player = game.player;
+      player.position = coneWorld() + Vector2(0, 12);
+      player.velocity = Vector2(0, -120);
+      game.update(1 / 60);
+      await drain();
+      game.update(1 / 60);
+
+      // Where the cab ended, relative to the cone, in the world frame
+      // both share. One approach tick (−2 px), the ruling's pushback
+      // (+3 px along the true axis), one shed-speed tick (−0.7 px):
+      // shoved away, the offset holds above ~11 px of its 12 px start;
+      // shoved forward — the chunk-local bug, whose axis was dominated
+      // by the thousands-of-px y mismatch between world and chunk
+      // frames — it loses the pushback instead and lands near 6 px.
+      // (The road clamp may nudge x, never y, so only y is asserted.)
+      final offset = player.position.y - coneWorld().y;
+      expect(offset, greaterThan(8.5),
+          reason: 'the scrape must push the cab back off the cone, not '
+              'forward into it');
+      expect(offset, lessThan(20),
+          reason: 'sanity: the pushback is 3 px, not a teleport');
+
+      // The ruling's telemetry must be world-space too: the report used
+      // to carry the cone's chunk-local position as its traffic
+      // position — a point thousands of px from the road the contact
+      // happened on, and far from the playerPosition printed beside it.
+      expect(game.lastImpact, isNotNull);
+      expect(game.lastImpact!.trafficPosition.distanceTo(coneWorld()),
+          lessThan(1.5),
+          reason: 'the report must name the cone where it actually stands');
+      // The contact point guards the empty-intersection fallback, whose
+      // midpoint used to average world and chunk-local centres; real
+      // intersection points are world-space either way, so this pins
+      // only that the recorded point sits on the actual touch.
+      expect(game.lastImpact!.contactPoint.distanceTo(coneWorld()),
+          lessThan(45),
+          reason: 'the contact point belongs on the touch, not halfway to '
+              'the chunk-local origin');
+    });
   });
 
   group('level mode keeps the classic street', () {
