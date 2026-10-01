@@ -349,17 +349,32 @@ class PlayerVehicle extends PositionComponent
       if (other.contactedPlayer || !game.isGameActive) return;
       other.contactedPlayer = true;
 
+      // The cone's centre in *world* coordinates (issue #136). Cones are
+      // children of their road chunk (issue #24's free culling), so
+      // `other.position` is chunk-local — mixing it with the taxi's
+      // world-space [position] made the impact axis point wherever the
+      // two frames happened to disagree, and the scrape pushback rode
+      // that axis: a cab driving up-screen into a cone was shoved
+      // *forward, into it* instead of away. The chunk and the taxi are
+      // siblings under the same transform-less world, so the cone's
+      // absolute centre is directly comparable to [position]; with its
+      // centre anchor (and its hitbox centred in the component) that is
+      // also the hitbox's centre. Traffic needs no such conversion —
+      // those vehicles are direct world children — which is why only
+      // this branch reads a centre, not a position.
+      final coneCenter = other.absoluteCenter;
+
       final contactPoint = intersectionPoints.isEmpty
-          ? (position + other.position) / 2
+          ? (position + coneCenter) / 2
           : intersectionPoints.first;
-      final axis = CollisionRules.impactAxis(position, other.position);
+      final axis = CollisionRules.impactAxis(position, coneCenter);
       final report = CollisionRules.buildReport(
         severity: ContactSeverity.scrape,
         vehicleKind: 'traffic cone',
         playerVelocity: velocity,
         playerPosition: position,
         trafficVelocity: Vector2.zero(),
-        trafficPosition: other.position,
+        trafficPosition: coneCenter,
         contactPoint: contactPoint,
       );
       velocity = velocity * CollisionRules.scrapeSpeedKeep;

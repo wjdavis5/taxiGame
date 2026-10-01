@@ -206,11 +206,17 @@ Tell the user, concretely:
   `xcodebuild` flag. Exit 64 is a usage error and xcodebuild dumps its help
   text. Read the flags, not the help.
 - **Duplicate build number** — should be impossible given the run-number
-  offset. If it happens, someone uploaded manually; check `asc.rb builds`.
+  offset. If it happens, either someone uploaded manually or a run whose
+  upload already succeeded was re-run — `run_number` does not change on a
+  re-run, so it recomputes the same number (issue #137); check
+  `asc.rb builds`.
 - **The submit lane fails while the upload succeeded** — the build is safely in
   TestFlight. Fix the lane and push: the next run re-decides from App Store
   Connect state, so an unsubmitted version submits by itself. Re-running the
-  failed run works too.
+  failed run does **not** work: `run_number` is stable across re-runs, so the
+  re-run recomputes the same build number and Apple refuses the upload as a
+  duplicate — the next push gets a fresh number and re-decides submission
+  (issue #137).
 - **A run fails *before* the Submit step** (tests, archive, signing, upload) —
   nothing was submitted, and nothing is lost: fix the failure and push. The
   next run asks App Store Connect and submits the still-unsubmitted version.

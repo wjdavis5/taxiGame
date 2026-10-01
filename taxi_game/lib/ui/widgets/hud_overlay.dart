@@ -13,16 +13,6 @@ import '../../services/game_state_service.dart';
 class HudOverlay extends StatelessWidget {
   const HudOverlay({super.key, required this.game});
 
-  /// The vertical band the ghost-gap badge adds below the scoring row
-  /// in a ghost race (issue #130): the 6 px gap that opens the badge's
-  /// own line under the row, plus the pill itself (16 px of vertical
-  /// padding around a 15 px style's line — 37 px under the test font),
-  /// plus a few px of headroom because the shipping font's line runs
-  /// taller than the test font's. [BankPromptOverlay] parks below the
-  /// HUD's whole top band and adds this whenever the badge is showing,
-  /// so its panel clears the readout instead of painting over it.
-  static const double ghostBadgeBandHeight = 6 + 37 + 4;
-
   final TaxiGame game;
 
   @override
@@ -426,7 +416,20 @@ class _ScoringBarState extends State<_ScoringBar> {
         // (issue #43): inline it was one more rigid chip doing the
         // shoving, and the row has no horizontal room to spare on any
         // phone — the column below has room to spare instead.
-        if (widget.game.isEndless && widget.game.ghostGapMetres != null) ...[
+        //
+        // Stands down while the bank-or-push choice is up (issue #134,
+        // the fare-offer bar's pattern below): the panel needs that band
+        // — on a 667 pt phone the room between the HUD's top band and
+        // the cab's nose is smaller than the panel itself, and #130's
+        // answer of parking the panel below the badge had no lower
+        // bound, so it slid down over the cab. The readout returns with
+        // the prompt's resolution (this bar polls on the same 100 ms
+        // timer, so the swap repaints within a tick); the gap it hides
+        // for the window's few seconds is the race's, frozen by the
+        // world the choice plays over.
+        if (widget.game.isEndless &&
+            widget.game.ghostGapMetres != null &&
+            !widget.game.bankPrompt.isActive) ...[
           const SizedBox(height: 6),
           _GhostBadge(gapMetres: widget.game.ghostGapMetres!),
         ],

@@ -108,6 +108,15 @@ jobs:
           marketing="$(grep '^version:' pubspec.yaml | sed 's/^version: *//' | cut -d'+' -f1)"
 
           # Offset past any build number uploaded by hand before CI existed.
+          # run_number is re-run-stable — attempt 2 of run N still reports
+          # run_number N — so re-running a run whose upload already succeeded
+          # recomputes the same number and altool refuses it as a duplicate;
+          # recover by fixing forward and pushing, never by re-running.
+          # run_attempt is deliberately not folded in (as
+          # run_number + run_attempt - 1): that would make a re-run of run N
+          # mint run N+1's build number, and this repo pushes about hourly,
+          # so that newer run has almost always uploaded it already — trading
+          # a rare duplicate for an expected one (issue #137).
           build_number=$(( ${{ github.run_number }} + 1000 ))
 
           echo "marketing=$marketing" >> "$GITHUB_OUTPUT"

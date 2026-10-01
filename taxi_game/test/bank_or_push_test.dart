@@ -369,8 +369,8 @@ void main() {
       );
     }
 
-    testWidgets('the panel parks below the live ghost gap readout',
-        (tester) async {
+    testWidgets('the ghost gap readout stands down while the choice is up '
+        '(issues #130, #134)', (tester) async {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
@@ -421,23 +421,106 @@ void main() {
 
       // Both overlays in the game screen's stacking order — the HUD
       // first, the prompt above it — at the narrowest and the widest
-      // iPhone widths, the band the issue was measured across. Text is
-      // scaled down 25%: the test font draws every glyph a full em
-      // square, so the panel's title row is wider than any phone at
-      // 1.0 and throws a horizontal overflow that has nothing to do
-      // with the vertical placement under test (the shipping font fits
-      // a 4-digit stake at 375 pt). Scaling only shortens the badge —
-      // the panel's top edge is the constant being measured.
+      // iPhone widths, the band the issue was measured across, and at
+      // full text scale: the panel's title row now yields (the #57
+      // pattern), so the em-square test font cannot overflow it.
       for (final width in [375.0, 393.0, 430.0]) {
         tester.view.physicalSize = Size(width, 812);
         await tester.pumpWidget(
           ChangeNotifierProvider<GameStateService>.value(
             value: gameState,
             child: MaterialApp(
-              home: MediaQuery(
-                data: const MediaQueryData(
-                  textScaler: TextScaler.linear(0.75),
+              home: Scaffold(
+                body: Stack(
+                  children: [
+                    HudOverlay(game: game),
+                    BankPromptOverlay(game: game),
+                  ],
                 ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 150)); // poll tick
+        expect(tester.takeException(), isNull,
+            reason: 'at $width pt the overlays must lay out cleanly');
+
+        // The readout stands down for the window's few seconds — the
+        // fare-offer bar's pattern — because a panel parked below it
+        // (#130) has no lower bound, and on a 667 pt phone that put the
+        // panel on the cab (#134). Its band is the panel's instead.
+        expect(find.byKey(const ValueKey('bank_prompt_panel')), findsOneWidget);
+        expect(find.byKey(const ValueKey('ghost_badge')), findsNothing,
+            reason: 'at $width pt the gap readout stands down while the '
+                'bank-or-push choice is up');
+      }
+
+      // The choice resolved: the readout returns with it, carried by the
+      // scoring bar's own 100 ms poll.
+      game.pushOn();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(find.byKey(const ValueKey('ghost_badge')), findsOneWidget,
+          reason: 'the gap readout is back once no choice is on screen');
+      expect(find.byKey(const ValueKey('bank_prompt_panel')), findsNothing);
+    });
+
+    testWidgets('the panel stops short of the cab on a 667 pt phone, at any '
+        'text scale (issue #134)', (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await plantGhost();
+
+      // The same primer-armed ghost race as the stands-down test: the
+      // freeze holds the window open for the measurement, and the ghost
+      // badge is stood down, so the panel's lane is the HUD band to the
+      // cab's nose and nothing else.
+      final mountedGame = await tester.runAsync<TaxiGame>(() async {
+        final game = TaxiGame(
+          levelLoader: LevelLoaderService(),
+          gameState: gameState,
+          endlessSeed: DailyShift.seedForDateKey(DailyShift.todayKey),
+          isGhostRace: true,
+        )
+          ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('pauseMenu', (_, __) => const SizedBox.shrink());
+        game.onGameResize(Vector2(400, 800));
+        await game.onLoad();
+        // ignore: invalid_use_of_internal_member
+        game.mount();
+        await game.ready();
+        await tickAndSettle(game);
+        for (var i = 0; i < 30; i++) {
+          game.update(1 / 60);
+        }
+        deliverFare(game, game.course!.fare(0));
+        return game;
+      });
+      final game = mountedGame!;
+      expect(game.bankPrompt.isActive, isTrue);
+
+      // The iPhone SE/8 class surface the issue was filed against:
+      // 375×647 pt. The cab's nose, from the geometry the panel's cap
+      // is computed against — the vertically-followed, centred cab,
+      // half its 60 px body in screen px at the fixed-resolution world
+      // scale min(375/400, 647/800).
+      tester.view.physicalSize = const Size(375, 647);
+      const nose = 647 / 2 - 30 * (647 / 800); // ≈ 299.2
+      const cabClearance = 12.0;
+
+      // The issue's report was at growing text: at 1.0 the full panel
+      // barely fits the lane, and at 1.3 it does not — the panel must
+      // scale down to the lane rather than ride over the cab.
+      for (final textScale in [1.0, 1.3]) {
+        await tester.pumpWidget(
+          ChangeNotifierProvider<GameStateService>.value(
+            value: gameState,
+            child: MaterialApp(
+              home: MediaQuery(
+                data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
                 child: Scaffold(
                   body: Stack(
                     children: [
@@ -452,18 +535,16 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 150)); // poll tick
         expect(tester.takeException(), isNull,
-            reason: 'at $width pt the overlays must lay out cleanly');
+            reason: 'at $textScale x text the overlays must lay out cleanly');
 
-        // The panel's opaque card must clear the badge's line entirely:
-        // before the fix its fixed 120 px top sat 36 px into the badge's
-        // 37, hiding the gap readout for the whole decision window.
-        final badge =
-            tester.getRect(find.byKey(const ValueKey('ghost_badge')));
         final panel =
             tester.getRect(find.byKey(const ValueKey('bank_prompt_panel')));
-        expect(badge.bottom, lessThanOrEqualTo(panel.top),
-            reason: 'at $width pt the bank-or-push panel covered the '
-                'ghost gap readout');
+        expect(panel.top, greaterThanOrEqualTo(120),
+            reason: 'at $textScale x the panel stays below the HUD band');
+        expect(panel.bottom, lessThanOrEqualTo(nose - cabClearance + 0.5),
+            reason: 'at $textScale x text the panel must stop clear of the '
+                'cab\'s nose — #130\'s below-the-badge offset had no lower '
+                'bound and covered the cab on this phone');
       }
     });
   });
