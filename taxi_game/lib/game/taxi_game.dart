@@ -236,6 +236,20 @@ class TaxiGame extends FlameGame
   /// (issue #13). Inactive in level mode — levels settle at completion.
   final BankPrompt bankPrompt = BankPrompt();
 
+  /// True while the bank-or-push panel has claimed the ghost badge's
+  /// band because the screen's lane cannot fit both (issue #139).
+  /// [BankPromptOverlay] sets it from a post-frame measurement of the
+  /// panel's natural height against what remains of the lane below the
+  /// badge: false wherever both fit — the badge stays up through the
+  /// decision window, whose race is live on every non-primer offer —
+  /// and true only where they do not (a 667 pt phone at large text),
+  /// where the panel falls back to the full-lane layout and the badge
+  /// stands down. The HUD polls this field on its 100 ms tick instead
+  /// of the prompt's own [BankPrompt.isActive] (#134 hid the badge on
+  /// every phone, resurrecting #130), and [_dismissBankPrompt] resets
+  /// it so the readout returns with the resolution.
+  bool bankPanelOustsGhostBadge = false;
+
   /// What the most recent bank paid out, in coins, for the banked-shift
   /// panel. Null until a shift is banked; cleared when a new run starts.
   int? lastBankedScore;
@@ -1020,6 +1034,10 @@ class TaxiGame extends FlameGame
   void _dismissBankPrompt() {
     bankPrompt.dismiss();
     overlays.remove('bankOrPush');
+    // The band was only on loan (issue #139): with the panel down the
+    // badge's row is its own again, and the HUD's poll brings the gap
+    // readout back within its 100 ms tick.
+    bankPanelOustsGhostBadge = false;
     if (_bankPrimerActive) {
       _bankPrimerActive = false;
       paused = false;

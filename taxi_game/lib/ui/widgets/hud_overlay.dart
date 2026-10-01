@@ -13,6 +13,17 @@ import '../../services/game_state_service.dart';
 class HudOverlay extends StatelessWidget {
   const HudOverlay({super.key, required this.game});
 
+  /// The vertical band the ghost-gap badge adds below the scoring row
+  /// in a ghost race (issues #130, #139): the 6 px gap that opens the
+  /// badge's own line under the row, plus the pill itself (16 px of
+  /// vertical padding around a 15 px style's line — 37 px under the
+  /// test font), plus a few px of headroom because the shipping font's
+  /// line runs taller than the test font's. [BankPromptOverlay] parks
+  /// below this band whenever the lane still fits the panel under it,
+  /// so the panel clears the readout instead of painting over it — and
+  /// measures, rather than assumes, whether it fits.
+  static const double ghostBadgeBandHeight = 6 + 37 + 4;
+
   final TaxiGame game;
 
   @override
@@ -417,19 +428,23 @@ class _ScoringBarState extends State<_ScoringBar> {
         // shoving, and the row has no horizontal room to spare on any
         // phone — the column below has room to spare instead.
         //
-        // Stands down while the bank-or-push choice is up (issue #134,
-        // the fare-offer bar's pattern below): the panel needs that band
-        // — on a 667 pt phone the room between the HUD's top band and
-        // the cab's nose is smaller than the panel itself, and #130's
-        // answer of parking the panel below the badge had no lower
-        // bound, so it slid down over the cab. The readout returns with
-        // the prompt's resolution (this bar polls on the same 100 ms
-        // timer, so the swap repaints within a tick); the gap it hides
-        // for the window's few seconds is the race's, frozen by the
-        // world the choice plays over.
+        // Stands down only where the lane cannot fit both the badge
+        // and the bank-or-push panel (issue #139). #134 hid this badge
+        // on every phone for the whole decision window, which
+        // resurrected #130's report: only the primer — a save's
+        // first-ever offer (issue #132) — freezes the world; every
+        // other offer rides live traffic for the window's full
+        // [BankPrompt.windowSeconds], the ghost keeps moving, and the
+        // gap this badge reads is exactly what the bank-or-push
+        // decision turns on. The panel itself now measures whether it
+        // fits below the badge's band and raises
+        // [TaxiGame.bankPanelOustsGhostBadge] only where it does not
+        // (a 667 pt phone at large text). This bar polls that flag on
+        // the same 100 ms timer, so the readout returns within a tick
+        // of the prompt's resolution.
         if (widget.game.isEndless &&
             widget.game.ghostGapMetres != null &&
-            !widget.game.bankPrompt.isActive) ...[
+            !widget.game.bankPanelOustsGhostBadge) ...[
           const SizedBox(height: 6),
           _GhostBadge(gapMetres: widget.game.ghostGapMetres!),
         ],

@@ -17,9 +17,14 @@ enum BankDecision {
 ///
 /// The prompt lives beside the running game, not on top of it: while it is
 /// up the street keeps moving and countdowns keep ticking, and the player
-/// can keep driving straight through it. If [windowSeconds] pass without a
-/// choice the prompt resolves to [BankDecision.pushed] — push is the
-/// default, so failing to bank is a decision too.
+/// can keep driving straight through it. The one exception is the primer —
+/// a save's first-ever offer (TaxiGame owns the freeze), the single offer
+/// that stops traffic so the choice can be read; every other offer rides
+/// the live street for the window's full length, which is why the HUD's
+/// ghost-gap readout stays up through it wherever the screen fits both
+/// (issue #139). If [windowSeconds] pass without a choice the prompt
+/// resolves to [BankDecision.pushed] — push is the default, so failing to
+/// bank is a decision too.
 ///
 /// Each resolution method returns the decision exactly once, so the game
 /// can apply its consequences (pay out, step the multiplier) exactly once.
