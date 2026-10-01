@@ -2,8 +2,9 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// The issue-sweep workflow's push and CI contract (issue #88), and its
-/// gate-log round trip (issue #97).
+/// The issue-sweep workflow's push and CI contract (issue #88), its
+/// gate-log round trip (issue #97), and its branch-safety pins
+/// (issue #108).
 ///
 /// The sweep script (`.zcode/workflows/gh-issue-sweep.dwf.ts`) drives real
 /// git pushes and real CI waits, so this suite cannot execute it — the
@@ -161,6 +162,69 @@ void main() {
       // parent and PowerShell read a null path.
       expect(script, isNot(contains(r'%TEMP%\sweep_flutter.log')));
       expect(script, isNot(contains(r'$env:TEMP\sweep_flutter.log')));
+    });
+  });
+
+  group('the sweep never commits off its own branch (issue #108)', () {
+    // The original bug: the branch name was sha-only, so a leftover
+    // branch from a failed prior sweep (same main, same sha) made
+    // `git checkout -b` exit non-zero with "already exists" — a result
+    // world.run reports rather than throws — and the sweep ignored it,
+    // committed everything onto local main, and opened a PR whose diff
+    // was the previous attempt's. Three structural pins keep that shape
+    // from returning: the name can never collide, the checkout's exit
+    // code is checked, and commitAndPush verifies the branch itself
+    // before committing anything.
+    test('the branch name is unique beyond the sha', () {
+      final start = script.indexOf('const branch =');
+      expect(start, greaterThan(-1), reason: 'the branch assignment is missing');
+      final line = script.substring(start, script.indexOf(';', start));
+
+      expect(line, contains('sha.stdout.trim()'),
+          reason: 'the sha stays in the name so the branch still reads '
+              'as "sweep of this commit"');
+      expect(line, contains('Date.now()'),
+          reason: 'a beyond-the-sha suffix is the only thing that makes a '
+              'leftover branch from a failed prior sweep unable to collide');
+    });
+
+    test('the checkout result is captured and exit-code checked', () {
+      // Exactly one branch-creation site, and its result is bound to a
+      // name and branched on — the bare
+      // `await world.run("git", ["checkout", "-b", …])` form is gone.
+      expect(
+          RegExp(r'world\.run\("git", \["checkout", "-b"').allMatches(script),
+          hasLength(1),
+          reason: 'branch creation must appear exactly once');
+      expect(
+          script,
+          contains(
+              'const checkout = await world.run("git", ["checkout", "-b", branch])'),
+          reason: 'the checkout result must be captured, not discarded');
+      expect(script, contains('checkout.exitCode !== 0'),
+          reason: 'a failed checkout must stop the sweep before any edit');
+      expect(script, contains('creating the sweep branch failed'),
+          reason: 'the planned issues are marked failed on the board, not '
+              'silently dropped');
+    });
+
+    test('commitAndPush verifies the current branch before committing', () {
+      final body = helperBody('commitAndPush', 'interface CiVerdict');
+
+      // The backstop: even if some future checkout failure slips past
+      // the exit-code check, the script's single commit site must refuse
+      // to run while HEAD is anywhere but the sweep branch.
+      expect(body, contains('world.run("git", ["branch", "--show-current"])'));
+      expect(body, contains('on.stdout.trim() !== branch'),
+          reason: 'local main, a detached HEAD, or any other branch must '
+              'be refused before the commit');
+
+      // And the guard runs first, before anything is staged — a check
+      // after the add would already have touched the wrong branch's index.
+      final guardAt = body.indexOf('"--show-current"');
+      final addAt = body.indexOf('world.run("git", ["add", "-A"])');
+      expect(guardAt, lessThan(addAt),
+          reason: 'the branch verification precedes the staging');
     });
   });
 }

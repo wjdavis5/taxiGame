@@ -16,10 +16,13 @@ import 'package:taxi_game/services/storage_service.dart';
 /// and the event-driven wiring that feeds the taxi — including the crash
 /// stall's suspension of it (issue #91): a thumb held through a
 /// non-fatal crash keeps owning the stick, so the shift resumes under a
-/// thumb that drives instead of one that must lift and land again. The
-/// pause menu's RESUME re-feeds the same way (issue #103): a thumb that
-/// moved during the pause is tracked, and the cab must not leave the
-/// menu driving the axes it entered with.
+/// thumb that drives instead of one that must lift and land again — and
+/// the claim that crosses the freeze (issue #105): a thumb that lifts
+/// and *lands* mid-stall claims the stick the same way, so the resume
+/// hands it over without a third press. The pause menu's RESUME re-feeds
+/// the same way (issue #103): a thumb that moved during the pause is
+/// tracked, and the cab must not leave the menu driving the axes it
+/// entered with.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -394,6 +397,84 @@ void main() {
       expect(game.player.steeringInput, -1.0,
           reason: 'the diagonal past the rim is full left lock');
       expect(game.player.throttleInput, greaterThan(0));
+    });
+
+    test('a thumb that lifts and lands again mid-stall still drives the '
+        'resume (issue #105)', () async {
+      await mountRun();
+
+      // The issue's path: drive into the crash, lift the thumb during
+      // the freeze, and land a *new* finger before the stall ends. #91
+      // kept a thumb held at crash time driving; one landing mid-freeze
+      // was gated out of the claim, and the resume then had no owner to
+      // hand the stick to — a dead cab until that finger lifted and
+      // pressed a third time.
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      game.onCrash();
+      stick.onDragEnd(DragEndEvent(7, DragEndDetails()));
+      expect(stick.isActive, isFalse, reason: 'the thumb lifted');
+
+      expect(game.isCrashStall, isTrue, reason: 'precondition: mid-freeze');
+      stick.onDragStart(DragStartEvent(
+        9,
+        game,
+        DragStartDetails(globalPosition: const Offset(200, 600)),
+      ));
+      expect(stick.isActive, isTrue,
+          reason: 'the claim crosses the stall — the world is coming back');
+      expect(game.player.throttleInput, 0,
+          reason: 'nothing is fed while the world is frozen');
+
+      // The new thumb glides: the offset tracks, the feed waits for the
+      // resume.
+      stick.onDragUpdate(DragUpdateEvent(
+        9,
+        game,
+        DragUpdateDetails(
+          delta: const Offset(0, -60),
+          globalPosition: const Offset(200, 540),
+        ),
+      ));
+      expect(game.player.throttleInput, 0);
+
+      advanceGameTime(TaxiGame.crashStallSeconds + 0.01);
+
+      expect(game.isGameActive, isTrue, reason: 'the stall has expired');
+      expect(stick.isActive, isTrue);
+      expect(game.player.throttleInput, greaterThan(0),
+          reason: 'the stall\'s own resume hands the stick to the thumb '
+              'that landed during it — no third press needed');
+      expect(game.player.steeringInput, 0, reason: 'the glide was pure up');
+    });
+
+    test('a touch while paused mid-stall is still refused (issue #105)',
+        () async {
+      await mountRun();
+
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      game.onCrash();
+      stick.onDragEnd(DragEndEvent(7, DragEndDetails()));
+
+      // The pause menu opens through the freeze: a menu is up, so a
+      // landing thumb claims nothing — the stall is the only freeze a
+      // claim may cross, and pause outranks it.
+      game.pauseGame();
+      expect(game.paused, isTrue);
+      expect(game.isCrashStall, isTrue, reason: 'still mid-stall');
+      stick.onDragStart(touchDown());
+      expect(stick.isActive, isFalse,
+          reason: 'pause outranks the stall: the menu owns the screen');
+
+      game.resumeGame();
+      advanceGameTime(TaxiGame.crashStallSeconds + 0.01);
+
+      expect(game.isGameActive, isTrue);
+      expect(stick.isActive, isFalse,
+          reason: 'the refused claim never became an owner');
+      expect(game.player.throttleInput, 0,
+          reason: 'nothing drives a resume no thumb claimed');
     });
 
     test('the third crash still releases the stick for good (issue #91)',

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/levels/level.dart';
 import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
@@ -95,6 +96,36 @@ void main() {
 
       expect(find.textContaining('Level 1'), findsOneWidget);
       expect(find.textContaining('120 coins'), findsOneWidget);
+    });
+
+    testWidgets(
+        'a finished tutorial says so instead of counting a phantom rung '
+        '(issue #109)', (tester) async {
+      // Completing the last rung parks the stored counter at
+      // ladderLength + 1 — the deliberate "done" sentinel (issue #16),
+      // never a real level. Walk a fresh save up the whole ladder the
+      // way gameplay does, one furthest-level completion at a time.
+      for (var rung = 1; rung <= GameLevel.ladderLength; rung++) {
+        gameState.completeLevel(rung, 10);
+      }
+      expect(gameState.currentLevel, GameLevel.ladderLength + 1,
+          reason: 'the ladder walk must reach the done sentinel first');
+      expect(gameState.tutorialComplete, isTrue);
+
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      await tester.pump();
+
+      // The card branches like the menu does: no "Level 11" exists to
+      // show, and the coins still stand next to the finished-ladder
+      // wording.
+      expect(find.textContaining('Level 11'), findsNothing);
+      expect(find.textContaining('Tutorial complete'), findsOneWidget);
+      expect(
+        find.textContaining(
+            'Tutorial complete · ${GameLevel.ladderLength * 10} coins'),
+        findsOneWidget,
+        reason: 'the coins ride along, as they did beside the rung count',
+      );
     });
 
     testWidgets('asks for confirmation before wiping the save',

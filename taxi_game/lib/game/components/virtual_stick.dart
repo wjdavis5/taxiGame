@@ -121,8 +121,20 @@ class VirtualStick extends PositionComponent
   void onDragStart(DragStartEvent event) {
     super.onDragStart(event);
     // Same live-game gate the tap input had. Paused too: an overlay is
-    // up, and a thumb parked through a pause must not drive on resume.
-    if (!game.isGameActive || game.paused) return;
+    // up, and a thumb parked through a pause must not drive on resume —
+    // and pause outranks everything below, a stall included (issue
+    // #105): a menu over a frozen street owns the screen.
+    if (game.paused) return;
+    // The crash stall is the one freeze a claim may cross (issue #105):
+    // the thumb that lands mid-stall is the thumb the shift resumes
+    // under. The claim below already records the pointer and zeroes the
+    // feed — exactly [suspend]'s state — so the resume's own re-feed
+    // hands the offset over with no other change. #91 kept a thumb held
+    // *at* crash time driving; one landing during the freeze used to be
+    // gated out here, leaving the cab dead until that thumb lifted and
+    // pressed again. Every other not-live state — a terminal ending, an
+    // overlay before the run — still refuses the claim.
+    if (!game.isGameActive && !game.isCrashStall) return;
     // One stick at a time — a second thumb changes nothing until the
     // first is lifted.
     if (isActive) return;

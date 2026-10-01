@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/burst_particles.dart';
 import 'package:taxi_game/game/components/life_lost_pop.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/systems/collision_rules.dart';
@@ -144,18 +145,41 @@ void main() {
       await tickAndSettle(game);
 
       game.onCrash(busCrash());
-      // The pop rides the freeze: hit-stop and stall first, then the
-      // settled drain mounts it (Flame queues world adds for the next
-      // full update, which the frozen frames never run).
-      playOutStall(game);
-      await tickAndSettle(game);
-
+      // The pop and the sparks ride the freeze itself (issue #106): the
+      // frozen frames drain Flame's add queue on their own and tick only
+      // the burst, so both are on screen at the moment of impact — not
+      // 1.3 s late, the instant the shift resumes. Mid-freeze — past the
+      // hit-stop, deep in the stall — the pop hangs over the taxi and
+      // the burst is burning down. (The drain between the two advances
+      // is the microtask break a real frame boundary gives the async
+      // mount.)
+      advanceGameTime(game, 0.42);
+      await drain();
+      advanceGameTime(game, 0.05);
+      expect(game.isGameActive, isFalse,
+          reason: 'precondition: the world is still frozen');
+      final sparks = game.descendants().whereType<BurstParticles>().single;
+      expect(sparks.liveParticles, greaterThan(0),
+          reason: 'the burst is still burning mid-freeze');
+      expect(sparks.liveParticles, lessThan(18),
+          reason: 'the burst is aging through the freeze — mounted and '
+              'ticked, not queued for the resume');
       final pops = game.descendants().whereType<LifeLostPop>().toList();
       expect(pops, hasLength(1),
           reason: 'the stall alone is not an explanation — the cost is');
       expect(pops.single.text, contains('-1 LIFE'));
       expect(pops.single.text, contains('2 LEFT'),
           reason: 'the pop says how much of the budget survives');
+
+      // The freeze plays out and the pop is the same one the crash
+      // mounted — held static through the stall, rising only once the
+      // shift resumes.
+      playOutStall(game);
+      await tickAndSettle(game);
+      final after = game.descendants().whereType<LifeLostPop>().toList();
+      expect(after, hasLength(1));
+      expect(after.single, same(pops.single),
+          reason: 'the freeze never re-mounted or replaced the pop');
     });
 
     test('the third crash adds no pop of its own — the panel speaks',

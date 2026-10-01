@@ -404,6 +404,25 @@ class TaxiGame extends FlameGame
   /// collisions, no fare clocks — then the shift resumes.
   double _crashStallRemaining = 0;
 
+  /// The current crash's spark burst (issue #106): the frozen branches
+  /// of [update] drain its mount and tick it, so the impact reads at
+  /// the moment it happens instead of 1.3 s late. Replaced by the next
+  /// crash's burst — a crash cannot be re-judged while the world is
+  /// frozen ([isGameActive] is down for the whole hit-stop and stall),
+  /// so nothing can clobber a live reference mid-freeze.
+  BurstParticles? _crashSparks;
+
+  /// True through the whole hit-stop-plus-stall window of a survivable
+  /// crash (issue #105): [_crashStallRemaining] is set the instant the
+  /// crash is judged and zeroed on every other path — run start, level
+  /// load, the banked ending, the resume itself, the wreck — so it is
+  /// faithful for exactly the freeze the shift comes back from. The
+  /// stick's claim gate reads it: a thumb that *lands* mid-freeze is
+  /// the thumb the resume must hand the stick to, while every other
+  /// not-live state (a terminal ending, an overlay before the run)
+  /// still refuses the claim.
+  bool get isCrashStall => _crashStallRemaining > 0;
+
   // The road spans x 100..300 in world coordinates (center 200, width 200).
   static const double roadCenterX = 200;
   static const double roadWidth = 200;
@@ -1475,13 +1494,21 @@ class TaxiGame extends FlameGame
   /// Crash juice (issue #7): a hot spark burst at the contact point,
   /// a hit-stop, and a shake scaled to how fast the impact closed.
   void _spawnCrashFx(CrashReport report) {
-    world.add(BurstParticles(
+    final sparks = BurstParticles(
       position: report.contactPoint.clone(),
       colors: ImpactFxPalettes.crash,
       count: 18,
       maxSpeed: 240,
       lifetime: 0.6,
-    ));
+    );
+    // Kept for the freeze (issue #106): the frozen branches of [update]
+    // tick this burst through the hit-stop and stall it belongs to —
+    // before, both it and the "-1 LIFE" pop sat unmounted in the add
+    // queue for the whole freeze (the branches return before
+    // `super.update`, the only place that ever drained the queue) and
+    // played late, the instant the shift resumed.
+    _crashSparks = sparks;
+    world.add(sparks);
     shake.trigger(
       ImpactFx.crashShakeMagnitudeFor(report.closingSpeedAlongImpact),
       duration: ImpactFx.crashShakeDuration,
@@ -1491,6 +1518,30 @@ class TaxiGame extends FlameGame
     // (issue #4), and the heavy buzz lands in the same instant (issue #5).
     audio?.playCrashSound();
     haptics?.crash();
+  }
+
+  /// The crash freeze's one concession to time (issue #106): the frozen
+  /// branches of [update] return before `super.update`, and
+  /// `super.update`→`updateTree` is the only place Flame's
+  /// component-lifecycle queue ever drains — so everything a crash
+  /// queued sat invisible through the 0.10 s hit-stop plus the 1.2 s
+  /// stall and appeared only as the world resumed. The frozen frame
+  /// drains the queue itself here — the same public
+  /// [ComponentTreeRoot.processLifecycleEvents] Flame's own `ready()`
+  /// runs — so the pop and the spark burst mount on the first frozen
+  /// frame. Then only the sparks tick: the burst is the impact, and the
+  /// impact is *now*; the pop is the freeze's caption, mounted but
+  /// held, and rises away when the shift resumes. Nothing else enqueues
+  /// during a freeze, so the drain admits exactly the crash's own FX.
+  /// The burst's self-removal, once its last particle dies, is drained
+  /// by the next frozen frame's pass here — which is also what ends
+  /// the ticking.
+  void _playCrashFxThroughFreeze(double dt) {
+    processLifecycleEvents();
+    final sparks = _crashSparks;
+    if (sparks != null && sparks.isMounted) {
+      sparks.update(dt);
+    }
   }
 
   /// Records a low-speed glancing scrape: no life is lost, the player was
@@ -1616,8 +1667,11 @@ class TaxiGame extends FlameGame
     if (hitStop.isActive) {
       // Hit-stop (issue #7): the world holds still for a beat — no
       // component updates, no collisions — while the shake keeps jittering
-      // the frozen frame.
+      // the frozen frame. The crash's own FX are the one exception
+      // (issue #106): the queued sparks and pop mount and the sparks
+      // play, so the freeze shows the impact instead of a bare frame.
       hitStop.update(dt);
+      _playCrashFxThroughFreeze(dt);
       _applyShake(dt);
       final overlay = _pendingOverlayName;
       if (!hitStop.isActive && overlay != null) {
@@ -1629,9 +1683,11 @@ class TaxiGame extends FlameGame
 
     // Crash stall (issue #14): after a non-fatal endless crash the whole
     // world holds still while the spent life registers on the HUD, then
-    // the shift resumes where it left off.
+    // the shift resumes where it left off. The crash's sparks keep
+    // burning through it (issue #106) — everything else waits.
     if (_crashStallRemaining > 0) {
       _crashStallRemaining = math.max(0.0, _crashStallRemaining - dt);
+      _playCrashFxThroughFreeze(dt);
       _applyShake(dt);
       if (_crashStallRemaining <= 0) {
         _resumeAfterCrashStall();
