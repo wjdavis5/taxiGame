@@ -534,8 +534,7 @@ const staleBranches = await world.run(
 );
 const staleCount = staleBranches.stdout.trim() === ""
     ? 0
-    : staleBranches.stdout.trim().split("
-").length;
+    : staleBranches.stdout.trim().split("\n").length;
 const branch =
   "automation/issue-sweep-" + sha.stdout.trim() + "-" + staleCount;
 // The checkout's exit code is checked before a single edit happens
