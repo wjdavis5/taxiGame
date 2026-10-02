@@ -120,22 +120,41 @@ def print_version
   puts "  submitted for review: #{code == 200 ? 'YES' : 'no'}"
 end
 
+# Issue #162: this check used to answer "complete" to broken states. The
+# three listing queries' status codes were assigned and never read, so an
+# API error (an expired JWT answers 401) returned a body with no 'data' key,
+# the `|| []` fallbacks skipped every loop, and the output was a bare LISTING
+# header — indistinguishable from a checked-and-complete listing. And the
+# screenshot side never said EMPTY: a localization with zero screenshot sets
+# printed nothing at all, and a set holding zero screenshots printed only a
+# bare count. Every gap now fails loud: non-200 aborts naming the HTTP code
+# (the same contract as builds and editable_version), and every empty state
+# prints a *** EMPTY *** marker the way a missing description always has.
 def print_blockers
   v = editable_version
   return unless v
   id = v['id']
   puts 'LISTING'
   code, l = get("/v1/appStoreVersions/#{id}/appStoreVersionLocalizations?limit=5")
-  (l['data'] || []).each do |loc|
+  abort("localizations query failed: HTTP #{code}") unless code == 200
+  locs = l['data'] || []
+  puts '  *** EMPTY *** no localizations' if locs.empty?
+  locs.each do |loc|
     a = loc['attributes']
     %w[description keywords supportUrl].each do |k|
       puts format('  %-14s %s', k, a[k].to_s.empty? ? '*** EMPTY ***' : 'set')
     end
     c2, sets = get("/v1/appStoreVersionLocalizations/#{loc['id']}/appScreenshotSets?limit=5")
-    (sets['data'] || []).each do |s|
+    abort("screenshot sets query failed: HTTP #{c2}") unless c2 == 200
+    set_list = sets['data'] || []
+    puts '  *** EMPTY *** no screenshot sets' if set_list.empty?
+    set_list.each do |s|
       c3, shots = get("/v1/appScreenshotSets/#{s['id']}/appScreenshots?limit=20")
+      abort("screenshots query failed: HTTP #{c3}") unless c3 == 200
       n = (shots['data'] || []).size
-      puts format('  %-14s %s: %d', 'screenshots', s.dig('attributes', 'screenshotDisplayType'), n)
+      type = s.dig('attributes', 'screenshotDisplayType')
+      puts format('  %-14s %s: %s', 'screenshots', type,
+                  n.zero? ? '*** EMPTY ***' : n.to_s)
     end
   end
 end

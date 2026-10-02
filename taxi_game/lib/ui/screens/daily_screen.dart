@@ -193,11 +193,17 @@ class _TodayCard extends StatelessWidget {
             // either way. Score and PTS must share the one FittedBox:
             // a scaled FittedBox reports its child's *unscaled* baseline
             // to this outer Row, so their baseline alignment has to live
-            // inside the pre-scale layout to survive shrinking.
+            // inside the pre-scale layout to survive shrinking. That same
+            // unscaled baseline is why this outer Row centers instead of
+            // baseline-aligning (issue #161): a chip aligned to the
+            // reported baseline hung 4–12 px below the number once the
+            // scale-down engaged, because the baseline the Row measured
+            // against never shrank. Centering is scale-independent — the
+            // FittedBox's own box scales with its child, so the chip's
+            // center rides the painted number's center at every factor.
             played
                 ? Row(
-                    crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Flexible(
                         child: FittedBox(

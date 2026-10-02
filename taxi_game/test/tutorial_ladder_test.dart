@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/dropoff_zone.dart';
@@ -822,6 +823,56 @@ void main() {
       expect(game.isEndless, isTrue);
       expect(game.isGameActive, isTrue);
       expect(game.overlays.isActive('levelComplete'), isFalse);
+    });
+
+    testWidgets('the title stays one centred line at every iPhone width '
+        '(issue #159)', (tester) async {
+      // "TUTORIAL COMPLETE!" is wider than the panel on every standard
+      // iPhone (296 px of bold type in a 255-273 px panel at 375-393 pt),
+      // and the bare Text had no scale-down box — it wrapped into two
+      // flush-left lines while everything around it sat centred. Both
+      // branches ride the same box now, so both are pinned. Ahem
+      // advances a square per glyph — roughly twice Roboto — so the
+      // unfixed Text wrapped at every one of these widths: the check is
+      // strictly conservative, failing on anything the real font could
+      // show (the garage width-sweep reasoning, issue #156).
+      addTearDown(tester.view.reset);
+      final handoff = await panelGame(tester, GameLevel.ladderLength);
+      final midLadder = await panelGame(tester, 1);
+      final panels = <(TaxiGame, String)>[
+        (handoff, 'TUTORIAL COMPLETE!'),
+        (midLadder, 'LEVEL COMPLETE!'),
+      ];
+
+      for (final width in [320.0, 375.0, 390.0, 393.0]) {
+        tester.view.physicalSize = Size(width, 1600);
+        tester.view.devicePixelRatio = 1.0;
+
+        for (final (game, title) in panels) {
+          await showPanel(tester, game);
+
+          final finder = find.text(title);
+          expect(finder, findsOneWidget);
+          // One line of ink: this Text sets no maxLines, so the garage
+          // test's didExceedMaxLines pin cannot see a wrap — the
+          // paragraph's own height can (one Ahem line ≈ the font size,
+          // two ≈ double).
+          final paragraph = tester.renderObject<RenderParagraph>(finder);
+          final fontSize = tester.widget<Text>(finder).style!.fontSize!;
+          expect(
+            paragraph.size.height,
+            lessThan(fontSize * 1.5),
+            reason: '$title must be a single line on a ${width.round()} pt '
+                'screen — two Ahem lines measure ~${(fontSize * 2).round()}',
+          );
+          // And the line it laid out under was unbounded — the
+          // scale-down box's doing. A bare Text holds the panel's width
+          // as its constraint, and that is what wraps it.
+          expect(paragraph.constraints.maxWidth, equals(double.infinity),
+              reason: '$title must lay out under the FittedBox\'s '
+                  'unbounded width to be wrap-proof');
+        }
+      }
     });
   });
 

@@ -4,7 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// The issue-sweep workflow's push and CI contract (issue #88), its
 /// gate-log round trip (issue #97), its branch-safety pins (issues #108
-/// and #118), and its deploy-verdict pins (issues #124 and #128).
+/// and #118), its deploy-verdict pins (issues #124 and #128), and its
+/// CI-claim wording pins (issue #163 — CI compiles the app but never
+/// launches it, so no report line may claim a simulator run).
 ///
 /// The sweep script (`.zcode/workflows/gh-issue-sweep.dwf.ts`) drives real
 /// git pushes and real CI waits, so this suite cannot execute it — the
@@ -428,6 +430,54 @@ void main() {
       // the contract; the shape is the script's to know.
       expect(script, isNot(contains('"--jq"')),
           reason: 'the jobs query must keep asking for the raw field');
+    });
+  });
+
+  group('CI claims match what CI actually runs (issue #163)', () {
+    // The sweep's narration and final report claimed an "iOS simulator
+    // run" that does not exist: no workflow boots a simulator or launches
+    // the app. PR CI (flutter-builds.yml) runs analyze, the test suite on
+    // the macOS host, and an unsigned `flutter build ios --no-codesign`;
+    // the release pipeline archives against a generic iOS destination.
+    // Four spots hard-coded the false claim — the zcode description, the
+    // header outline, the phase-5 title, and the report's notCovered
+    // line. One negative pin covers them all (every false variant said
+    // "iOS simulator", and a future one would too); the positive pins
+    // keep the honest replacements from eroding back into vagueness.
+    test('no simulator run is claimed anywhere in the script', () {
+      expect(script, isNot(contains('iOS simulator')),
+          reason: 'CI never boots a simulator — the description, header, '
+              'phase-5 title, and report must not say it does');
+    });
+
+    test('the report names the compile, not a run, as the closest check',
+        () {
+      expect(script, contains('on-device verification on a physical iPhone'),
+          reason: 'the gap named is the real one: nothing ran the app');
+      expect(
+          script,
+          contains(
+              'is the closest check that ran; the app was never launched'),
+          reason: 'the closest check is stated as the compile, with the '
+              'app-never-launched fact said outright');
+      expect(script, contains('CI analyzes, tests on the host, and compiles'),
+          reason: 'the parenthetical says what CI actually does');
+    });
+
+    test('the phase-5 title and outline name the checks CI really runs', () {
+      expect(script, contains('phase("Open the PR and wait for CI'),
+          reason: 'the phase title must keep narrating the CI wait');
+      expect(
+          script,
+          contains('analyze, host-run tests, and the unsigned iOS build");'),
+          reason: 'the wait is described as analyze + host tests + the '
+              'unsigned build — never a simulator run');
+      expect(script, contains('analyze, host tests, unsigned iOS build'),
+          reason: 'the header outline carries the same honest list');
+      expect(
+          script,
+          contains('no simulator is booted and the app is never launched'),
+          reason: 'the zcode description states the no-launch fact too');
     });
   });
 }
