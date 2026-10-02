@@ -113,11 +113,15 @@ void main() {
 
     // The view must sit back on the canonical rest, both axes — the
     // stale-ledger build rests whatever the mid-shake offset happened to
-    // be (up to the full 13 px) short of it.
-    expect(game.camera.viewport.position.x, closeTo(rest.x, 1e-6),
+    // be (up to the full 13 px) short of it. The tolerance is float32
+    // scale, not exact: the viewport position lives in single precision,
+    // and the round trip through the shake deltas and the resize reset
+    // legitimately leaves ulp-scale residue (~1.5e-5 px) — a thousandth
+    // of a pixel is still four orders tighter than the bug being pinned.
+    expect(game.camera.viewport.position.x, closeTo(rest.x, 1e-3),
         reason: 'the horizontal rest is the canonical letterbox offset, '
             'not offset by leftover shake bookkeeping');
-    expect(game.camera.viewport.position.y, closeTo(rest.y, 1e-6),
+    expect(game.camera.viewport.position.y, closeTo(rest.y, 1e-3),
         reason: 'the vertical rest is the canonical letterbox offset, '
             'not offset by leftover shake bookkeeping');
   });
