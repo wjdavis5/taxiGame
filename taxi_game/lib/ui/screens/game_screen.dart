@@ -126,9 +126,11 @@ class _GameScreenState extends State<GameScreen> {
                   'hud': (context, TaxiGame game) => HudOverlay(game: game),
                   // The one-time stick-control hint (issue #37): active from
                   // the first frame when [showControlHint], removed by the
-                  // first real stick touch.
+                  // first real stick touch. Carries the game so the pill
+                  // can park below the cab's tail wherever the mode's
+                  // camera frames it (issue #177).
                   'controlHint': (context, TaxiGame game) =>
-                      const ControlHintOverlay(),
+                      ControlHintOverlay(game: game),
                   'pauseMenu': (context, TaxiGame game) =>
                       _buildPauseMenu(context),
                   'levelComplete': (context, TaxiGame game) =>

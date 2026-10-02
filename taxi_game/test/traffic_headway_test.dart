@@ -1,12 +1,15 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/game/vehicle_sprites.dart';
+import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/models/traffic_pattern.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
@@ -19,7 +22,9 @@ import 'package:taxi_game/services/storage_service.dart';
 /// screen (measured on these very seeds: 1038/1235/1232 fused frames out
 /// of 14,400 at seeds 42/7/20261001). The spawner now caps each car to the
 /// traffic ahead of it before anything moves, and skips materialising a
-/// car on top of one that already stands on the spawn line.
+/// car on top of one that already stands on the spawn line — including
+/// one earlier in the same wave, which the children scan could never see
+/// (issue #179).
 ///
 /// These tests drive the real, mounted game — the live spawner, the live
 /// vehicles, the live fold of the world — headlessly, as plain [test]s:
@@ -141,6 +146,127 @@ void main() {
     expect(pairableFrames, greaterThan(1000),
         reason: 'the drives must hold in-view pairs to judge '
             '(${(240 * 3 * 60)} frames driven)');
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test("level 10's twin oncoming lanes never fuse one wave side by side",
+      () async {
+    // The tutorial-ladder defect (issue #179): a wave fires every lane on
+    // one shared spawnY, and rung 10's pattern runs two oncoming lanes 40
+    // px apart (x 160 and 200 — `oncoming` defaults to laneX <= 200). The
+    // #146 gate scans world.children, but `add` only queues a component,
+    // so the car the first oncoming lane accepted is still unmounted when
+    // the second lane's gate runs — the gate is blind to its own wave.
+    // Wide bodies overlap across those 40 px (a bus is 50 px across, and
+    // (50+45)/2 beats 40 by 7.5), so roughly one wave in fifteen fused
+    // two oncoming cars side by side and drove them down on the player
+    // abreast. The spawner now keeps a per-wave ledger of accepted spawns
+    // and gates each lane against it as well.
+    //
+    // A save parked on rung 10 ('Graduation Shift'), written through the
+    // storage key the game state reads, so the mounted game boots
+    // straight into the level whose pattern carries the twin lanes (the
+    // tutorial ladder test's gameStateAtLevel pattern).
+    final data = SaveData.createDefault()..currentLevel = 10;
+    SharedPreferences.setMockInitialValues({
+      StorageService.saveDataKey: jsonEncode(data.toJson()),
+    });
+    final storage = StorageService();
+    await storage.init();
+    final levelState = GameStateService(storage);
+    await levelState.loadSaveData();
+
+    final game = await mountGame(
+      TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: levelState,
+      )
+        ..overlays.addEntry('levelComplete', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink()),
+    );
+    await preloadSprites(game);
+
+    // The cab is a ghost and PARKED. Ghost, because its contacts would
+    // reshuffle the traffic this test measures; parked, because a moving
+    // cab would move the camera — and the fixed camera is exactly what
+    // pins every wave to one spawnY, the shared line that makes two
+    // lanes of one wave land on top of each other.
+    game.player.children
+        .whereType<RectangleHitbox>()
+        .first
+        .collisionType = CollisionType.inactive;
+
+    // Same kiss allowance as the endless drive: 4 px in one axis is road
+    // paint and float; deeper than that in BOTH axes is two cars in one
+    // body.
+    const tolerance = 4.0;
+    var pairableFrames = 0;
+    var oncomingPairFrames = 0;
+
+    for (var t = 0; t < 240 * 60; t++) {
+      game.update(1 / 60);
+      await Future<void>.delayed(Duration.zero);
+
+      final camY = game.camera.viewfinder.position.y;
+      final inView = game.world.children
+          .whereType<TrafficVehicle>()
+          .where((v) => (v.position.y - camY).abs() <= 460)
+          .toList();
+
+      // Role as the sign of travel: oncoming drives down-screen. A car
+      // standing at exactly zero — mounted this frame, its zero-offset
+      // spawn waypoint not yet advanced — has no sign to read; pairs
+      // touching one are skipped this frame, not judged, because a real
+      // fusion persists for the seconds the headway rule needs to part
+      // it and is scannable again within frames.
+      final roles = <TrafficVehicle, int>{
+        for (final v in inView)
+          if (v.velocity.y != 0) v: v.velocity.y > 0 ? 1 : -1,
+      };
+      if (roles.length >= 2) pairableFrames++;
+
+      for (var i = 0; i < inView.length; i++) {
+        for (var j = i + 1; j < inView.length; j++) {
+          final a = inView[i];
+          final b = inView[j];
+          final roleA = roles[a];
+          final roleB = roles[b];
+          if (roleA == null || roleB == null) continue;
+          // Same role only (the gate's own scope): an oncoming car
+          // abreast of same-direction traffic is two-way traffic passing
+          // — exactly what a street is supposed to show — not a fusion.
+          if (roleA != roleB) continue;
+          if (roleA > 0) oncomingPairFrames++;
+          final overlapX = (a.vehicleSize.x + b.vehicleSize.x) / 2 -
+              (a.position.x - b.position.x).abs();
+          final overlapY = (a.vehicleSize.y + b.vehicleSize.y) / 2 -
+              (a.position.y - b.position.y).abs();
+          expect(
+            overlapX <= tolerance || overlapY <= tolerance,
+            isTrue,
+            reason: 't=${t ~/ 60}s: a ${a.vehicleType} and a '
+                '${b.vehicleType} share one body '
+                '(${overlapX.toStringAsFixed(1)}x'
+                '${overlapY.toStringAsFixed(1)} px overlap)',
+          );
+        }
+      }
+    }
+
+    // The drive must have stayed live — an ended level stops spawning and
+    // would pass vacuously.
+    expect(game.isGameActive, isTrue,
+        reason: 'the ghost cab never crashes; level 10 must still be '
+            'running after 240 s');
+    // And it must have judged real traffic, with the twin oncoming lanes
+    // actually meeting in view — the situation the ledger gate exists for.
+    expect(pairableFrames, greaterThan(300),
+        reason: 'the drive must hold in-view pairs to judge '
+            '(${240 * 60} frames driven)');
+    expect(oncomingPairFrames, greaterThan(100),
+        reason: 'the twin oncoming lanes must actually have run abreast '
+            'in view, or this measured nothing the gate gates');
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('a sports car behind a bus paces it instead of driving through it',

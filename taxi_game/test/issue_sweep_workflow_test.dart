@@ -4,9 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// The issue-sweep workflow's push and CI contract (issue #88), its
 /// gate-log round trip (issue #97), its branch-safety pins (issues #108
-/// and #118), its deploy-verdict pins (issues #124 and #128), and its
+/// and #118), its deploy-verdict pins (issues #124 and #128), its
 /// CI-claim wording pins (issue #163 — claims must state what CI really
-/// runs; #168 later added a simulator launch, and the pins follow it).
+/// runs; #168 later added a simulator launch, and the pins follow it),
+/// and its phase-1 fail-closed pins (issue #176).
 ///
 /// The sweep script (`.zcode/workflows/gh-issue-sweep.dwf.ts`) drives real
 /// git pushes and real CI waits, so this suite cannot execute it — the
@@ -430,6 +431,67 @@ void main() {
       // the contract; the shape is the script's to know.
       expect(script, isNot(contains('"--jq"')),
           reason: 'the jobs query must keep asking for the raw field');
+    });
+  });
+
+  group('the phase-1 gh guards fail closed (issue #176)', () {
+    // The original bug: the one-sweep-at-a-time guard read only
+    // `openPrs.stdout`, and world.run reports a failed gh as an exit code
+    // with empty stdout (the #88/#108/#118 lesson — it does not throw),
+    // so a failed `gh pr list` read as "no sweep PR open" while one sat
+    // awaiting a human, and the sweep started a second one over it. One
+    // call later, the same unread exit code dropped a failed
+    // `gh issue list` into JSON.parse on empty stdout — a SyntaxError
+    // that errored the workflow instead of an honest skip. Both guards
+    // now stop the sweep before anything is created, in the exact shape
+    // of the `git pull --ff-only` sync guard above them.
+    test("gh pr list's exit code is checked before the open-PR match", () {
+      expect(script, contains('openPrs.exitCode !== 0'),
+          reason: 'a failed listing must skip the sweep, not read as an '
+              'empty one');
+
+      // Ordering: the exit-code check must precede the stdout match it
+      // guards — after it, a failed listing has already been treated as
+      // "no sweep PR open".
+      final exitAt = script.indexOf('openPrs.exitCode !== 0');
+      final matchAt = script.indexOf('openPrs.stdout.includes');
+      expect(exitAt, greaterThan(-1));
+      expect(matchAt, greaterThan(-1));
+      expect(exitAt, lessThan(matchAt),
+          reason: 'the guard must run before the match it fails closed '
+              'for');
+    });
+
+    test("gh issue list's exit code is checked before the JSON parse", () {
+      expect(script, contains('issuesRun.exitCode !== 0'),
+          reason: 'a failed issue listing must be an honest skip, not a '
+              'SyntaxError on empty stdout');
+
+      final exitAt = script.indexOf('issuesRun.exitCode !== 0');
+      final parseAt = script.indexOf('JSON.parse(issuesRun.stdout)');
+      expect(exitAt, greaterThan(-1));
+      expect(parseAt, greaterThan(-1));
+      expect(exitAt, lessThan(parseAt),
+          reason: 'the guard must precede the parse it protects');
+    });
+
+    test('the skip conclusions name the failure and its exit code', () {
+      // Both reports say what failed and with which exit code, in the
+      // sync guard's shape — and the PR guard says what continuing would
+      // have risked, the very regression the issue names. The risk is
+      // pinned as the two fragments its TS line-wrapping splits it into,
+      // like the #118 pins above.
+      expect(script, contains('gh pr list exited'),
+          reason: 'the PR-list skip names the command and its exit code');
+      expect(script, contains('a second sweep PR over one still'),
+          reason: 'the skip says why proceeding was refused — the '
+              'one-sweep-at-a-time contract is the thing the guard '
+              'protects');
+      expect(script, contains('awaiting a human'),
+          reason: 'and names whose decision the open sweep PR holds up');
+      expect(script, contains('gh issue list exited'),
+          reason: 'the issue-list skip names the command and its exit '
+              'code');
     });
   });
 

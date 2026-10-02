@@ -332,6 +332,31 @@ class AudioService {
     try {
       await FlameAudio.bgm.play(musicTrack, volume: 0.8);
     } catch (_) {}
+    // Re-read the setting once the start has landed (issue #178). The
+    // gate above ran once, before the await, but `bgm.play` is a
+    // five-step chain — release, release mode, volume, source, resume —
+    // and a Music-switch flick that lands mid-chain stops a player that
+    // has not started yet: the chain's tail then finishes the start
+    // *after* the stop (audioplayers' resume sets the player playing
+    // unconditionally), and nothing was left to re-check. That was the
+    // bug — music playing with the switch off after a quick on-off
+    // flick. The reconcile mirrors what landed: a stop when the run is
+    // live (the switch went off, or stopMusic ran — the deliberate off),
+    // a pause when the app suspended mid-chain (pauseAll's own action;
+    // the want survives backgrounding, and resumeAll brings the track
+    // back if it is still wanted then). Living here, inside playMusic,
+    // covers both callers — the launch-time start and the settings
+    // listener's re-enable — without either having to know the chain is
+    // slow.
+    if (!isMusicWanted) {
+      try {
+        if (_suspended) {
+          await FlameAudio.bgm.pause();
+        } else {
+          await FlameAudio.bgm.stop();
+        }
+      } catch (_) {}
+    }
   }
 
   /// Stops the music and clears the want — called when the player turns
