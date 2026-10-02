@@ -382,6 +382,26 @@ const openPrs = await world.run(
   "gh",
   ["pr", "list", "--state", "open", "--json", "headRefName", "--limit", "30"],
 );
+// The one-sweep-at-a-time guard fails closed (issue #176). world.run
+// reports failures as exit codes instead of throwing (the #88/#108/#118
+// lesson this file's own commitAndPush wall lives by), and a failed
+// `gh pr list` prints nothing on stdout — so the includes() match below
+// read as "no sweep PR open" while one sat awaiting a human decision,
+// and the sweep happily built a second branch and PR'd it over the
+// first. A failed listing is not an empty listing; skip the sweep
+// honestly, exactly the shape of the pull guard above.
+if (openPrs.exitCode !== 0) {
+  return {
+    conclusion:
+      "Skipped this sweep: gh pr list exited " + openPrs.exitCode +
+      ", so the one-sweep-at-a-time guard could not read the open PRs — " +
+      "continuing could have opened a second sweep PR over one still " +
+      "awaiting a human.\n" + tail(openPrs.stderr || openPrs.stdout),
+    findings: [],
+    verified: ["gh pr list (one-sweep-at-a-time guard, exit-code checked — issue #176)"],
+    notCovered: ["issue triage — no changes were made"],
+  } as WorkflowReport;
+}
 if (openPrs.stdout.includes("automation/issue-sweep")) {
   return {
     conclusion:
@@ -395,6 +415,22 @@ const issuesRun = await world.run(
   "gh",
   ["issue", "list", "--state", "open", "--json", "number,title,labels", "--limit", "100"],
 );
+// The same lesson one call later (issue #176): an unread exit code here
+// dropped a failed `gh issue list` straight into JSON.parse on empty
+// stdout — a SyntaxError that errored the whole workflow — instead of
+// the honest skip the pull guard above makes. The tree is still clean
+// and nothing has been created yet, so stopping loses nothing.
+if (issuesRun.exitCode !== 0) {
+  return {
+    conclusion:
+      "Skipped this sweep: gh issue list exited " + issuesRun.exitCode +
+      ", so the open issues could not be read honestly.\n" +
+      tail(issuesRun.stderr || issuesRun.stdout),
+    findings: [],
+    verified: ["gh issue list (exit-code checked — issue #176)"],
+    notCovered: ["issue triage — no changes were made"],
+  } as WorkflowReport;
+}
 // Issues labeled "assigned" are being worked outside this pipeline (a
 // tagged worktree agent, or a human) — the sweep never touches them.
 const allIssues = JSON.parse(issuesRun.stdout) as (GhIssue & {

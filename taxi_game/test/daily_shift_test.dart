@@ -28,11 +28,27 @@ void main() {
   });
 
   group('DailyShift.seedForDateKey', () {
-    test('is deterministic: the same day, the same seed', () {
-      for (final key in ['2026-09-26', '2027-01-01', '1999-12-31']) {
-        expect(DailyShift.seedForDateKey(key),
-            DailyShift.seedForDateKey(key), reason: 'seed stability for $key');
-      }
+    // Pinned literals, not a function compared with itself (issue #180):
+    // this test used to assert seedForDateKey(k) == seedForDateKey(k) —
+    // f(x) is f(x), unfalsifiable — so an edited date hash would have
+    // rewritten every day's course for every player with the suite green.
+    // The three values below are the shipped hash's output, computed once
+    // from the arithmetic as it stands in daily_shift.dart. They are a
+    // frozen contract, not a snapshot: a failure here means the hash
+    // changed, and the fix is to revert that change — never to update the
+    // literals to match. The hash's layout is load-bearing ("once shipped
+    // it must never be 'improved'", daily_shift.dart) because each stored
+    // ghost replays its day's course via seedForDateKey(result.dateKey)
+    // in daily_screen.dart — a new hash sends every historical trace onto
+    // a city it never ran, and the same day stops being the same course
+    // worldwide.
+    test('is frozen: known days have these exact seeds', () {
+      expect(DailyShift.seedForDateKey('2026-09-26'), 0x3196A8D6,
+          reason: '2026-09-26 stays 831957206');
+      expect(DailyShift.seedForDateKey('2027-01-01'), 0x087FB9EC,
+          reason: '2027-01-01 stays 142588396');
+      expect(DailyShift.seedForDateKey('1999-12-31'), 0x3C4AF755,
+          reason: '1999-12-31 stays 1011545941');
     });
 
     test('neighbouring days land on unrelated seeds', () {

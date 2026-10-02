@@ -2,6 +2,7 @@ import 'dart:async' show Completer;
 
 import 'package:audioplayers_platform_interface/audioplayers_platform_interface.dart'
     show AVAudioSessionCategory;
+import 'package:flame_audio/flame_audio.dart' show FlameAudio, PlayerState;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/services.dart' show AssetManifest, rootBundle;
@@ -181,6 +182,50 @@ void main() {
 
       await audio.playMusic();
       expect(audio.isMusicWanted, isFalse);
+    });
+
+    test('a start that outlasts the switch going off is stopped (issue #178)',
+        () async {
+      // The launch-time start and a quick settings flick race exactly
+      // like this: `playMusic` is left unawaited, the Music switch goes
+      // off while the start is still climbing `Bgm.play`'s five-step
+      // chain (release, release mode, volume, source, resume — and only
+      // then does the chain flip its own `isPlaying`), and the chain's
+      // tail used to finish the start *after* the stop with nothing left
+      // to re-check the setting: music played with the switch off. The
+      // fake's latency makes source and resume slow, so the off lands
+      // deterministically mid-chain while the start is still ≥ 100 ms
+      // from finishing.
+      fake.player.latency = const Duration(milliseconds: 50);
+      final audio = AudioService();
+
+      final starting = audio.playMusic();
+      await audio.setMusicEnabled(false);
+      await starting;
+
+      expect(FlameAudio.bgm.isPlaying, isFalse,
+          reason: 'the start landed after the stop — the setting must '
+              'win, or the switch lies');
+    });
+
+    test('a start that outlasts a backgrounding pauses, not stops (#178)',
+        () async {
+      // The same race through [pauseAll] instead of the switch: the
+      // reconcile must mirror what landed — a pause (which keeps the
+      // track loaded for resumeAll to bring back if still wanted), not a
+      // stop (which throws the source away).
+      fake.player.latency = const Duration(milliseconds: 50);
+      final audio = AudioService();
+
+      final starting = audio.playMusic();
+      await audio.pauseAll();
+      await starting;
+
+      expect(FlameAudio.bgm.isPlaying, isFalse);
+      expect(FlameAudio.bgm.audioPlayer.state, PlayerState.paused,
+          reason: 'the app is backgrounded, not muted — resumeAll must be '
+              'able to revive the wanted track, and a stop would have '
+              'unloaded it');
     });
   });
 

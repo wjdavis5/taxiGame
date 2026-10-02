@@ -7,6 +7,13 @@ import '../../models/traffic_pattern.dart';
 import '../systems/difficulty_curve.dart';
 import '../systems/run_environment.dart';
 
+/// One spawn a wave has already accepted (issue #179): the role it will
+/// drive, the spot it materialised on, and the body it rolled — the three
+/// facts the no-overlap gate needs, recorded at the `add` itself because
+/// the queue makes the car invisible to a `children` scan until the
+/// tree's next update.
+typedef _AcceptedSpawn = ({bool oncoming, Vector2 position, Vector2 size});
+
 /// Manages spawning of traffic vehicles based on patterns
 class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   /// Level mode: a fixed per-level pattern for the whole level. The RNG
@@ -222,10 +229,20 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
             .trafficAt(_distanceOf!(), geometryDistance: spawnDistance)
             .lanes;
 
+    // The wave's ledger of accepted spawns (issue #179): every lane of a
+    // wave shares this one frame and this one spawnY, and `add` only
+    // queues a component — the car the first lane accepted does not reach
+    // world.children (let alone `isMounted`) until the tree's own update,
+    // long after the last lane's gate has run. The ledger carries the
+    // accepted fact itself, so the last lane can be gated against what
+    // the first lane did in the same breath. It lives and dies with the
+    // wave: the children scan below already covers every earlier wave.
+    final wave = <_AcceptedSpawn>[];
+
     // Try to spawn a vehicle in each lane based on probability
     for (final laneConfig in lanes) {
       if (random.nextDouble() <= laneConfig.spawnProbability) {
-        _spawnVehicleInLane(laneConfig, spawnY, spawnDistance);
+        _spawnVehicleInLane(laneConfig, spawnY, spawnDistance, wave);
       }
     }
   }
@@ -234,6 +251,7 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     TrafficLaneConfig laneConfig,
     double spawnY,
     double? spawnDistance,
+    List<_AcceptedSpawn> wave,
   ) {
     // The level course ends (issue #31): nothing materialises past its
     // end, and whatever spawns near it stays fully on the street — half
@@ -297,6 +315,36 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
       }
       if ((other.position.y - spawnY).abs() <
           (other.vehicleSize.y + type.size.y) / 2 + headwayMargin) {
+        return;
+      }
+    }
+
+    // The same question over the wave's own ledger (issue #179): the scan
+    // above reads world.children, but Flame's `add` only queues — a car
+    // an earlier lane of THIS wave accepted is unmounted when this gate
+    // runs, so the scan has been blind to same-wave spawns. On the
+    // tutorial ladder that is not hypothetical: rung 10's pattern runs
+    // two oncoming lanes 40 px apart (x 160 and 200), and a wave that
+    // rolled wide bodies into both — a bus is 50 px across, and even a
+    // sedan pairing hits (40+45)/2 — materialised them laterally
+    // overlapped on the wave's one shared spawnY: two cars fused side by
+    // side, driving down on the player abreast until the headway rule's
+    // 0.8× easing was all that parted them. The record carries its own
+    // oncoming flag because a queued car's velocity is still zero — its
+    // path starts on the spawn point, so there is no sign to read yet
+    // (the same reason the sprite flip reads the path, not the velocity,
+    // issue #72). Like the scan above, this gate runs after the type
+    // roll, spends no RNG, and judges same-role pairs only — an oncoming
+    // car abreast of same-direction traffic is two-way traffic, not a
+    // fusion.
+    for (final queued in wave) {
+      if (queued.oncoming != laneConfig.oncoming) continue;
+      if ((queued.position.x - spawnX).abs() >=
+          (queued.size.x + type.size.x) / 2) {
+        continue;
+      }
+      if ((queued.position.y - spawnY).abs() <
+          (queued.size.y + type.size.y) / 2 + headwayMargin) {
         return;
       }
     }
@@ -368,6 +416,18 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     // this spawner's own world, never the live getter — a retired
     // spawner's last tick must not write into the fresh run's world).
     _runWorld!.add(vehicle);
+    // And the ledger learns of it with the add, not before: a spawn any
+    // gate above rejected contributed nothing, and later lanes of this
+    // wave must not be gated around a car that never materialised. A
+    // fresh snapshot, not a reference to the vehicle's live position —
+    // the record stands for the accept decision as it was made.
+    wave.add(
+      (
+        oncoming: laneConfig.oncoming,
+        position: Vector2(spawnX, spawnY),
+        size: type.size,
+      ),
+    );
     _activeVehicles.add(vehicle);
   }
 

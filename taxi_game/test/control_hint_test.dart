@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
@@ -53,8 +54,13 @@ void main() {
     await gameState.loadSaveData();
   });
 
-  /// Pumps a live endless [GameScreen] on a fresh save.
-  Future<TaxiGame> pumpGameScreen(WidgetTester tester) async {
+  /// Pumps a live [GameScreen] on a fresh save — an endless shift when
+  /// [endless], otherwise the tutorial ladder's first rung, whose camera
+  /// follows the lead and parks the cab below centre (issue #177's mode).
+  /// [tag] keys the screen so a second pump in the same test cannot
+  /// reuse the first screen's state (the pumpNextSession convention).
+  Future<TaxiGame> pumpGameScreen(WidgetTester tester,
+      {bool endless = true, String tag = 'main'}) async {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -63,21 +69,53 @@ void main() {
           Provider<HapticsService>.value(value: HapticsService()),
           Provider<LevelLoaderService>.value(value: LevelLoaderService()),
         ],
-        child: const MaterialApp(home: GameScreen(endlessSeed: 42)),
+        child: MaterialApp(
+          key: ValueKey('app-${endless ? "endless" : "level"}-$tag'),
+          home: GameScreen(
+            key: ValueKey('screen-${endless ? "endless" : "level"}-$tag'),
+            endlessSeed: endless ? 42 : null,
+          ),
+        ),
       ),
     );
     await tester.pump();
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pump(const Duration(milliseconds: 100));
 
+    // Wait for the run to go live for real. A fixed 100 ms real sleep
+    // raced the level/asset load on a busy runner — the third test of a
+    // back-to-back group lost it — so poll to the condition instead
+    // (the audio tests' deadline idiom), interleaving real event-loop
+    // time with fake-clock frames: the load runs on real futures, and
+    // the game's own machinery ticks on pumps.
     final game = tester
         .widget<GameWidget<TaxiGame>>(find.byType(GameWidget<TaxiGame>))
         .game!;
+    var waitedMs = 0;
+    while (!(game.isGameActive && game.isPlayerReady) && waitedMs < 5000) {
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(milliseconds: 50));
+      waitedMs += 50;
+    }
+    // The hint polls the game on a 100 ms timer until the cab exists —
+    // give it the tick that lands the measured placement.
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+
     expect(game.isGameActive, isTrue,
-        reason: 'the endless run must be live before any input');
+        reason: 'the run must be live before any input');
     return game;
+  }
+
+  /// The cab's tail in screen px on a [surface]-sized screen: centre,
+  /// plus the half-body the endless camera leaves below it, plus — in
+  /// the ladder's levels — the whole camera lead the level camera parks
+  /// the cab down by (issue #177). The fixed-resolution viewport's world
+  /// scale, min(w/400, h/800), is the bank panel's idiom.
+  double cabTailOnScreen(TaxiGame game, Size surface) {
+    final scale = math.min(surface.width / 400, surface.height / 800);
+    final lead = game.isEndless ? 0.0 : TaxiGame.levelCameraLead;
+    return surface.height / 2 +
+        (lead + game.player.stats.height / 2) * scale;
   }
 
   /// Pumps a follow-up [GameScreen] on [service] — the next session's
@@ -187,6 +225,67 @@ void main() {
       await pumpNextSession(tester, reloaded);
       expect(hintFinder, findsNothing,
           reason: 'the flag is set before the next session renders');
+    });
+  });
+
+  group('parked below the cab (issue #177)', () {
+    // One body, three screens. Fresh keyed games mount reliably inside a
+    // single testWidgets, while the first GameWidget game of a LATER
+    // testWidgets in the same run never mounts under the fake clock — a
+    // test-environment artifact this file cannot fix (every existing
+    // test here pumps its games within its own body) — so all three
+    // placements are judged in one drive.
+    testWidgets('in every mode, at the smallest phone, the pill clears the '
+        'cab\'s tail', (tester) async {
+      // The tutorial ladder: the camera lead parks the cab
+      // [TaxiGame.levelCameraLead] below centre, and the fixed alignment
+      // placed for a centred cab used to ride up onto the cab's tail on
+      // every rung.
+      var game = await pumpGameScreen(tester, endless: false, tag: 'a');
+      expect(hintFinder, findsOneWidget,
+          reason: 'the fresh save teaches the stick on the ladder too');
+
+      var surface =
+          tester.view.physicalSize / tester.view.devicePixelRatio;
+      var hintTop = tester.getTopLeft(hintFinder).dy;
+      expect(hintTop, greaterThan(surface.height / 2),
+          reason: 'the whole pill lives in the stick\'s lower half, where '
+              'a tap on it is a stick touch');
+      expect(
+          hintTop,
+          greaterThanOrEqualTo(cabTailOnScreen(game, surface) + 15.5),
+          reason: 'the level camera parks the cab 100 px below centre — '
+              'the hint must clear its tail, not sit on it (half a pixel '
+              'of float grace)');
+
+      // The endless framing the old placement was built for — the
+      // centred cab — must survive the rewrite.
+      game = await pumpGameScreen(tester, tag: 'b');
+      surface = tester.view.physicalSize / tester.view.devicePixelRatio;
+      hintTop = tester.getTopLeft(hintFinder).dy;
+      expect(
+          hintTop,
+          greaterThanOrEqualTo(cabTailOnScreen(game, surface) + 15.5),
+          reason: 'the centred-cab clearance the old alignment got right');
+
+      // 320×568 — the smallest phone: the lane under the cab cannot hold
+      // the pill at natural size, so it must scale down rather than
+      // climb onto the cab or past the screen edge.
+      await tester.binding.setSurfaceSize(const Size(320, 568));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      game = await pumpGameScreen(tester, endless: false, tag: 'c');
+      final rect = tester.getRect(hintFinder);
+      expect(
+          rect.top,
+          greaterThanOrEqualTo(
+              cabTailOnScreen(game, const Size(320, 568)) + 15.5),
+          reason: 'the cab bound holds at any size');
+      expect(rect.bottom, lessThanOrEqualTo(568.5),
+          reason: 'the lane cannot hold the pill at natural size on this '
+              'phone — it must scale down, not overflow past the screen '
+              'edge');
+      expect(rect.height, greaterThan(120),
+          reason: 'a scaled-down hint, not a smear');
     });
   });
 
