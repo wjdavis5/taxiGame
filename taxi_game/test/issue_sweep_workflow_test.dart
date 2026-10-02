@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 /// The issue-sweep workflow's push and CI contract (issue #88), its
 /// gate-log round trip (issue #97), its branch-safety pins (issues #108
 /// and #118), its deploy-verdict pins (issues #124 and #128), and its
-/// CI-claim wording pins (issue #163 — CI compiles the app but never
-/// launches it, so no report line may claim a simulator run).
+/// CI-claim wording pins (issue #163 — claims must state what CI really
+/// runs; #168 later added a simulator launch, and the pins follow it).
 ///
 /// The sweep script (`.zcode/workflows/gh-issue-sweep.dwf.ts`) drives real
 /// git pushes and real CI waits, so this suite cannot execute it — the
@@ -435,33 +435,49 @@ void main() {
 
   group('CI claims match what CI actually runs (issue #163)', () {
     // The sweep's narration and final report claimed an "iOS simulator
-    // run" that does not exist: no workflow boots a simulator or launches
-    // the app. PR CI (flutter-builds.yml) runs analyze, the test suite on
-    // the macOS host, and an unsigned `flutter build ios --no-codesign`;
-    // the release pipeline archives against a generic iOS destination.
-    // Four spots hard-coded the false claim — the zcode description, the
-    // header outline, the phase-5 title, and the report's notCovered
-    // line. One negative pin covers them all (every false variant said
-    // "iOS simulator", and a future one would too); the positive pins
-    // keep the honest replacements from eroding back into vagueness.
-    test('no simulator run is claimed anywhere in the script', () {
+    // run" that did not exist when #163 landed: no workflow booted a
+    // simulator or launched the app. PR CI (flutter-builds.yml) ran
+    // analyze, the test suite on the macOS host, and an unsigned
+    // `flutter build ios --no-codesign`; the release pipeline archives
+    // against a generic iOS destination. Four spots hard-coded the false
+    // claim — the zcode description, the header outline, the phase-5
+    // title, and the report's notCovered line. #168 later added a real
+    // simulator launch to PR CI (build, boot, install, launch, assert
+    // alive), which turned "the app is never launched" into the same lie
+    // from the other side — so the pins below follow what CI runs today:
+    // the report credits the simulator launch and names the
+    // physical-device gap that remains. The negative pin still guards
+    // the historical "iOS simulator" phrasing; the positive pins keep
+    // the honest replacements from eroding back into vagueness.
+    test('the historical "iOS simulator" phrasing stays gone', () {
+      // Every #163-era false claim said "iOS simulator". CI does launch
+      // on a simulator now (issue #168) — pinned exactly below — and the
+      // honest wording says "a simulator", so the stale phrasing has no
+      // reason to return.
       expect(script, isNot(contains('iOS simulator')),
-          reason: 'CI never boots a simulator — the description, header, '
-              'phase-5 title, and report must not say it does');
+          reason: 'the historical false-claim phrasing must not return — '
+              'the launch CI really performs is pinned below');
     });
 
-    test('the report names the compile, not a run, as the closest check',
-        () {
+    test('the report credits the simulator launch CI performs', () {
+      // #168 moved the ground under this pin: PR CI gained a real
+      // simulator launch (flutter-builds.yml builds for the simulator,
+      // boots one, installs, launches com.wjdavis5.taxigame, and asserts
+      // the process is still alive 8 s later), so "the app was never
+      // launched" — this test's old pin — became the lie. The closest
+      // check CI really performs is the launch itself; the gap that
+      // remains is the physical device.
       expect(script, contains('on-device verification on a physical iPhone'),
-          reason: 'the gap named is the real one: nothing ran the app');
+          reason: 'the gap named is the real one: no physical device has '
+              'ever run the app');
+      expect(script, contains('CI compiles the app'),
+          reason: 'the compile half of the closest check is credited');
       expect(
           script,
-          contains(
-              'is the closest check that ran; the app was never launched'),
-          reason: 'the closest check is stated as the compile, with the '
-              'app-never-launched fact said outright');
-      expect(script, contains('CI analyzes, tests on the host, and compiles'),
-          reason: 'the parenthetical says what CI actually does');
+          contains('and launches it on a simulator; a physical device never '
+              'ran it'),
+          reason: 'the launch half is claimed, with the device gap said '
+              'outright');
     });
 
     test('the phase-5 title and outline name the checks CI really runs', () {
@@ -470,14 +486,19 @@ void main() {
       expect(
           script,
           contains('analyze, host-run tests, and the unsigned iOS build");'),
-          reason: 'the wait is described as analyze + host tests + the '
-              'unsigned build — never a simulator run');
+          reason: 'the wait is described by checks CI really runs: '
+              'analyze, host tests, the unsigned build');
       expect(script, contains('analyze, host tests, unsigned iOS build'),
           reason: 'the header outline carries the same honest list');
       expect(
           script,
-          contains('no simulator is booted and the app is never launched'),
-          reason: 'the zcode description states the no-launch fact too');
+          contains('a simulator launch of the built app'),
+          reason: 'the zcode description and outline both state the '
+              'launch CI performs (issue #168)');
+      expect(
+          script,
+          contains('a physical device never runs it'),
+          reason: 'and both name the physical-device gap that remains');
     });
   });
 }

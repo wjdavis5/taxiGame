@@ -117,10 +117,21 @@ void main() {
       (tester) async {
     await pumpGarage(tester);
 
+    final executive = VehicleCatalog.byId('luxury_white')!;
     await tester.tap(find.byKey(const ValueKey('garage_buy_luxury_white')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Not enough coins'), findsOneWidget);
+    // The exact wording, not just a prefix: the template must not add an
+    // article of its own. The Executive's name already starts with "The",
+    // and "for the The Executive" was the stutter of issue #173 — a
+    // textContaining('Not enough coins') check would let it back in.
+    expect(
+      find.text(
+        'Not enough coins — you need ${executive.price} more '
+        'for ${executive.name}.',
+      ),
+      findsOneWidget,
+    );
     expect(gameState.totalCoins, 0);
     expect(gameState.unlockedVehicles, isNot(contains('luxury_white')));
     expect(gameState.selectedVehicle, 'taxi_yellow');

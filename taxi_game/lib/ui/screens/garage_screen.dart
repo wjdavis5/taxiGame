@@ -403,8 +403,10 @@ class _VehicleCard extends StatelessWidget {
       ..showSnackBar(
         SnackBar(
           content: Text(
-            'Not enough coins — you need $shortfall more for the '
-            '${vehicle.name}.',
+            // No leading article: the fleet names carry their own, and the
+            // luxury cab is "The Executive" — "for the The Executive" read
+            // as a stutter (issue #173).
+            'Not enough coins — you need $shortfall more for ${vehicle.name}.',
           ),
           duration: const Duration(seconds: 2),
         ),
