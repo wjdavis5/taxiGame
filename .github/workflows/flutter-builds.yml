@@ -83,6 +83,34 @@ jobs:
           [ -f build/ios/iphoneos/Runner.app/PrivacyInfo.xcprivacy ] \
             || { echo "::error::privacy manifest missing from the bundle"; exit 1; }
 
+      - name: Launch the built app on a simulator (issue #168)
+        # The UIScene adoption lives in Info.plist and AppDelegate.swift,
+        # where `flutter test` cannot reach it and the unsigned device
+        # build above only proves compilation. Boot a simulator, install,
+        # launch, and assert the process is still alive: broken scene
+        # adoption kills the app right at launch, before any test could
+        # run.
+        run: |
+          set -euo pipefail
+          flutter build ios --simulator --debug
+          udid="$(xcrun simctl list devices available | grep -m1 "iPhone" | grep -oE "[0-9A-F-]{36}")"
+          echo "launching on simulator $udid"
+          # An already-booted simulator is fine; bootstatus waits out the rest.
+          xcrun simctl boot "$udid" 2>/dev/null || true
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl install "$udid" build/ios/iphonesimulator/Runner.app
+          pid_line="$(xcrun simctl launch "$udid" com.wjdavis5.taxigame)"
+          echo "$pid_line"
+          pid="$(echo "$pid_line" | grep -oE "[0-9]+$")"
+          sleep 8
+          # The app process is a child of the macOS host, so ps can judge
+          # liveness directly.
+          if ! ps -p "$pid" > /dev/null; then
+            echo "::error::the app process died within 8s of launch — UIScene adoption is broken"
+            exit 1
+          fi
+          echo "app alive on pid $pid after 8s"
+
   android:
     name: Build Android
     # Opt-in only. The project does not publish to Play, so this does not run

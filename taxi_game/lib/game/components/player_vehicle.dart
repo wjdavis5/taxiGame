@@ -160,7 +160,24 @@ class PlayerVehicle extends PositionComponent
       minX = TaxiGame.roadCenterX - TaxiGame.roadWidth / 2 + halfWidth;
       maxX = TaxiGame.roadCenterX + TaxiGame.roadWidth / 2 - halfWidth;
     }
-    position.x = position.x.clamp(minX, maxX);
+    final clampedX = position.x.clamp(minX, maxX);
+    // A pinned cab is not a sideways-moving one (issue #167): the stick
+    // may still be held toward the kerb, but the clamp just cancelled the
+    // position change that velocity.x promised, and leaving the cancelled
+    // velocity live handed the collision judge a phantom lateral speed —
+    // a kerb-pinned head-on with oncoming traffic read its own cancelled
+    // sideways motion as "driving away" and ruled the touch a free
+    // scrape, over and over, while the player drove straight into
+    // traffic. The clamp is the one place that knows the promise was
+    // cancelled, so it zeroes it — before the collision phase reads it.
+    // Safe for every other reader: the danger telegraph gates on
+    // velocity.y, the HUD, telemetry, and speed lines all read
+    // -velocity.y, and _updateMovement rewrites velocity.x next frame,
+    // so the zero lives exactly one tick.
+    if (clampedX != position.x) {
+      position.x = clampedX;
+      velocity.x = 0;
+    }
 
     // The level course's end (issue #31): the street stops here, and
     // forward is the only gear, so without this the taxi would drive off

@@ -93,6 +93,18 @@ def print_builds
   end
 end
 
+# Issue #170: this report used to answer from queries that failed. All
+# three status codes here went unread, so an API error — an expired JWT
+# answers 401 — printed the version header and then fiction: the
+# build-link query's error body has no relationships key, which read as
+# "attached build: NONE"; the build detail's empty attributes printed
+# "attached build:  ()"; and the submission's non-200 read as "submitted
+# for review: no". The release skill treats these lines as authoritative
+# (SKILL.md: the asc.rb status output "is authoritative — read it rather
+# than assuming"), so each query now carries the builds/editable_version
+# contract: non-200 aborts naming the HTTP code. The one carve-out is the
+# submission query's 404 — Apple's own answer for a version with no
+# submission on record — which is a readable "no", not an error.
 def print_version
   v = editable_version
   return puts('VERSION: none') unless v
@@ -107,9 +119,11 @@ def print_version
        "release=#{a['releaseType']}#{auto ? ' (goes live automatically)' : ''}"
 
   code, full = get("/v1/appStoreVersions/#{v['id']}?include=build")
+  abort("version build link query failed: HTTP #{code}") unless code == 200
   attached = full.dig('data', 'relationships', 'build', 'data')
   if attached
-    _, bd = get("/v1/builds/#{attached['id']}")
+    code, bd = get("/v1/builds/#{attached['id']}")
+    abort("build detail query failed: HTTP #{code}") unless code == 200
     ba = bd.dig('data', 'attributes') || {}
     puts "  attached build: #{ba['version']} (#{ba['processingState']})"
   else
@@ -117,6 +131,7 @@ def print_version
   end
 
   code, _ = get("/v1/appStoreVersions/#{v['id']}/appStoreVersionSubmission")
+  abort("submission query failed: HTTP #{code}") unless [200, 404].include?(code)
   puts "  submitted for review: #{code == 200 ? 'YES' : 'no'}"
 end
 

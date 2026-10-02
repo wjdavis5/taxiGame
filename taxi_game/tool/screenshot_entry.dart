@@ -124,6 +124,11 @@ class _ScreenshotApp extends StatelessWidget {
     return MaterialApp(
       title: 'Cab Hustle',
       theme: ThemeData(
+        // Same tooltip silencing as lib/main.dart (issue #169): a capture
+        // must show the app as it ships, and the framework's ungated
+        // long-press feedback would buzz and click a capture device with
+        // both toggles off.
+        tooltipTheme: const TooltipThemeData(enableFeedback: false),
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.yellow,
           brightness: Brightness.light,

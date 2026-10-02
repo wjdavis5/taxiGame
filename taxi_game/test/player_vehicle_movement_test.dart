@@ -103,6 +103,13 @@ void main() {
           TaxiGame.roadWidth / 2 -
           player.vehicleSize.x / 2;
       expect(player.position.x, closeTo(maxX, 0.01));
+      // A cab pinned at the kerb with the lock still held carries no
+      // lateral velocity (issue #167): the clamp cancelled the position
+      // change that velocity.x promised, and the cancelled value used to
+      // stay live for the collision judge — reading a kerb-pinned
+      // head-on as the cab driving away. The first assertion above (one
+      // tick, before the clamp bites) keeps proving the steer itself.
+      expect(player.velocity.x, 0);
     });
 
     test('reset restores the start position and clears inputs', () async {

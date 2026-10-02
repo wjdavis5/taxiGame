@@ -126,6 +126,40 @@ void main() {
     expect(gameState.selectedVehicle, 'taxi_yellow');
   });
 
+  testWidgets('hammering an unaffordable car replays one refusal, not one '
+      'per tap (issue #171)', (tester) async {
+    await pumpGarage(tester);
+
+    // Four taps 100 ms apart straddle the snackbar's 250 ms entrance and
+    // exit windows — the cadence a player actually produces on a button
+    // that keeps refusing. showSnackBar queues one two-second bar per
+    // call, so before the fix this stacked four of them.
+    final buy = find.byKey(const ValueKey('garage_buy_luxury_white'));
+    for (var i = 0; i < 4; i++) {
+      await tester.tap(buy);
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // However many taps landed, exactly one refusal may be showing — the
+    // taps must have replaced each other, not queued.
+    expect(find.textContaining('Not enough coins'), findsOneWidget);
+
+    // One bar is over within ~3 s of the last tap (entrance, its 2 s
+    // duration, exit). The pumps must be animation-sized: one multi-second
+    // pump renders a single frame and leaves a mid-exit bar stranded in
+    // the tree. Five seconds past the taps the messenger must be silent —
+    // with one bar queued per tap, the four bars replay back to back for
+    // ~10 s and bars 3–4 would still be showing here. Asserting before
+    // pumpAndSettle matters: pumpAndSettle would drain a leftover queue
+    // and hide the bug.
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+    expect(find.textContaining('Not enough coins'), findsNothing);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Not enough coins'), findsNothing);
+  });
+
   testWidgets('a purchase that grows the fleet announces the achievement',
       (tester) async {
     // The starter cab is owned from the first launch, so the first
