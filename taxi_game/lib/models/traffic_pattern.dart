@@ -163,6 +163,27 @@ enum TrafficVehicleType {
 
 /// Extension to get properties for each vehicle type
 extension TrafficVehicleTypeExtension on TrafficVehicleType {
+  /// The vehicle's name as the player reads it in a sentence — 'sports
+  /// car', not the enum identifier 'sportsCar' (issue #151). The crash
+  /// headline, the scrape marker, and the contact explanations
+  /// interpolate this string into player-facing text; passing [name]
+  /// there leaked "You hit the sportsCar flat out." and "Scraped a
+  /// suv!" onto the CRASH! panel and the road.
+  String get displayName {
+    switch (this) {
+      case TrafficVehicleType.sedan:
+        return 'sedan';
+      case TrafficVehicleType.truck:
+        return 'truck';
+      case TrafficVehicleType.sportsCar:
+        return 'sports car';
+      case TrafficVehicleType.suv:
+        return 'SUV';
+      case TrafficVehicleType.bus:
+        return 'bus';
+    }
+  }
+
   Vector2 get size {
     switch (this) {
       case TrafficVehicleType.sedan:

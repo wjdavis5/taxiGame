@@ -4,6 +4,7 @@ import 'package:flame/components.dart';
 import 'package:flame/collisions.dart';
 
 import '../../data/vehicle_catalog.dart';
+import '../../models/traffic_pattern.dart';
 import '../taxi_game.dart';
 import '../vehicle_sprites.dart';
 import '../systems/collision_rules.dart';
@@ -461,7 +462,11 @@ class PlayerVehicle extends PositionComponent
     final severity = CollisionRules.severityFor(approachSpeed, contribution);
     final report = CollisionRules.buildReport(
       severity: severity,
-      vehicleKind: other.vehicleType.name,
+      // The display name, never the enum identifier: this string lands
+      // verbatim in the CRASH! headline and the scrape marker, and
+      // `.name` read there as "You hit the sportsCar flat out."
+      // (issue #151).
+      vehicleKind: other.vehicleType.displayName,
       playerVelocity: velocity,
       playerPosition: position,
       trafficVelocity: other.velocity,

@@ -1,6 +1,7 @@
 import 'package:flame/components.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/game/systems/collision_rules.dart';
+import 'package:taxi_game/models/traffic_pattern.dart';
 
 void main() {
   group('severityFor', () {
@@ -329,7 +330,7 @@ void main() {
             ),
           ),
         ),
-        vehicleKind: 'sportsCar',
+        vehicleKind: TrafficVehicleType.sportsCar.displayName,
         playerVelocity: Vector2.zero(),
         playerPosition: Vector2(200, 527.7),
         trafficVelocity: Vector2(0, 147.5),
@@ -341,11 +342,13 @@ void main() {
       expect(report.closingSpeedAlongImpact, closeTo(147.5, 1e-9));
       expect(report.playerContribution, 0);
 
-      expect(report.headline, 'A sportsCar ran into you — nothing lost.');
+      // The player-facing name — never the enum identifier the call site
+      // used to pass (issue #151).
+      expect(report.headline, 'A sports car ran into you — nothing lost.');
       expect(report.headline, isNot(contains('You hit')));
       expect(report.headline, isNot(contains('You scraped')));
 
-      expect(report.explanation, contains('Struck by a sportsCar'));
+      expect(report.explanation, contains('Struck by a sports car'));
       expect(report.explanation, contains('147.5'));
       // The struck scrape closes *over* the crash threshold; claiming it
       // was under it (the ordinary scrape wording) would be a lie.
@@ -433,6 +436,71 @@ void main() {
       expect(report.headline, isNot(contains('px/s')));
       expect(report.headline, isNot(contains('axis')));
       expect(report.headline, isNot(contains('(')));
+    });
+  });
+
+  group('player-facing names and articles (issue #151)', () {
+    test('every vehicle type reads as words, not an enum identifier', () {
+      // The strings the headline, the explanations, and the scrape
+      // marker interpolate. `.name` leaked 'sportsCar' and 'suv' onto
+      // the CRASH! panel and the road.
+      expect(TrafficVehicleType.sedan.displayName, 'sedan');
+      expect(TrafficVehicleType.truck.displayName, 'truck');
+      expect(TrafficVehicleType.sportsCar.displayName, 'sports car');
+      expect(TrafficVehicleType.suv.displayName, 'SUV');
+      expect(TrafficVehicleType.bus.displayName, 'bus');
+    });
+
+    test("the article is chosen by sound — 'an' only before 'SUV'", () {
+      // Every name the messages can carry opens with a consonant sound
+      // except 'SUV': it starts with the letter S but is read
+      // 'ess-you-vee', a vowel sound (issue #151).
+      expect(CollisionRules.articleFor('sedan'), 'a');
+      expect(CollisionRules.articleFor('truck'), 'a');
+      expect(CollisionRules.articleFor('sports car'), 'a');
+      expect(CollisionRules.articleFor('bus'), 'a');
+      expect(CollisionRules.articleFor('traffic cone'), 'a');
+      expect(CollisionRules.articleFor('SUV'), 'an');
+    });
+
+    test('an SUV reads correctly in every template that names it', () {
+      // The struck headline opens the sentence, so its article
+      // capitalizes: 'An SUV', never 'A SUV'.
+      final struck = CollisionRules.buildReport(
+        severity: ContactSeverity.scrape,
+        vehicleKind: TrafficVehicleType.suv.displayName,
+        playerVelocity: Vector2(0, -40),
+        playerPosition: Vector2(200, 100),
+        trafficVelocity: Vector2(0, -190),
+        trafficPosition: Vector2(200, 200),
+        contactPoint: Vector2(200, 130),
+      );
+      expect(struck.playerContribution, -40);
+      expect(struck.headline, 'An SUV ran into you — nothing lost.');
+      expect(struck.explanation, contains('Struck by an SUV'));
+
+      final crashed = CollisionRules.buildReport(
+        severity: ContactSeverity.crash,
+        vehicleKind: TrafficVehicleType.suv.displayName,
+        playerVelocity: Vector2(0, -150),
+        playerPosition: Vector2(200, 100),
+        trafficVelocity: Vector2(0, 60),
+        trafficPosition: Vector2(200, 40),
+        contactPoint: Vector2(200, 70),
+      );
+      expect(crashed.headline, 'You hit the SUV flat out.');
+      expect(crashed.explanation, contains('Crashed into an SUV'));
+
+      final scraped = CollisionRules.buildReport(
+        severity: ContactSeverity.scrape,
+        vehicleKind: TrafficVehicleType.suv.displayName,
+        playerVelocity: Vector2(0, -40),
+        playerPosition: Vector2(200, 100),
+        trafficVelocity: Vector2.zero(),
+        trafficPosition: Vector2(200, 80),
+        contactPoint: Vector2(200, 78),
+      );
+      expect(scraped.explanation, contains('Scraped an SUV'));
     });
   });
 }

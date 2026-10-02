@@ -198,6 +198,24 @@ void main() {
       expect(game.world.children.whereType<ScrapeMarker>().length, 1);
     });
 
+    test('the scrape marker words an SUV by sound, not spelling '
+        '(issue #151)', () {
+      // Direct construction — the marker is the one surface that writes
+      // its own article, and 'SUV' opens with the vowel sound 'ess'
+      // while starting with a consonant letter.
+      final suv = ScrapeMarker(
+        position: Vector2.zero(),
+        vehicleKind: TrafficVehicleType.suv.displayName,
+      );
+      expect(suv.text, 'Scraped an SUV!');
+
+      final cone = ScrapeMarker(
+        position: Vector2.zero(),
+        vehicleKind: 'traffic cone',
+      );
+      expect(cone.text, 'Scraped a traffic cone!');
+    });
+
     test('a second contact from the same vehicle rules nothing (issue #42)',
         () async {
       final game = await mountGame(freshGame());
@@ -356,7 +374,9 @@ void main() {
       expect(report.closingSpeedAlongImpact, closeTo(147.5, 1e-9));
       expect(report.playerContribution, 0);
       // Neither the panel's wording nor the log's blames the player.
-      expect(report.headline, 'A sportsCar ran into you — nothing lost.');
+      // The display name through the live contact path — the enum
+      // identifier must never reach the headline (issue #151).
+      expect(report.headline, 'A sports car ran into you — nothing lost.');
       expect(report.explanation, contains('not ruled against the taxi'));
     });
 

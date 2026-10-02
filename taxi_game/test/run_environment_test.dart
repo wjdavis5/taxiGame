@@ -410,11 +410,24 @@ void main() {
         'open', () {
       final env = RunEnvironment(seed: 9);
       const spacing = RunEnvironment.intersectionSpacing;
-      expect(env.isIntersectionAt(spacing - 1), isFalse);
-      expect(env.isIntersectionAt(spacing + 10), isTrue,
-          reason: 'first cross street at 9000 px');
-      expect(env.isIntersectionAt(2 * spacing + 10), isTrue);
-      for (var d = 0.0; d < spacing; d += 100) {
+      const halfBand = RunEnvironment.intersectionHalfBand;
+      // The band is centred on the junction (issue #152): the same ±160 px
+      // rectangle the renderer paints, so the no-spawn zone is the cross
+      // street itself — not its lower half plus 160 px of plain road
+      // above. Both edges of the painted band flip exactly there.
+      expect(env.isIntersectionAt(spacing - halfBand - 1), isFalse);
+      expect(env.isIntersectionAt(spacing - halfBand + 1), isTrue,
+          reason: 'the painted band opens at spacing − halfBand');
+      expect(env.isIntersectionAt(spacing - 1), isTrue,
+          reason: 'the junction\'s lower half is inside the band — the '
+              'old lookup started the band at the centre and let traffic '
+              'spawn here');
+      expect(env.isIntersectionAt(spacing + halfBand - 1), isTrue);
+      expect(env.isIntersectionAt(spacing + halfBand + 1), isFalse,
+          reason: 'plain road resumes past the junction\'s upper edge — '
+              'the old lookup held 160 px of it empty');
+      expect(env.isIntersectionAt(2 * spacing - halfBand + 10), isTrue);
+      for (var d = 0.0; d < spacing - halfBand; d += 100) {
         expect(env.isIntersectionAt(d), isFalse, reason: 'at $d');
       }
     });
