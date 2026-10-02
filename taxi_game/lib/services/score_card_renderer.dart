@@ -142,16 +142,65 @@ class ScoreCardRenderer {
     y = _drawRow(canvas, 'Date', card.dateKey, y);
     _drawRow(canvas, card.isDailyShift ? 'Day seed' : 'Seed', card.seedLabel, y);
 
-    _drawCentered(
+    // The footer (issue #165): the daily's 38-char line is the widest
+    // thing on the card — under the tests' Ahem it measures
+    // 38 × (32 + 4) = 1368 px, far past the 840 px box every other
+    // centred line gets, so the old maxLines:1 + ellipsis layout cut it
+    // to "…TODAY O…". The copy is the point of the share, so the type
+    // steps down until the whole line fits instead. The centre also
+    // moves from 1304 down to 1322: 96 px under the Day-seed row (centre
+    // 1226), near the rows' own 118 px pitch, so the smaller line keeps
+    // its place in the rhythm while its ink stays clear of the card's
+    // bottom edge (a 32 px footer's ink ends 62 px above it).
+    final footer = footerPainterFor(card.footer);
+    footer.paint(
       canvas,
-      card.footer,
-      // cardWidth/2, cardHeight - 96.
-      at: const ui.Offset(500, 1304),
-      size: 32,
-      color: _muted,
-      weight: ui.FontWeight.w600,
-      letterSpacing: 4,
+      const ui.Offset(cardWidth / 2, 1322) -
+          ui.Offset(footer.width / 2, footer.height / 2),
     );
+  }
+
+  /// The footer's box: the 140–860 column the divider (above) and the
+  /// stat rows keep to — 720 px, tighter than the 840 px the other
+  /// centred lines get, so even the widest line honours the card's
+  /// margins.
+  static const double _footerBoxWidth = 720;
+
+  /// The footer's nominal type: 32 px w600, what a line that already
+  /// fits wears (the ordinary card's 'CAB HUSTLE' never shrinks).
+  static const double _footerSize = 32;
+
+  /// The floor the fit stops at: a footer too long to fit even at 8 px
+  /// is unreadable anyway, and the painter's maxLines:1 + ellipsis —
+  /// kept on purely as the safety net — takes over rather than the loop.
+  static const double _footerMinSize = 8;
+
+  /// Builds and lays out the footer's painter, stepping the type down
+  /// 1 px at a time (keeping the 32 px : 4 px = 8 : 1
+  /// size-to-letterSpacing ratio) until the whole line fits one line of
+  /// [_footerBoxWidth] — the issue's preferred fix: keep the copy, scale
+  /// the type. The layout measures whatever font is actually loaded, so
+  /// on a device the shrink is only as deep as the real face needs.
+  ///
+  /// Exposed for the issue #165 regression test: it asserts the fitted
+  /// painter lays the full line out with no ellipsis inside the column.
+  @visibleForTesting
+  TextPainter footerPainterFor(String footer) {
+    var size = _footerSize;
+    while (true) {
+      final painter = _painterFor(
+        footer,
+        size: size,
+        color: _muted,
+        weight: ui.FontWeight.w600,
+        letterSpacing: size / 8,
+      );
+      painter.layout(maxWidth: _footerBoxWidth);
+      if (!painter.didExceedMaxLines || size <= _footerMinSize) {
+        return painter;
+      }
+      size -= 1;
+    }
   }
 
   void _drawCentered(

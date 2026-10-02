@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/painting.dart' show TextSpan;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/game/systems/score_card.dart';
 import 'package:taxi_game/services/score_card_renderer.dart';
@@ -124,5 +125,94 @@ void main() {
     expect(rankTop - titleBottom, greaterThanOrEqualTo(16),
         reason: 'the rank must not trade the overlap upward into the '
             'title either');
+  });
+
+  test('the fitted footer lays its whole line out — no ellipsis (issue #165)',
+      () async {
+    // 'ONE COURSE · EVERY PLAYER · TODAY ONLY' is 38 characters; at the
+    // old fixed 32 px + 4 px tracking that is 38 × 36 = 1368 px under
+    // the tests' Ahem, so the 840 px box (maxLines:1 + ellipsis) cut it
+    // to "…TODAY O…". The fix keeps the copy and shrinks the type until
+    // the entire line fits the 720 px column the rest of the card keeps
+    // to, on one line.
+    final painter = ScoreCardRenderer().footerPainterFor(card.footer);
+
+    expect(painter.didExceedMaxLines, isFalse,
+        reason: 'the whole footer must fit one line — the ellipsis is a '
+            'safety net, not the layout');
+    expect(painter.width, lessThanOrEqualTo(720),
+        reason: 'the footer must honour the 140–860 column like every '
+            'other element on the card');
+
+    final size = (painter.text as TextSpan).style!.fontSize!;
+    expect(size, lessThan(32),
+        reason: 'the 38-char line cannot fit at the nominal 32 px — the '
+            'fit loop must have stepped the type down');
+
+    // Ahem gives every glyph a size-px square plus size/8 tracking, so a
+    // line that laid out all 38 characters measures exactly this; one
+    // that ellipsized drops characters for the '\u2026' and cannot
+    // match it.
+    expect(painter.width, closeTo(card.footer.length * size * 9 / 8, 0.5),
+        reason: 'every character of the footer must be on the line');
+  });
+
+  test('the footer paints inside the column, clear of the last row '
+      '(issue #165)', () async {
+    // The last stat row (Day seed) centres at 1226; under the tests'
+    // Ahem its 52 px white value ink ends at ~1252. Below that band the
+    // card paints nothing but the footer, so the muted ink found there
+    // is the footer's — and it must sit whole inside the 140–860
+    // column, clear of the row above it.
+    final image = await ScoreCardRenderer().renderImage(card);
+    final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    final px = data!.buffer.asUint8List();
+    const w = ScoreCardRenderer.cardWidth;
+
+    /// A pixel "is" a colour when it is exactly that colour — glyph
+    /// interiors are flat ink, so antialiased edges can only shrink a
+    /// measured extent, never grow it.
+    bool isColor(int x, int y, int r, int g, int b) {
+      final o = (y * w + x) * 4;
+      return px[o] == r && px[o + 1] == g && px[o + 2] == b;
+    }
+
+    // The Day-seed row's white value ink: the last white on the card
+    // (the Date row's value ends ~1134, well above this window).
+    var whiteBottom = -1;
+    for (var y = 1150; y < 1300; y++) {
+      for (var x = 0; x < w; x++) {
+        if (isColor(x, y, 0xFF, 0xFF, 0xFF)) whiteBottom = y;
+      }
+    }
+    expect(whiteBottom, greaterThan(-1),
+        reason: 'the Day-seed row must paint its white value ink');
+
+    var footerTop = -1, footerBottom = -1, footerLeft = w, footerRight = -1;
+    for (var y = whiteBottom + 1; y < ScoreCardRenderer.cardHeight; y++) {
+      for (var x = 0; x < w; x++) {
+        if (isColor(x, y, 0x9F, 0xB2, 0xBF)) {
+          if (footerTop == -1) footerTop = y;
+          footerBottom = y;
+          if (x < footerLeft) footerLeft = x;
+          if (x > footerRight) footerRight = x;
+        }
+      }
+    }
+
+    expect(footerTop, greaterThan(-1),
+        reason: 'the footer must paint muted ink below the last stat row');
+    // The 140–860 column the divider and the rows keep to: the old 840
+    // px box centred the ellipsized line across 80..920, outside these
+    // margins entirely.
+    expect(footerLeft, greaterThanOrEqualTo(140));
+    expect(footerRight, lessThanOrEqualTo(860));
+    expect(footerTop - whiteBottom, greaterThanOrEqualTo(16),
+        reason: 'the footer must clear the last row\'s value ink — the '
+            'centre sits 96 px under the row, near its own 118 px pitch');
+    expect(ScoreCardRenderer.cardHeight - footerBottom,
+        greaterThanOrEqualTo(16),
+        reason: 'the footer must also clear the card\'s bottom edge — '
+            'the move down to centre 1322 must not push it off the card');
   });
 }
