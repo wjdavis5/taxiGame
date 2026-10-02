@@ -21,6 +21,20 @@ import '../../game/taxi_game.dart';
 /// natural size — a 320×568 phone, a large text scale — a FittedBox
 /// shrinks it rather than letting it climb back onto the cab.
 ///
+/// Measured in the game canvas's own frame, un-inset (issue #182): the
+/// #177 arithmetic was right but its ruler was not. This overlay used to
+/// wrap its measurement in a [SafeArea], which ate the home indicator's
+/// 34 pt bottom inset — an inset the canvas itself keeps, because
+/// GameScreen insets the game top-only and hands the bottom to the
+/// system swipe — so the pill was placed in a frame 34 pt shorter than
+/// the canvas the cab is rendered into: on a 420×912 phone, 808 pt of
+/// ruler against 842 pt of road, and the cab's rendered tail sat lower
+/// than the frame-local math placed it, riding the pill back up onto
+/// the cab on every home-indicator iPhone. Flame lays overlays in the
+/// same stack as the game canvas, so the [LayoutBuilder]'s constraints
+/// here are the canvas exactly — and that, nothing narrower, is the
+/// frame the tail is measured in.
+///
 /// Entirely pointer-transparent: the hint sits inside the stick's own
 /// touch region (the lower half), so any tap on it *is* a stick touch —
 /// [VirtualStick]'s lower-half gate accepts it and dismisses the hint
@@ -73,92 +87,94 @@ class _ControlHintOverlayState extends State<ControlHintOverlay> {
   @override
   Widget build(BuildContext context) {
     return IgnorePointer(
-      child: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            // Nothing to park under until the cab exists: render nothing
-            // rather than guess a position the measured frame would then
-            // have to correct on screen. The poll above brings the first
-            // real frame within a tick of the cab appearing.
-            if (!widget.game.isPlayerReady) return const SizedBox.shrink();
+      // No SafeArea in here (issue #182): Flame lays this overlay in
+      // the same stack as the game canvas, so the constraints below are
+      // the canvas exactly — including the bottom band a SafeArea would
+      // carve off the ruler while the cab keeps rendering through it.
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Nothing to park under until the cab exists: render nothing
+          // rather than guess a position the measured frame would then
+          // have to correct on screen. The poll above brings the first
+          // real frame within a tick of the cab appearing.
+          if (!widget.game.isPlayerReady) return const SizedBox.shrink();
 
-            final screenW = constraints.maxWidth;
-            final screenH = constraints.maxHeight;
-            // The fixed-resolution viewport renders the 400×800 world at
-            // min(w/400, h/800) — the same scale the bank panel places
-            // its cab bound with (issue #134).
-            final worldScale = math.min(screenW / 400, screenH / 800);
+          final screenW = constraints.maxWidth;
+          final screenH = constraints.maxHeight;
+          // The fixed-resolution viewport renders the 400×800 world at
+          // min(w/400, h/800) — the same scale the bank panel places
+          // its cab bound with (issue #134).
+          final worldScale = math.min(screenW / 400, screenH / 800);
 
-            // The cab's tail on screen (issue #177). The endless camera
-            // follows the cab itself, so the tail sits half a body below
-            // centre; the level camera follows a lead 100 px up the
-            // road, so the whole cab rides that much lower — the
-            // alignment the old fixed placement ignored.
-            final leadBelowCentre =
-                widget.game.isEndless ? 0.0 : TaxiGame.levelCameraLead;
-            final cabTailY = screenH / 2 +
-                (leadBelowCentre + widget.game.player.stats.height / 2) *
-                    worldScale;
+          // The cab's tail on screen (issue #177). The endless camera
+          // follows the cab itself, so the tail sits half a body below
+          // centre; the level camera follows a lead 100 px up the
+          // road, so the whole cab rides that much lower — the
+          // alignment the old fixed placement ignored.
+          final leadBelowCentre =
+              widget.game.isEndless ? 0.0 : TaxiGame.levelCameraLead;
+          final cabTailY = screenH / 2 +
+              (leadBelowCentre + widget.game.player.stats.height / 2) *
+                  worldScale;
 
-            // The pill's lane: everything below one clearance under the
-            // cab's tail. Where that lane cannot hold the pill at
-            // natural size, the FittedBox shrinks it uniformly instead
-            // of letting it overflow back onto the cab.
-            const cabClearance = 16.0;
-            final hintTop = cabTailY + cabClearance;
-            final laneHeight = math.max(0.0, screenH - hintTop);
+          // The pill's lane: everything below one clearance under the
+          // cab's tail. Where that lane cannot hold the pill at
+          // natural size, the FittedBox shrinks it uniformly instead
+          // of letting it overflow back onto the cab.
+          const cabClearance = 16.0;
+          final hintTop = cabTailY + cabClearance;
+          final laneHeight = math.max(0.0, screenH - hintTop);
 
-            return Stack(
-              children: [
-                Positioned(
-                  top: hintTop,
-                  left: 0,
-                  right: 0,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: laneHeight),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.topCenter,
-                        child: SizedBox(
-                          width: screenW - 48,
-                          child: Container(
-                            key: const ValueKey('controlHint'),
-                            padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: const Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                CustomPaint(
-                                  size: Size(140, 116),
-                                  painter: _StickGhostPainter(),
+          return Stack(
+            children: [
+              Positioned(
+                top: hintTop,
+                left: 0,
+                right: 0,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: laneHeight),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.topCenter,
+                      child: SizedBox(
+                        width: screenW - 48,
+                        child: Container(
+                          key: const ValueKey('controlHint'),
+                          padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              CustomPaint(
+                                size: Size(140, 116),
+                                painter: _StickGhostPainter(),
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                ControlHintOverlay._hintLine,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  height: 1.3,
                                 ),
-                                SizedBox(height: 8),
-                                Text(
-                                  ControlHintOverlay._hintLine,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    height: 1.3,
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ],
-            );
-          },
-        ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
