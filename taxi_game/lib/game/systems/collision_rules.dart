@@ -39,7 +39,12 @@ class CrashReport {
   /// Whether this contact was judged a scrape or a crash.
   final ContactSeverity severity;
 
-  /// Which traffic vehicle took part ('sedan', 'bus', ...).
+  /// Which traffic vehicle took part, as the player reads it ('sedan',
+  /// 'sports car', 'SUV', 'traffic cone'). Never the Dart enum
+  /// identifier: the traffic call site passes the type's display name and
+  /// the cone path a plain noun, and [headline], [explanation], and the
+  /// scrape marker interpolate this string verbatim — the enum's `.name`
+  /// read on screen as "You hit the sportsCar flat out." (issue #151).
   final String vehicleKind;
 
   /// |player velocity| in px/s at the moment of contact.
@@ -86,9 +91,13 @@ class CrashReport {
       case ContactSeverity.scrape:
         // A struck cab is never the one doing the hitting (issue #58): a
         // player parked in a lane who gets collected by traffic must not
-        // read 'You …' off their own screen.
+        // read 'You …' off their own screen. The article is chosen by
+        // sound (issue #151): 'An SUV ran into you', not 'A SUV'.
         if (playerContribution <= 0) {
-          return 'A $vehicleKind ran into you — nothing lost.';
+          final article = CollisionRules.articleFor(vehicleKind);
+          final capitalArticle =
+              '${article[0].toUpperCase()}${article.substring(1)}';
+          return '$capitalArticle $vehicleKind ran into you — nothing lost.';
         }
         return 'You scraped the $vehicleKind — slower now, nothing lost.';
     }
@@ -101,12 +110,13 @@ class CrashReport {
     final mine = playerSpeed.toStringAsFixed(1);
     final theirs = trafficSpeed.toStringAsFixed(1);
     final fault = playerContribution.toStringAsFixed(1);
+    final article = CollisionRules.articleFor(vehicleKind);
     final at =
         '(${contactPoint.x.toStringAsFixed(1)}, ${contactPoint.y.toStringAsFixed(1)})';
     switch (severity) {
       case ContactSeverity.crash:
-        return 'Crashed into a $vehicleKind — $axis px/s along the impact '
-            'axis (≥ ${CollisionRules.scrapeSpeedThreshold.toStringAsFixed(0)} '
+        return 'Crashed into $article $vehicleKind — $axis px/s along the '
+            'impact axis (≥ ${CollisionRules.scrapeSpeedThreshold.toStringAsFixed(0)} '
             'crash threshold), $total px/s total closing speed '
             '(taxi $mine, $vehicleKind $theirs, taxi closing at $fault '
             'px/s of it), contact at $at.';
@@ -115,13 +125,13 @@ class CrashReport {
         // threshold: a rear-end can close well over it and still rule a
         // scrape, because none of the closing was the player's.
         if (playerContribution <= 0) {
-          return 'Struck by a $vehicleKind — $axis px/s closing along the '
-              'impact axis, none of it the taxi\'s (taxi $mine, '
+          return 'Struck by $article $vehicleKind — $axis px/s closing '
+              'along the impact axis, none of it the taxi\'s (taxi $mine, '
               '$vehicleKind $theirs); not ruled against the taxi. '
               'Contact at $at.';
         }
-        return 'Scraped a $vehicleKind — $axis px/s along the impact axis, '
-            'under the ${CollisionRules.scrapeSpeedThreshold.toStringAsFixed(0)} '
+        return 'Scraped $article $vehicleKind — $axis px/s along the impact '
+            'axis, under the ${CollisionRules.scrapeSpeedThreshold.toStringAsFixed(0)} '
             'px/s crash threshold; taxi slowed to '
             '${(CollisionRules.scrapeSpeedKeep * 100).toStringAsFixed(0)}%. '
             'Contact at $at.';
@@ -278,6 +288,28 @@ class CollisionRules {
       timeToImpact: timeToImpact,
       closingSpeed: closingSpeed,
     );
+  }
+
+  /// 'a' or 'an' for [noun], chosen by sound rather than spelling
+  /// (issue #151). Every name the crash and scrape messages can carry —
+  /// sedan, truck, sports car, bus, traffic cone — opens with a
+  /// consonant sound and takes 'a', except 'SUV': it is read letter by
+  /// letter, and its leading 'S' opens with the vowel sound 'ess', so it
+  /// takes 'an' despite starting with a consonant letter. The rule
+  /// implements exactly that: a written vowel takes 'an', and so does an
+  /// initialism (capitals through its opening, like 'SUV') whose first
+  /// letter is one the reader pronounces with a vowel sound — of the
+  /// consonants, only B C D G J K P T V (and Q, W, Y, reading 'cue',
+  /// 'double-u', 'why') open otherwise.
+  static String articleFor(String noun) {
+    if (noun.length < 2) return 'a';
+    final first = noun[0];
+    if ('aeiouAEIOU'.contains(first)) return 'an';
+    final second = noun[1];
+    final initialism =
+        first.toUpperCase() == first && second.toUpperCase() == second;
+    if (initialism && !'BCDGJKPTVQWY'.contains(first)) return 'an';
+    return 'a';
   }
 
   /// Assembles the full telemetry record for a contact.

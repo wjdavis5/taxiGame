@@ -157,11 +157,34 @@ git push origin main
 
 ### 6. Watch the run and verify the result
 
+Watch the run for *this* push's commit, never "the newest run". Every push to
+`main` fires this workflow, and its `ios-release` concurrency group queues
+rather than cancels — so at any moment a newer run can be another push's, and
+the old recipe (sleep a fixed 20 s, take `--limit 1`) watched whatever push
+registered in that window and reported that push's result and build number as
+this release's (issue #153). Steps 1–2 verified a clean tree on `main` and
+step 5 just pushed, so `HEAD` is the pushed head for both release types —
+capture it, then poll until GitHub registers a run for exactly that commit:
+
 ```bash
-sleep 20
-ID=$(gh run list --repo wjdavis5/taxiGame --workflow=ios-release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+SHA=$(git rev-parse HEAD)
+ID=""
+for i in $(seq 1 30); do
+  # --commit pins the lookup to this push; `// empty` keeps jq silent on a
+  # miss so the emptiness check below fires (plain .[0] would print "null").
+  ID=$(gh run list --repo wjdavis5/taxiGame --workflow=ios-release.yml --commit "$SHA" --json databaseId --jq '.[0].databaseId // empty')
+  [ -n "$ID" ] && break
+  sleep 5
+done
 gh run watch "$ID" --repo wjdavis5/taxiGame --exit-status --interval 20
 ```
+
+If `$ID` is still empty after the loop (~2.5 minutes), stop and report that no
+run registered for the pushed commit — never fall back to the newest run.
+Every push to `main` triggers the workflow and the concurrency group queues
+rather than cancels, so the newest run is easily someone else's push, and
+reporting its result and build number as the release's is exactly the
+failure of issue #153.
 
 If it fails, read the actual failure rather than guessing:
 

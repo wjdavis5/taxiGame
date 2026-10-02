@@ -1,14 +1,20 @@
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
+import '../systems/collision_rules.dart';
+
 /// Floating world-space label naming what the taxi just scraped
 /// (issue #6 contact legibility). Rises and shrinks, then removes itself.
+/// The [vehicleKind] is the player-facing display name with its a/an
+/// chosen by sound (issue #151): 'Scraped an SUV!', never
+/// 'Scraped a suv!'.
 class ScrapeMarker extends TextComponent {
   ScrapeMarker({
     required Vector2 position,
     required String vehicleKind,
   }) : super(
-          text: 'Scraped a $vehicleKind!',
+          text:
+              'Scraped ${CollisionRules.articleFor(vehicleKind)} $vehicleKind!',
           anchor: Anchor.center,
           position: position,
           textRenderer: TextPaint(

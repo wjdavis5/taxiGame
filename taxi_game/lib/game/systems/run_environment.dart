@@ -874,12 +874,21 @@ class RunEnvironment {
   /// Whether [distance] sits inside an intersection band: a cross street
   /// crossing the road. Traffic never spawns inside one — the junction is
   /// working for its living — so every crossing reads as a brief clear
-  /// patch of city. The first junction lands one full spacing out; the
-  /// start line does not sit in a phantom one.
+  /// patch of city. The band is centred on the junction at every multiple
+  /// of [intersectionSpacing] and spans ±[intersectionHalfBand] — the same
+  /// rectangle the renderer paints and the construction clearance keeps
+  /// cones away from (both already treat the multiple as the centre). This
+  /// lookup used to answer `d % spacing < halfBand * 2`, a band starting
+  /// at the junction's centre: traffic materialised on the lower half of
+  /// every cross street while a 160 px strip of plain road above the
+  /// junction was held empty (issue #152). The first junction is still a
+  /// full spacing out — its band opens at `spacing − halfBand`, 8,840 px —
+  /// so the start line does not sit in a phantom one.
   bool isIntersectionAt(double distance) {
     final d = math.max(0.0, distance);
-    if (d < intersectionSpacing) return false;
-    return d % intersectionSpacing < intersectionHalfBand * 2;
+    if (d < intersectionSpacing - intersectionHalfBand) return false;
+    final m = d % intersectionSpacing;
+    return m < intersectionHalfBand || m > intersectionSpacing - intersectionHalfBand;
   }
 
   // --- Determinism --------------------------------------------------------
