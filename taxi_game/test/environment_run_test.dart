@@ -397,6 +397,27 @@ void main() {
           reason: 'the falloff keeps climbing toward the rim');
       expect(at120, lessThan(outside),
           reason: 'the rim hands over to the full tint, not a cliff');
+
+      // The long forward throw (issue #147): 300 px dead ahead is past
+      // the warm glow (57–177 px up-screen) and past where the broken
+      // build's *circular* falloff died — a radial shader's radius is a
+      // fraction of the rect's shortest side, so shading the 220×520
+      // oval cut a mere 110 px circle, 253 px of reach, and this probe
+      // read the full 158. The elliptical falloff reaches ~403 px and
+      // leaves ~98 here: well cleared, but only partly — this far out
+      // the tint is fading back in. (The vertical follow parks the cab
+      // at y≈400, so 300 px up stays on the canvas.)
+      expect(cy, greaterThan(310),
+          reason: 'precondition: the cab sits mid-viewport, probe stays '
+              'on the canvas');
+      final ahead300 = alphaAt(cx, cy - 300);
+      expect(ahead300, lessThan(120),
+          reason: 'the beam must still be clearing night 300 px ahead — '
+              'the 110 px circular shader of #147 left the full 158 '
+              'here');
+      expect(ahead300, greaterThan(75),
+          reason: 'partly cleared only: at 300 px the ellipse is past '
+              'its 0.6 radius and the tint is reclaiming the screen');
     });
 
     test('the fog bubble fades the same way (issue #142)', () async {
@@ -438,6 +459,25 @@ void main() {
       expect(centre, lessThan(at65), reason: 'the fog thins toward the cab');
       expect(at65, lessThan(at120), reason: 'and thickens back out again');
       expect(at120, lessThan(outside), reason: 'the rim hands over to the fog');
+
+      // Same centre-line probe as the night test (issue #147): 300 px
+      // ahead, the fog bubble's own reach ends long before (its
+      // square pool is 149.5 px), so only the 240×468 sight oval can
+      // clear here — and its broken circular shader (radius 120, reach
+      // 130+120 = 250 px) did not, leaving the full 140. The ellipse
+      // (120×234 around a centre 130 px ahead) keeps ~104 of fog here:
+      // thinned, not gone.
+      expect(cy, greaterThan(310),
+          reason: 'precondition: the cab sits mid-viewport, probe stays '
+              'on the canvas');
+      final ahead300 = alphaAt(cx, cy - 300);
+      expect(ahead300, lessThan(125),
+          reason: 'the sight bubble must still be thinning fog 300 px '
+              'ahead — the 120 px circular shader of #147 left the '
+              'full 140 here');
+      expect(ahead300, greaterThan(80),
+          reason: 'thinned only: the fog closes back in past the '
+              'bubble');
     });
   });
 

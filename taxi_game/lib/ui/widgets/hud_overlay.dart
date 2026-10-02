@@ -708,44 +708,78 @@ class _FareOfferBarState extends State<_FareOfferBar> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _HudPill(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(_iconFor(type), color: type.markerColor, size: 16),
-                const SizedBox(width: 6),
-                Text(
-                  type.offerBlurb(offer.reward),
-                  style: TextStyle(
-                    color: type.markerColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                // The decline: removes the waiting fare from the street —
-                // no pay, no penalty. The whole decision is here. Sized
-                // to the platform's minimum touch target: the decline is
-                // the point of the offer bar, not fine print.
-                TextButton(
-                  key: const ValueKey('decline_fare_button'),
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    minimumSize: const Size(44, 44),
-                  ),
-                  onPressed: () => widget.game.declineCurrentOffer(),
-                  child: const Text(
-                    'SKIP',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.5,
+          // The pitch yields before the decision does — the same rule
+          // the scoring row (#43) and the title pill (#57) already live
+          // by. The widest fare blurb (a long-haul's
+          // 'LONG HAUL · 999 c · +3 CHAIN') plus the SKIP button
+          // overflows the narrowest phone's 343 px of content all by
+          // itself.
+          //
+          // The two Flexibles are a pair, and both are needed. A Row
+          // lays its ordinary children out with no main-axis maximum
+          // at all (the rendering layer's non-flex child constraints
+          // bound only the cross axis), so the pill's own min-sized
+          // Row has no width to flex against — a Flexible nested in it
+          // alone is inert, and the pill simply overflows, which is
+          // exactly what shipped. The outer Flexible is what hands the
+          // pill the row's bound; the inner one then spends whatever
+          // of it is left after SKIP on the scale-down box: icon and
+          // blurb render at natural size while they fit and shrink
+          // proportionally when they do not, while SKIP — this bar's
+          // one control, and the control is never the thing that gives
+          // way (the pause button's own rule, #57) — keeps its full
+          // size and 44 px touch target outside the scaling.
+          Flexible(
+            child: _HudPill(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(_iconFor(type),
+                              color: type.markerColor, size: 16),
+                          const SizedBox(width: 6),
+                          Text(
+                            type.offerBlurb(offer.reward),
+                            style: TextStyle(
+                              color: type.markerColor,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 4),
+                  // The decline: removes the waiting fare from the street —
+                  // no pay, no penalty. The whole decision is here. Sized
+                  // to the platform's minimum touch target: the decline is
+                  // the point of the offer bar, not fine print.
+                  TextButton(
+                    key: const ValueKey('decline_fare_button'),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      minimumSize: const Size(44, 44),
+                    ),
+                    onPressed: () => widget.game.declineCurrentOffer(),
+                    child: const Text(
+                      'SKIP',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],

@@ -86,22 +86,114 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     );
   }
 
+  /// Bumper room the headway rule adds to the follower's own body length
+  /// before its cap engages (issue #146). One frame at the fleet's
+  /// fastest same-role overtake differential — an oncoming sports car
+  /// (220 · 1.3 = 286 px/s) closing on a crawling bus (150 · 0.6 = 90)
+  /// at 196 px/s — eats ~3.3 px at 1/60 s and ~13 px at the
+  /// [TaxiGame.maxUpdateDelta] 1/15 s frame clamp (issue #36), so 16 px
+  /// means the cap always lands while metal still stands between the
+  /// bumpers.
+  static const double headwayMargin = 16.0;
+
   @override
   void update(double dt) {
     super.update(dt);
 
-    if (!_isActive) return;
+    if (_isActive) {
+      _timeSinceLastSpawn += dt;
 
-    _timeSinceLastSpawn += dt;
+      // Spawn new vehicles based on interval
+      if (_timeSinceLastSpawn >= _profile.spawnInterval) {
+        _timeSinceLastSpawn = 0.0;
+        _spawnVehicles(_profile);
+      }
 
-    // Spawn new vehicles based on interval
-    if (_timeSinceLastSpawn >= _profile.spawnInterval) {
-      _timeSinceLastSpawn = 0.0;
-      _spawnVehicles(_profile);
+      // Clean up vehicles that are off-screen
+      _activeVehicles.removeWhere((vehicle) => vehicle.shouldRemove);
     }
 
-    // Clean up vehicles that are off-screen
-    _activeVehicles.removeWhere((vehicle) => vehicle.shouldRemove);
+    // Headway runs even while spawning is paused: the endings pause this
+    // spawner while the world behind the overlay keeps rolling, and a
+    // pass that stopped with the spawns would leave its last caps frozen
+    // on cars that have long since left whoever paced them behind.
+    _capTrafficHeadway();
+  }
+
+  /// Present-tense headway (issue #146): no traffic drives through
+  /// traffic. Every car used to move at a constant drawn speed and read
+  /// no other car, so a faster car passed straight through the slower
+  /// one ahead in its lane — fused pairs sat on screen for 15-20 s of a
+  /// 4-minute shift. Prevention at spawn cannot fix that: the avenue
+  /// merge funnel converges two same-direction lanes onto one past a
+  /// taper, so which cars end up sharing a lane is unknowable at the
+  /// moment they materialise. This pass instead re-reads the road every
+  /// frame — this spawner ticks before the vehicles it spawned (it was
+  /// mounted first) — and caps each car's [TrafficVehicle.paceLimit] to
+  /// the *effective* speed of same-role traffic ahead of it: same
+  /// direction or oncoming alike (each role paces only itself; oncoming
+  /// closing on the cab is the game, not a queue), laterally overlapped
+  /// by full sprite width (the visible bodies, not the scaled hitboxes),
+  /// and within a body length plus [headwayMargin] of bumper gap — the
+  /// min over whoever qualifies, the same cap idiom the taxi's
+  /// scraped-traffic rule (#60) uses. Merges, path extensions (#129)
+  /// and the world fold (#30) all just change who is ahead, and the
+  /// next frame reads the new truth. No RNG is spent, so per-seed
+  /// reproducibility survives untouched; the O(n²) pass runs over the
+  /// view band's handful of cars.
+  void _capTrafficHeadway() {
+    final world = _runWorld;
+    if (world == null) return;
+    final traffic = world.children.whereType<TrafficVehicle>().toList();
+
+    // A fresh cap every frame: a cap that survived its frame would pace
+    // a car to traffic that has since merged away or been culled.
+    for (final vehicle in traffic) {
+      vehicle.paceLimit = null;
+    }
+
+    for (final follower in traffic) {
+      // Unmounted cars were queued this very frame, and a mounted car
+      // whose async onLoad (sprite load) has not completed yet has no
+      // velocity — either way it has no place in this frame's road, and
+      // reading one would pace a whole lane to a standing ghost.
+      if (!follower.isMounted || !follower.isLoaded) continue;
+      final followerOncoming = follower.velocity.y > 0;
+      for (final leader in traffic) {
+        if (identical(leader, follower)) continue;
+        if (!leader.isMounted || !leader.isLoaded) continue;
+        // Same role only.
+        if ((leader.velocity.y > 0) != followerOncoming) continue;
+        final delta = leader.position.y - follower.position.y;
+        // Ahead of the follower in *its* direction of travel: up-screen
+        // (smaller y) for same-direction traffic, down-screen for
+        // oncoming.
+        if (followerOncoming ? delta <= 0 : delta >= 0) continue;
+        // Laterally overlapped by the full bodies — the fusion a player
+        // sees is sprite on sprite, and the taper's diagonals bring
+        // merging cars into this overlap gradually, which is exactly
+        // when they must start pacing each other.
+        if ((leader.position.x - follower.position.x).abs() >=
+            (leader.vehicleSize.x + follower.vehicleSize.x) / 2) {
+          continue;
+        }
+        final bumperGap =
+            delta.abs() - (leader.vehicleSize.y + follower.vehicleSize.y) / 2;
+        if (bumperGap > follower.vehicleSize.y + headwayMargin) continue;
+        // Effective speed: the leader may itself be paced by the car
+        // ahead of it, and a queue must inherit the front's pace, not
+        // the leader's cruise. And when a merge race has already
+        // delivered the follower *onto* the leader (negative bumper
+        // gap), matching pace would only freeze the overlap in place —
+        // so there the cap eases 20% below the leader's pace until the
+        // bumpers part, and the plain cap holds the gap from there.
+        final pace = leader.velocity.length * (bumperGap < 0 ? 0.8 : 1.0);
+        final limit = follower.paceLimit;
+        if (limit == null || pace < limit) {
+          follower.paceLimit = pace;
+        }
+      }
+    }
   }
 
   void _spawnVehicles(TrafficProfile profile) {
@@ -185,6 +277,29 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     // probability, speed, type.
     const types = TrafficVehicleType.values;
     final type = types[random.nextInt(types.length)];
+
+    // No materialising on top of living traffic (issue #146). The spawn
+    // line sweeps the road the camera is leaving, and a wave that fires
+    // while a same-role car sits on it used to place the new car inside
+    // it: before the headway rule the pair simply drove through each
+    // other, but with the rule in place a fed chain of such overlaps
+    // eases apart 0.8× per link — compounding toward standing. The gate
+    // skips the spawn when the rolled body would land overlapping any
+    // same-role car's full body (plus the headway margin), and it runs
+    // after the roll like every gate above, so the RNG stream per seed
+    // is untouched.
+    for (final other in _runWorld!.children.whereType<TrafficVehicle>()) {
+      if (!other.isMounted || !other.isLoaded) continue;
+      if ((other.velocity.y > 0) != laneConfig.oncoming) continue;
+      if ((other.position.x - spawnX).abs() >=
+          (other.vehicleSize.x + type.size.x) / 2) {
+        continue;
+      }
+      if ((other.position.y - spawnY).abs() <
+          (other.vehicleSize.y + type.size.y) / 2 + headwayMargin) {
+        return;
+      }
+    }
 
     // The waypoints the vehicle will follow: the endless road's merge
     // schedule, or the level street's straight lanes.

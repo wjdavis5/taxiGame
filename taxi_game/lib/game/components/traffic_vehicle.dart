@@ -22,6 +22,30 @@ class TrafficVehicle extends PositionComponent
   Vector2 velocity = Vector2.zero();
   bool shouldRemove = false;
 
+  /// Unit direction of the current path leg, remembered whenever
+  /// [_updateVelocityTowardsWaypoint] writes a real velocity. The pace
+  /// cap re-derives velocity from it instead of scaling the standing
+  /// vector: a car's leg legitimately begins on a zero-offset waypoint
+  /// (velocity zero for a frame, #72), and a *scale* of that zero —
+  /// including the 0 px/s cap a freshly mounted leader hands out before
+  /// its own first move — could never be un-zeroed, parking the car on
+  /// the road forever (issue #146).
+  Vector2? _travelDirection;
+
+  /// The present-tense headway cap (issue #146): the forward speed the
+  /// traffic stream holds this car to this frame — the effective pace of
+  /// whatever same-role traffic is ahead of it in its lane — or null when
+  /// the road ahead is clear and its own [speed] stands. Rewritten every
+  /// frame by [TrafficSpawner]'s headway pass *before* this component
+  /// moves (the spawner ticks first; it was mounted first), so the cap
+  /// always describes the road as it is this frame: merges, path
+  /// extensions and the world fold change who is ahead, and the rule
+  /// simply re-reads them. A cap slows a car to a follower's distance; it
+  /// never speeds one up, and lifting it (road clear again) returns the
+  /// car to [speed] instantly — the same present-tense snap the taxi's
+  /// scraped-traffic pace cap (#60) lives by.
+  double? paceLimit;
+
   /// Logical footprint of the vehicle. The hitbox is derived from this, never
   /// from the sprite, so swapping the art cannot change collision behaviour.
   late final Vector2 vehicleSize;
@@ -200,6 +224,7 @@ class TrafficVehicle extends PositionComponent
         }
       }
 
+      _enforcePaceLimit();
       // Update position
       position += velocity * dt;
     } else {
@@ -237,6 +262,7 @@ class TrafficVehicle extends PositionComponent
       // inside the rebuild (below), the velocity it leaves behind is
       // the first real leg's, so the car simply drives on.
       _extendPath(env);
+      _enforcePaceLimit();
       position += velocity * dt;
     }
 
@@ -349,9 +375,29 @@ class TrafficVehicle extends PositionComponent
     // than normalise a zero vector into NaN.
     if (offset.length < 0.001) {
       velocity = Vector2.zero();
+      _travelDirection = null;
       return;
     }
-    velocity = offset.normalized() * speed;
+    _travelDirection = offset.normalized();
+    velocity = _travelDirection! * speed;
+  }
+
+  /// Holds this frame's velocity to [paceLimit] when the headway pass
+  /// set one below cruise (issue #146). The velocity is *re-derived*
+  /// from the leg's remembered direction at the capped speed — never
+  /// scaled off the standing vector, which a cap of 0 (or a leg that
+  /// began on a zero-offset waypoint) would park at zero for good.
+  /// Called immediately before every move, after whichever velocity
+  /// write this frame performed, so no leg of the path can outrun the
+  /// cap; a car mid-merge diagonal keeps merging at the paced speed.
+  void _enforcePaceLimit() {
+    final direction = _travelDirection;
+    if (direction == null) return;
+    final limit = paceLimit;
+    final effective = limit != null && limit < speed ? limit : speed;
+    velocity
+      ..setFrom(direction)
+      ..scale(effective);
   }
 
   /// Whether this vehicle's path carries it down the screen (toward

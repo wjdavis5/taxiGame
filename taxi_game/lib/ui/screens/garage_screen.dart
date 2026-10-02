@@ -133,11 +133,30 @@ class GarageScreen extends StatelessWidget {
 /// Every card also surfaces the car's handling profile (issue #9): four
 /// fleet-normalized bars for top speed, acceleration, steering, and body
 /// size, all drawn on one shared scale so bar lengths compare across cards.
+///
+/// The card has two shapes (issue #149). Wide screens get the side-by-side
+/// row — sprite, title, bars, action on one line. A 320 pt screen (the
+/// 4-inch iPhone SE, or any 375 pt iPhone under Display Zoom) cannot fund
+/// that row: sprite (84) + gaps (20) + action button leave the middle
+/// column narrower than the 58 px a stat row consumes before its track, so
+/// every track collapsed to zero width and every row overflowed. Below
+/// [_stackBelowWidth] the card stacks instead — sprite and title share the
+/// top line, the bars span the whole card (~190 px of track at 320 pt),
+/// and the action drops to its own line under them.
 class _VehicleCard extends StatelessWidget {
   final GarageVehicle vehicle;
   final GameStateService gameState;
 
   const _VehicleCard({required this.vehicle, required this.gameState});
+
+  /// The widest card content that still gets the stacked layout. The cut
+  /// sits between the real surfaces, not between mid-build states: 320 pt
+  /// leaves the card 242–246 px of content (after the list's 48 px of
+  /// padding, the card's own 24, and the border — 3 px on the equipped
+  /// card, 1 px on the rest), and 375 pt leaves 297–301 px, so every card
+  /// on one screen picks the same shape and 375 pt keeps the row layout
+  /// the rest of the suite verifies.
+  static const double _stackBelowWidth = 290;
 
   @override
   Widget build(BuildContext context) {
@@ -155,51 +174,90 @@ class _VehicleCard extends StatelessWidget {
           width: selected ? 3 : 1,
         ),
       ),
-      child: Row(
-        children: [
-          // Preview: the exact sprite the game renders for this vehicle.
-          SizedBox(
-            width: 84,
-            height: 56,
-            child: Image.asset(
-              'assets/images/${VehicleSprites.playerSpritePath(vehicle.id)}',
-              fit: BoxFit.contain,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final action = _action(context, unlocked, selected);
+          if (constraints.maxWidth >= _stackBelowWidth) {
+            return Row(
               children: [
-                Text(
-                  vehicle.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                _preview(),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _titleBlock(unlocked, selected),
+                      const SizedBox(height: 8),
+                      _StatBars(vehicle: vehicle),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _statusLine(unlocked, selected),
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _StatBars(vehicle: vehicle),
+                const SizedBox(width: 8),
+                action,
               ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          _action(context, unlocked, selected),
-        ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _preview(),
+                  const SizedBox(width: 12),
+                  Expanded(child: _titleBlock(unlocked, selected)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              _StatBars(vehicle: vehicle),
+              const SizedBox(height: 8),
+              Align(alignment: Alignment.centerRight, child: action),
+            ],
+          );
+        },
       ),
     );
   }
+
+  /// Preview: the exact sprite the game renders for this vehicle.
+  Widget _preview() => SizedBox(
+        width: 84,
+        height: 56,
+        child: Image.asset(
+          'assets/images/${VehicleSprites.playerSpritePath(vehicle.id)}',
+          fit: BoxFit.contain,
+        ),
+      );
+
+  /// Name plus the ownership line, shared by both card shapes so what a
+  /// card says never depends on the screen width. Both lines ellipsize: in
+  /// the stacked shape the title column is only half the card wide, and a
+  /// name allowed to wrap there would balloon the card vertically the same
+  /// way the zero-width track did before issue #149.
+  Widget _titleBlock(bool unlocked, bool selected) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            vehicle.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _statusLine(unlocked, selected),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.white.withValues(alpha: 0.85),
+            ),
+          ),
+        ],
+      );
 
   String _statusLine(bool unlocked, bool selected) {
     if (!unlocked) return 'For sale';

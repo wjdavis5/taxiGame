@@ -27,11 +27,12 @@ class StickInput {
 /// above is hidden.
 ///
 /// Mounted on the camera viewport, so it draws over the world and the
-/// weather layer but under the Flutter HUD, and so its bounds cover the
-/// whole screen: every drag on the game reaches [onDragStart], which then
-/// applies its own gates (live game, lower half, one touch at a time).
-/// Events drive everything — no position polling — exactly like the tap
-/// input it replaces.
+/// weather layer but under the Flutter HUD. Its hit test
+/// ([containsLocalPoint]) claims the whole canvas — letterbox bands
+/// included (issue #148) — so every drag on the game reaches
+/// [onDragStart], which then applies its own gates (live game, lower
+/// half, one touch at a time). Events drive everything — no position
+/// polling — exactly like the tap input it replaces.
 class VirtualStick extends PositionComponent
     with DragCallbacks, HasGameReference<TaxiGame> {
   // --- Sensitivity constants — the playtest retuning knobs (issue #29) ---
@@ -116,6 +117,21 @@ class VirtualStick extends PositionComponent
     position = Vector2.zero();
     size = game.camera.viewport.virtualSize.clone();
   }
+
+  /// Claims every touch, wherever on the canvas it lands. [size] covers
+  /// the 400×800 virtual viewport, but the canvas letterboxes whenever its
+  /// aspect differs: on a 16:9 iPhone (375×667) the viewport renders
+  /// 333.5 px wide with ~21 px bands at each side, and a thumb landing in
+  /// a band maps to a local x outside [size.x] — Flame delivers drag
+  /// starts only to components whose [containsLocalPoint] accepts the
+  /// point, so [onDragStart] never fired there and the thumb sat dead
+  /// until it lifted and landed again in the picture (issue #148).
+  /// Returning true steals from nobody — this is the only component in
+  /// the game with event mixins — and [onDragStart]'s own gates (live,
+  /// unpaused, lower half, one pointer at a time) still decide which
+  /// touches become input.
+  @override
+  bool containsLocalPoint(Vector2 point) => true;
 
   @override
   void onDragStart(DragStartEvent event) {
