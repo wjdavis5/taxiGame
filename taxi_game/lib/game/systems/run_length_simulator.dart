@@ -280,10 +280,15 @@ class RunLengthSimulator {
   final double dt;
 
   // Road geometry, matching TaxiGame and DifficultyCurve. Lane positions
-  // are not constants any more (issue #24): the driver reads them from the
-  // environment's road geometry every tick.
+  // are not constants any more (issue #24): the driver reads them from
+  // the environment's road geometry every tick.
   static const double roadCenterX = 200;
   static const double spawnDistanceAhead = 500.0;
+
+  /// Bumper room the headway rule adds before its cap engages — mirrors
+  /// [TrafficSpawner.headwayMargin] (issue #146), so this harness queues
+  /// traffic exactly as far behind its leaders as the live road does.
+  static const double headwayMargin = 16.0;
 
   // Harness safety caps so a too-easy curve can never hang the batch: a
   // run that reaches these is recorded as survived-at-cap, not simulated
@@ -752,6 +757,26 @@ class RunLengthSimulator {
             )) {
               continue;
             }
+            // No materialising on top of living traffic (issue #146,
+            // mirroring the live spawner's occupancy gate): skip when
+            // the rolled body would land overlapping a same-role car's
+            // full body plus the headway margin. Skipped after the
+            // rolls, so the stream stays deterministic per seed.
+            final spawnY = y - spawnDistanceAhead;
+            var occupied = false;
+            for (final other in vehicles) {
+              if (other.oncoming != lane.oncoming) continue;
+              if ((other.x - laneX).abs() >=
+                  other.fullHalfW + type.size.x / 2) {
+                continue;
+              }
+              if ((other.y - spawnY).abs() <
+                  other.fullHalfH + type.size.y / 2 + headwayMargin) {
+                occupied = true;
+                break;
+              }
+            }
+            if (occupied) continue;
             vehicles.add(_SimVehicle(
               x: laneX,
               y: y - spawnDistanceAhead,
@@ -764,8 +789,45 @@ class RunLengthSimulator {
         }
       }
 
+      // --- Headway: no traffic drives through traffic (issue #146) ---
+      // The mirror of TrafficSpawner._capTrafficHeadway, in this
+      // harness's axis-aligned form: same role, laterally overlapped by
+      // the full bodies, within a body length plus margin of bumper gap
+      // — each follower capped to the slowest qualifying leader's
+      // *effective* pace (a queue inherits its front's speed), and 20%
+      // under it while a merge race has already stacked the bumpers, so
+      // the overlap opens instead of freezing. No RNG is spent, keeping
+      // every seed's run byte-reproducible; the standing rule matters
+      // to the tuning below because queued traffic is traffic the
+      // driver can no longer thread at full speed — the harness must
+      // measure the road the player actually drives.
+      for (final v in vehicles) {
+        v.paceLimit = null;
+      }
+      for (final v in vehicles) {
+        for (final w in vehicles) {
+          if (identical(v, w)) continue;
+          if (w.oncoming != v.oncoming) continue;
+          final delta = w.y - v.y;
+          // Ahead of v in its direction of travel: up-screen (smaller
+          // y) for same-direction, down-screen for oncoming.
+          if (v.oncoming ? delta <= 0 : delta >= 0) continue;
+          if ((w.x - v.x).abs() >= v.fullHalfW + w.fullHalfW) continue;
+          final bumperGap = delta.abs() - (v.fullHalfH + w.fullHalfH);
+          if (bumperGap > v.fullHalfH * 2 + headwayMargin) continue;
+          final pace = w.vy.abs() * (bumperGap < 0 ? 0.8 : 1.0);
+          if (v.paceLimit == null || pace < v.paceLimit!) {
+            v.paceLimit = pace;
+          }
+        }
+      }
+
       // --- Move traffic ---
       for (final v in vehicles) {
+        final limit = v.paceLimit;
+        if (limit != null && v.vy.abs() > limit) {
+          v.vy = v.vy < 0 ? -limit : limit;
+        }
         v.y += v.vy * dt;
         // The lateral schedule (issue #107): x follows the path's
         // anchors, not the spawn lane, so simulated traffic crosses a
@@ -997,7 +1059,9 @@ class VehicleSpritesFallback {
 
 /// One simulated traffic vehicle: an axis-aligned box with a vertical
 /// velocity, plus the overlap-episode flag that mirrors the live game's
-/// one-ruling-per-touch rule.
+/// one-ruling-per-touch rule. The velocity is mutable (issue #146): the
+/// headway pass caps it to the traffic ahead exactly as the live
+/// spawner's pass does, so simulated queues behave like real ones.
 class _SimVehicle {
   _SimVehicle({
     required this.x,
@@ -1008,15 +1072,33 @@ class _SimVehicle {
     this.mergeWaypoints,
   })  : vy = oncoming ? speed : -speed,
         halfW = type.size.x * CollisionRules.trafficHitboxScale / 2,
-        halfH = type.size.y * CollisionRules.trafficHitboxScale / 2;
+        halfH = type.size.y * CollisionRules.trafficHitboxScale / 2,
+        fullHalfW = type.size.x / 2,
+        fullHalfH = type.size.y / 2;
 
   double x;
   double y;
-  final double vy;
+
+  /// Vertical velocity, px/s — negative up-screen. Rewritten only by the
+  /// headway cap (issue #146); cruise is the constructor's value.
+  double vy;
+
+  /// Hitbox halves (contact math) ...
   final double halfW;
   final double halfH;
+
+  /// Full-body halves — the visible sprite's footprint, which is what
+  /// the headway rule overlaps on (issue #146): queues form bumper to
+  /// bumper, hitbox to hitbox they would stand apart.
+  final double fullHalfW;
+  final double fullHalfH;
   final bool oncoming;
   final TrafficVehicleType type;
+
+  /// This frame's headway cap (issue #146) — the slowest qualifying
+  /// leader's effective pace, or null when the road ahead is clear.
+  /// Mirrors `TrafficVehicle.paceLimit`.
+  double? paceLimit;
 
   /// The lateral schedule from [RunEnvironment.trafficMergeWaypoints]
   /// (issue #107): (distance, x) anchors in driving order, or null for

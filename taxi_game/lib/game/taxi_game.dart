@@ -1957,6 +1957,27 @@ class TaxiGame extends FlameGame
     camera.viewport.position = base + _appliedShakeOffset;
   }
 
+  @override
+  void onGameResize(Vector2 size) {
+    super.onGameResize(size);
+    // A resize lands mid-shake through the overlay machinery (issue
+    // #145): every overlays.add/remove refreshes the widget, and the
+    // GameWidget rebuild re-runs onGameResize, where the fixed
+    // resolution viewport unconditionally resets its position to the
+    // canonical letterbox offset — wiping whatever jitter this frame's
+    // shake had applied. [_applyShake] derives its rest position from
+    // the live viewport, so a stale [_appliedShakeOffset] there would
+    // subtract jitter the viewport no longer carries and park the whole
+    // playfield off-centre by up to the shake's magnitude, permanently —
+    // the crash-while-banked view that never came back to rest. After
+    // [super.onGameResize] the viewport stands at canonical, so the
+    // bookkeeping must agree with it: zero the offset, and the shake
+    // decays back to a true rest. The cost is one frame of dropped
+    // random offset while a shake is live — a single frame of the
+    // jitter simply not moving, imperceptible under the decay.
+    _appliedShakeOffset.setZero();
+  }
+
   /// Stops the player's inputs. Terminal endings take the default and
   /// [VirtualStick.release] the stick (`releaseStick: true`): the run is
   /// over, so a thumb still on the screen must own nothing afterwards.

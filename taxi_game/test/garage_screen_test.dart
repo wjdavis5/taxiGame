@@ -223,4 +223,61 @@ void main() {
       greaterThan(statFill(tester, 'size', 'compact_red')),
     );
   });
+
+  testWidgets('on a 320 pt screen every stat bar keeps a real track',
+      (tester) async {
+    // The 4-inch iPhone SE / Display Zoom width (issue #149): the
+    // side-by-side card row starved the middle column below the 58 px a
+    // stat row needs before its track, so every track collapsed to zero
+    // width and every row overflowed. Ahem, the test font, advances a
+    // square per glyph — roughly twice Roboto — which alone overflows the
+    // header ("GARAGE" at 32 px); 0.85 text scale stands in for real-font
+    // metrics at the default scale while keeping every card action wider
+    // than Roboto renders it, so the no-overflow check below stays
+    // conservative where the bug lived.
+    tester.view.physicalSize = const Size(320, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 0.85;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(wrap(const GarageScreen()));
+    await tester.pump();
+
+    for (final vehicle in VehicleCatalog.vehicles) {
+      for (final axis in const ['speed', 'accel', 'steering', 'size']) {
+        final bar = find.byKey(Key('garage_stat_${axis}_${vehicle.id}'));
+        await tester.scrollUntilVisible(
+          bar,
+          120,
+          scrollable: find.byType(Scrollable).first,
+        );
+        // The fill is a fraction of its track, so the pair of numbers
+        // recovers the track the fill sits in. Stacked, a card spans the
+        // ~190 px track the issue's bars need; collapsed, it was exactly
+        // 0.0. The fleet's shortest fill (0.06 of the track) is only
+        // ~11 px by design, so it is the track — not the fill — that
+        // must clear the threshold.
+        final fillWidth = tester.getSize(bar).width;
+        final factor =
+            tester.widget<FractionallySizedBox>(bar).widthFactor!;
+        final trackWidth = fillWidth / factor;
+        expect(
+          trackWidth,
+          greaterThan(40),
+          reason: 'the ${vehicle.name} $axis bar needs a visible track on a '
+              '320 pt screen, got $trackWidth px',
+        );
+        expect(
+          fillWidth,
+          greaterThan(0),
+          reason: 'the ${vehicle.name} $axis fill must paint something',
+        );
+      }
+    }
+
+    // The stacked layout leaves every row — header, cards, actions —
+    // inside the screen: nothing may overflow at this width.
+    expect(tester.takeException(), isNull);
+  });
 }

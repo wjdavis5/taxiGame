@@ -29,11 +29,29 @@ class EnvironmentOverlay extends PositionComponent
   double rainIntensity = 0;
   double fogIntensity = 0;
 
-  /// How far the headlight throw punches through darkness/fog, in px.
+  /// How far the headlight throw reaches ahead of the taxi, in px. The
+  /// cut ellipse is centred 0.55·reach up-screen and spans one reach
+  /// beyond that, so the night beam fades out ~403 px (1.55·reach) ahead
+  /// of the cab and fog's 0.9-reach bubble ~364 px — the long forward
+  /// throw issue #147 restored.
   static const double headlightReach = 260.0;
 
   /// Radius of the always-visible pool around the taxi.
   static const double ambientRadius = 130.0;
+
+  /// The one shader every cut shades with: a radial falloff from 95%
+  /// erase at the centre to untouched at the rim, built over the unit
+  /// circle so [_cutLight] can stretch it to each oval's shape. Cached
+  /// because the pre-#147 code built a gradient and allocated its shader
+  /// for every cut on every frame.
+  late final Paint _cutPaint = Paint()
+    ..blendMode = BlendMode.dstOut
+    ..shader = RadialGradient(
+      colors: [
+        const Color(0xFFFFFFFF).withValues(alpha: 0.95),
+        const Color(0xFFFFFFFF).withValues(alpha: 0.0),
+      ],
+    ).createShader(const Rect.fromLTWH(-1, -1, 2, 2));
 
   final math.Random _random = math.Random();
   late final List<_RainStreak> _streaks;
@@ -150,28 +168,26 @@ class EnvironmentOverlay extends PositionComponent
   }
 
   /// Erases the tint in a soft ellipse — the headlight's footprint.
+  ///
+  /// A radial gradient is round by construction: its radius is a fraction
+  /// of the rect's *shortest* side, so shading a 220×520 oval directly
+  /// still produced a circle of radius 110 — the #142 soft edge quietly
+  /// capped the throw at ~250 px ahead, less than two-thirds of the ~403
+  /// px the oval spans (issue #147). So the falloff is built once as a
+  /// unit circle ([_cutPaint]) and stretched here: translate to the
+  /// centre, scale by the oval's radii, and the round shader lands as a
+  /// true ellipse that matches the oval it shades — the draw and the
+  /// falloff keep the same footprint at every angle. The square ambient
+  /// pools pass through the same path unchanged (uniform scale).
   void _cutLight(Canvas canvas, Offset center, Size radius) {
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.scale(radius.width, radius.height);
     canvas.drawOval(
-      Rect.fromCenter(center: center, width: radius.width * 2,
-          height: radius.height * 2),
-      Paint()
-        // dstOut, not clear: clear zeroes every pixel the oval covers,
-        // reading neither the paint nor its shader — the gradient below
-        // was dead weight and the cut came out a hard-edged, fully
-        // clear oval (issue #142). dstOut multiplies the destination
-        // by (1 − source alpha), so the gradient finally does its job:
-        // ~95% of the tint erased at the centre, fading to untouched at
-        // the rim — the soft pool of light the doc comments promise.
-        ..blendMode = BlendMode.dstOut
-        ..shader = RadialGradient(
-          colors: [
-            const Color(0xFFFFFFFF).withValues(alpha: 0.95),
-            const Color(0xFFFFFFFF).withValues(alpha: 0.0),
-          ],
-        ).createShader(Rect.fromCenter(
-            center: center, width: radius.width * 2,
-            height: radius.height * 2)),
+      const Rect.fromLTWH(-1, -1, 2, 2),
+      _cutPaint,
     );
+    canvas.restore();
   }
 
   void _renderFog(Canvas canvas) {

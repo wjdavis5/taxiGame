@@ -146,4 +146,40 @@ void main() {
 
     await gesture.up();
   });
+
+  testWidgets('a thumb landing in a side letterbox band still drives (issue #148)',
+      (tester) async {
+    // A 16:9 iPhone surface (SE / 8 / 8 Plus): the fixed 400x800 viewport
+    // scales to 0.834 and renders 333.5 px wide, leaving ~21 px bands at
+    // each side. x=12 and x=363 sit inside those bands, where the touch
+    // maps to a viewport-local x outside the stick's size — before #148
+    // Flame's hit test dropped it there and the drag never started.
+    tester.view.physicalSize = const Size(375, 667);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final game = await pumpGameScreen(tester);
+
+    for (final start in const [Offset(12, 450), Offset(363, 450)]) {
+      final gesture = await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds: 16));
+      await gesture.moveBy(const Offset(72, -144));
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // The claim succeeded and the glide drove both axes: full right
+      // lock, hard throttle, and the taxi actually moving.
+      expect(game.virtualStick!.isActive, isTrue, reason: 'from $start');
+      expect(game.player.steeringInput, 1.0, reason: 'from $start');
+      expect(game.player.throttleInput, greaterThan(0.8),
+          reason: 'from $start');
+      expect(game.player.velocity.x, greaterThan(0), reason: 'from $start');
+      expect(game.player.velocity.y, lessThan(0), reason: 'from $start');
+
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(game.virtualStick!.isActive, isFalse,
+          reason: 'the $start thumb must lift cleanly too');
+    }
+  });
 }
