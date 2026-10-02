@@ -1,21 +1,23 @@
 /* zcode-workflow
 description: "One tick of the recurring pipeline: find open GitHub issues, plan
   and implement every fix on a single branch, make analyze + the full test suite
-  pass, open one PR, wait for CI (analyze, host-run tests, and the unsigned iOS
-  build — no simulator is booted and the app is never launched), perform a full
-  senior code review with a fix loop where every fix is pushed, verified on the
-  PR and re-CI'd, plus an independent final approval, then merge exactly the
-  head CI passed, watch the iOS Release pipeline deploy to TestFlight, and
-  close the issues."
+  pass, open one PR, wait for CI (analyze, host-run tests, the unsigned iOS
+  build, and a simulator launch of the built app —
+  a physical device never runs it), perform a full senior code review with
+  a fix loop where every fix is pushed, verified on the PR and re-CI'd,
+  plus an independent final approval, then merge exactly the head CI
+  passed, watch the iOS Release pipeline deploy to TestFlight, and close
+  the issues."
 whenToUse: "Run on a schedule (every 30 minutes) or on demand whenever you want all open GitHub issues in wjdavis5/taxiGame triaged, implemented in one PR, code-reviewed at a senior level, merged, and deployed to TestFlight automatically."
 args: {}
 */
 /* gh-issue-sweep — one tick of the recurring pipeline.
    Open GitHub issues → plan → implement on one branch → analyze + full tests →
-   PR → CI (analyze, host tests, unsigned iOS build — the app is compiled,
-   never launched) → senior review + fix loop (each fix pushed,
-   head-verified and re-CI'd — issue #88) + independent approval → merge the
-   CI-green head (--match-head-commit) → TestFlight deploy → close issues.
+   PR → CI (analyze, host tests, unsigned iOS build, and a simulator launch of
+   the built app — a physical device never runs it) → senior review + fix loop
+   (each fix pushed, head-verified and re-CI'd — issue #88) + independent
+   approval → merge the CI-green head (--match-head-commit) → TestFlight
+   deploy → close issues.
    Runs from the repo root; the Flutter project is the taxi_game/ subdirectory.
    Flutter must run through cmd /c "cd taxi_game && flutter …" on this host. */
 
@@ -672,10 +674,11 @@ for (let round = 1; round <= 3; round++) {
 }
 
 // ---------------------------------------------------------------- phase 5
-// CI's PR job analyzes, runs the test suite on the macOS host, and compiles
-// the app unsigned for a device (flutter-builds.yml) — it never boots a
-// simulator or launches what it built, so the wait must not claim one
-// (issue #163).
+// CI's PR job analyzes, runs the test suite on the macOS host, compiles the
+// app unsigned for a device, and — since #168 — launches the built app on a
+// simulator and asserts it stays alive (flutter-builds.yml). What no workflow
+// does is run it on a physical device, so no narration may claim that
+// (issue #163's lesson: the claim follows what CI runs, never the reverse).
 phase("Open the PR and wait for CI — analyze, host-run tests, and the unsigned iOS build");
 const numbers = toImplement.map((p) => "#" + p.number).join(" ");
 const prTitle = "fix: resolve open issues " + numbers + " (issue sweep)";
@@ -1164,14 +1167,13 @@ return {
         : "release-run identification pinned to the PR's merge commit (issues #61, #124): " + deployLine,
   ],
   notCovered: [
-    // The honest gap: no workflow runs the app at all. PR CI analyzes,
-    // tests on the host, and compiles unsigned for a device
+    // The honest gap is the physical device: PR CI analyzes, tests on
+    // the host, compiles unsigned for a device, and — since #168 —
+    // launches the built app on a simulator and asserts it stays alive
     // (flutter-builds.yml); the release pipeline archives against a
-    // #168 later added a simulator launch to CI (build, boot, launch,
-    // assert alive) — so the honest claim is that a simulator ran the
-    // app and a physical device did not. Keep this string in sync with
-    // what .github/workflows/flutter-builds.yml actually does (issue
-    // #163's lesson: the claim follows reality, never the reverse).
+    // generic iOS destination. Keep this string in sync with what
+    // .github/workflows/flutter-builds.yml actually does (#163's
+    // lesson: the claim follows reality, never the reverse).
     "on-device verification on a physical iPhone — CI compiles the app " +
       "and launches it on a simulator; a physical device never ran it",
     ...(uploadSkipped
