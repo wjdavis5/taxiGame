@@ -229,21 +229,31 @@ class _VehicleCard extends StatelessWidget {
       );
 
   /// Name plus the ownership line, shared by both card shapes so what a
-  /// card says never depends on the screen width. Both lines ellipsize: in
-  /// the stacked shape the title column is only half the card wide, and a
-  /// name allowed to wrap there would balloon the card vertically the same
-  /// way the zero-width track did before issue #149.
+  /// card says never depends on the screen width. The name never
+  /// ellipsizes (issue #156): "Family Minivan" and "The Executive" were
+  /// cut to "Family Min..." on 375–393 pt phones because the row shape's
+  /// middle column could not fund their full Roboto-Bold width. A name is
+  /// the one thing a shop screen must say in full, so it renders at
+  /// natural one-line width in a scale-down box — the widest name shrinks
+  /// to 0.83x at 375 pt, nothing else changes. The box also removes the
+  /// wrap risk the old maxLines guarded: its child lays out against
+  /// unbounded width, so the name is always exactly one line and the card
+  /// keeps a stable height in both shapes. The status line still
+  /// ellipsizes — it fits everywhere the name does, and it is secondary
+  /// copy, not the thing the player is shopping for.
   Widget _titleBlock(bool unlocked, bool selected) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            vehicle.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              vehicle.name,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
             ),
           ),
           const SizedBox(height: 4),

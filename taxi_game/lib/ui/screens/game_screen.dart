@@ -327,11 +327,16 @@ class LevelCompleteOverlay extends StatelessWidget {
             // The payout line (issue #34): a banked level was paid the
             // chain score at the dropoff — the flat reward was forfeited
             // with the undelivered fares — so the bank is the payout the
-            // panel names. Any other completion pays the flat reward.
+            // panel names. Any other completion names what it was
+            // actually credited (issue #155): the banking rungs' unbanked
+            // finish pays the better of the chain score and the flat
+            // reward, so the line reads the settled payout — falling back
+            // to the level's authored reward before any completion has
+            // settled one.
             Text(
               game.lastBankedScore != null
                   ? 'Banked: +${game.lastBankedScore} Coins'
-                  : '+${game.currentLevel.coinReward} Coins',
+                  : '+${game.lastCompletionPayout ?? game.currentLevel.coinReward} Coins',
               style: const TextStyle(
                 fontSize: 24,
                 color: Colors.yellow,
