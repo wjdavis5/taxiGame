@@ -1167,12 +1167,13 @@ return {
     // The honest gap: no workflow runs the app at all. PR CI analyzes,
     // tests on the host, and compiles unsigned for a device
     // (flutter-builds.yml); the release pipeline archives against a
-    // generic iOS destination. So the closest check to "it runs" is the
-    // compile itself — the claim must say that, not invent a simulator
-    // run that CI never performs (issue #163).
-    "on-device verification on a physical iPhone — the unsigned iOS build in " +
-      "CI is the closest check that ran; the app was never launched " +
-      "(CI analyzes, tests on the host, and compiles)",
+    // #168 later added a simulator launch to CI (build, boot, launch,
+    // assert alive) — so the honest claim is that a simulator ran the
+    // app and a physical device did not. Keep this string in sync with
+    // what .github/workflows/flutter-builds.yml actually does (issue
+    // #163's lesson: the claim follows reality, never the reverse).
+    "on-device verification on a physical iPhone — CI compiles the app " +
+      "and launches it on a simulator; a physical device never ran it",
     ...(uploadSkipped
       ? ["the TestFlight upload itself — the closed-train gate (issue #119) skipped it; the merge ships with the next upload, after a version bump"]
       : []),
