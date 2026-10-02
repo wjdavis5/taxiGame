@@ -347,9 +347,11 @@ class _VehicleCard extends StatelessWidget {
   }
 
   /// Buys the car. When the balance falls short the purchase is refused with
-  /// a message naming exactly how many more coins are needed. A purchase
-  /// that grows the fleet is a gameplay event (issue #21): any achievement
-  /// the new car earned is announced here, where the purchase happened.
+  /// a message naming exactly how many more coins are needed — and each
+  /// refusal replaces the last rather than queuing behind it (issue #171).
+  /// A purchase that grows the fleet is a gameplay event (issue #21): any
+  /// achievement the new car earned is announced here, where the purchase
+  /// happened.
   void _purchase(BuildContext context) {
     audioOf(context)?.playButtonSound();
     hapticsOf(context)?.buttonPress();
@@ -386,15 +388,27 @@ class _VehicleCard extends StatelessWidget {
       return;
     }
     final shortfall = vehicle.price - gameState.totalCoins;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Not enough coins — you need $shortfall more for the '
-          '${vehicle.name}.',
+    // A shortfall leaves the buy button enabled so the game can explain the
+    // refusal, and an impatient player hammers it. showSnackBar queues: a
+    // plain call per tap stacked one two-second bar per tap, so four taps
+    // replayed "Not enough coins" back to back and the tail of the queue
+    // followed the player out of the garage (issue #171). Clearing before
+    // showing collapses any tap count into the one bar the player needs.
+    // clearSnackBars, not hideCurrentSnackBar: hiding only reverses the
+    // shared animation controller and leaves the queue intact, so a tap
+    // landing in a bar's 250 ms exit window still queues behind every bar
+    // already waiting.
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            'Not enough coins — you need $shortfall more for the '
+            '${vehicle.name}.',
+          ),
+          duration: const Duration(seconds: 2),
         ),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+      );
   }
 }
 

@@ -120,6 +120,17 @@ class TaxiGameApp extends StatelessWidget {
     return MaterialApp(
       title: 'Taxi Game',
       theme: ThemeData(
+        // Tooltips are labels, never feedback (issue #169): a long-pressed
+        // tooltip fires the framework's own feedback — Feedback.forLongPress,
+        // which on iOS plays the system click AND a heavy-impact haptic —
+        // straight from its gesture handler, where none of this app's
+        // settings can gate it. Every Back arrow is an IconButton with a
+        // tooltip, so a player with Sound and Vibration off still got the
+        // buzz and the click. One theme line resolves every tooltip's
+        // enableFeedback to false app-wide: the label stays (it is the
+        // accessibility name), and feedback returns to the AudioService and
+        // HapticsService paths the toggles actually control.
+        tooltipTheme: const TooltipThemeData(enableFeedback: false),
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.yellow,
           brightness: Brightness.light,

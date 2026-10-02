@@ -2,34 +2,52 @@ import Flutter
 import UIKit
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GeneratedPluginRegistrant.register(with: self)
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  // Issue #168 — the UIScene lifecycle iOS 27 requires. The engine now
+  // initializes before any scene (or window) exists, so everything that
+  // used to reach into the engine at launch moves to this hook, on the
+  // bridge the engine hands over — the same shape as the tool's own
+  // migration and the official guide.
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
     // Issue #22 — the score card share sheet. The app's only outbound
     // path: a UIActivityViewController the user drives themselves, over a
     // card the game just rendered. No plugin, no SDK, no network — the
     // zero-network claim (PrivacyInfo.xcprivacy) is untouched by design.
-    if let controller = window?.rootViewController as? FlutterViewController {
-      let channel = FlutterMethodChannel(
-        name: "cab_hustle/share",
-        binaryMessenger: controller.binaryMessenger)
-      channel.setMethodCallHandler { [weak self] call, result in
-        switch call.method {
-        case "shareScoreCard":
-          self?.handleShareScoreCard(call, result: result)
-        case "shareText":
-          self?.handleShareText(call, result: result)
-        default:
-          result(FlutterMethodNotImplemented)
-        }
+    let channel = FlutterMethodChannel(
+      name: "cab_hustle/share",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger())
+    channel.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "shareScoreCard":
+        self?.handleShareScoreCard(call, result: result)
+      case "shareText":
+        self?.handleShareText(call, result: result)
+      default:
+        result(FlutterMethodNotImplemented)
       }
     }
+  }
 
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  /// The root view controller of the foreground scene's key window. Under
+  /// the UIScene lifecycle (issue #168) the app delegate no longer owns a
+  /// window — the scene does — so the old `window?.rootViewController`
+  /// reads nil and the share sheet would have nowhere to present from.
+  /// The 15.0 deployment target puts UIWindowScene.keyWindow on every OS
+  /// the app installs on.
+  private func foregroundRootViewController() -> UIViewController? {
+    UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .first { $0.activationState == .foregroundActive }
+      .flatMap { $0.keyWindow?.rootViewController }
   }
 
   /// Validates the call, then presents the sheet on the main thread.
@@ -62,7 +80,7 @@ import UIKit
     text: String?,
     result: @escaping FlutterResult
   ) {
-    guard let root = window?.rootViewController else {
+    guard let root = foregroundRootViewController() else {
       result(FlutterError(
         code: "not_ready",
         message: "No root view controller to present the share sheet from",
@@ -132,7 +150,7 @@ import UIKit
     }
 
     DispatchQueue.main.async { [weak self] in
-      guard let this = self, let root = this.window?.rootViewController else {
+      guard let this = self, let root = this.foregroundRootViewController() else {
         result(FlutterError(
           code: "not_ready",
           message: "No root view controller to present the share sheet from",

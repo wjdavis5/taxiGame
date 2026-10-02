@@ -1086,6 +1086,70 @@ void main() {
       expect(player.position.y, 0.0);
       expect(game.runDistance, greaterThanOrEqualTo(0));
     });
+
+    test('a kerb-pinned head-on costs its life, not a free pass '
+        '(issue #167)', () async {
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: 7,
+      );
+      // The same endless mount as the start-clamp test above: the road
+      // chunk manager arms in onMount.
+      game.onGameResize(Vector2(400, 800));
+      await game.onLoad();
+      // ignore: invalid_use_of_internal_member
+      game.mount();
+      await game.ready();
+      final player = game.player;
+
+      // The issue's cab: full throttle with full left lock held, pinned
+      // at the left kerb. The opening road is the standard 200 px wide
+      // (the calm open), so the Classic Cab's kerb is
+      // 100 + 40/2 = 120. The clamp cancels the sideways move every
+      // tick; the bug was the cancelled velocity.x staying live for the
+      // collision judge to read.
+      player.position = Vector2(120, 0);
+      player.setThrottle(1);
+      player.setSteering(-1);
+      game.update(1 / 60);
+      expect(player.position.x, 120,
+          reason: 'precondition: the cab is pinned hard against the kerb');
+
+      // An oncoming sedan in the left lane — the standard profile's left
+      // lane centre is 100 + 0.25 * 200 = 150 — closing down-screen at
+      // 100 px/s (the sedan's speed multiplier is 1.0). The path runs
+      // well past the spawn point so its velocity is established in
+      // onLoad, exactly like the oncomingBus helper's.
+      final sedan = TrafficVehicle(
+        position: Vector2(150, -120),
+        vehicleType: TrafficVehicleType.sedan,
+        baseSpeed: 100,
+        path: [Vector2(150, 2880), Vector2(150, 2881)],
+      );
+      game.world.add(sedan);
+      await game.ready();
+
+      // Tick until the boxes meet — the pin holds the whole way, so the
+      // phantom lateral speed is live on every one of these ticks at the
+      // moment the ruling fires.
+      for (var i = 0; i < 120 && game.lastImpact == null; i++) {
+        game.update(1 / 60);
+      }
+
+      // The ruling: a real head-on, judged on the cab's true motion. The
+      // bug ruled it a scrape with the struck-cab wording ("A sedan ran
+      // into you — nothing lost.") because the phantom -300 px/s read as
+      // driving away from the sedan.
+      expect(game.lastImpact, isNotNull);
+      expect(game.lastImpact!.severity, ContactSeverity.crash);
+      // Sedan, not some ambient spawn the endless spawner placed — this
+      // is the contact the test staged.
+      expect(game.lastImpact!.vehicleKind, 'sedan');
+      // Endless (issue #14): a crash spends one of the three lives.
+      expect(game.lives.remaining, 2,
+          reason: 'a head-on into oncoming traffic must cost a life');
+    });
   });
 
   group('danger telegraph', () {
