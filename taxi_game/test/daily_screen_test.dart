@@ -1,5 +1,6 @@
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -171,6 +172,75 @@ void main() {
       expect(chipRight, lessThanOrEqualTo(276),
           reason: 'the WRECKED chip — wider than BANKED, and behind an even '
               'wider score — stays inside the card at 320 pt');
+    });
+  });
+
+  group('the chip centers on the scaled score (issue #161)', () {
+    // The #157 fix shrank the number but left the outer row
+    // baseline-aligned — and a scaled FittedBox reports its child's
+    // *unscaled* baseline, so the chip aligned to a baseline 13 px below
+    // where the shrunk number actually paints and hung under it. The row
+    // now centers, which is scale-independent: the FittedBox's own box
+    // shrinks with its child, so "chip center == score center" holds at
+    // every scale factor. Same viewport recipe as the #157 group — the
+    // narrowest real surface, and Ahem's square glyphs at 0.85 text
+    // scale — because that is where the scale-down engages.
+
+    /// Pumps the played card at 320 pt and returns the vertical distance
+    /// between the chip's center and the score's *painted* center —
+    /// getCenter measures through the FittedBox's paint transform, so
+    /// this is the shrunk number the player sees, not its layout box.
+    Future<double> pumpAndMeasureChipDelta(
+      WidgetTester tester, {
+      required int score,
+      required bool banked,
+    }) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1.0;
+      tester.platformDispatcher.textScaleFactorTestValue = 0.85;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+      await gameState.recordDailyResult(
+          resultFor(DailyShift.todayKey, score: score, banked: banked));
+      await pumpScreen(tester);
+
+      // Precondition: the number really is scaled down — if it still fit,
+      // baseline and center coincide and this pin would be vacuous.
+      final scoreFinder = find.byKey(const Key('daily_today_score'));
+      final painted = tester.getRect(scoreFinder);
+      final laidOut = tester.renderObject<RenderParagraph>(scoreFinder).size;
+      expect(painted.height, lessThan(laidOut.height * 0.9),
+          reason: 'the FittedBox must be scaling the number for this test '
+              'to mean anything');
+
+      final scoreCenter = tester.getCenter(scoreFinder).dy;
+      final chipCenter = tester
+          .getCenter(
+              find.byKey(Key('daily_outcome_${banked ? 'banked' : 'wrecked'}')))
+          .dy;
+      return (chipCenter - scoreCenter).abs();
+    }
+
+    testWidgets('a five-digit banked score centers the chip on the shrunk '
+        'number', (tester) async {
+      final delta =
+          await pumpAndMeasureChipDelta(tester, score: 12345, banked: true);
+
+      expect(delta, lessThanOrEqualTo(2),
+          reason: 'the BANKED chip must ride the scaled number\'s center — '
+              'under the baseline alignment it hung ~13 px below');
+    });
+
+    testWidgets('a six-digit wrecked score centers the chip on the shrunk '
+        'number', (tester) async {
+      final delta =
+          await pumpAndMeasureChipDelta(tester, score: 123456, banked: false);
+
+      expect(delta, lessThanOrEqualTo(2),
+          reason: 'the WRECKED chip must ride the scaled number\'s center — '
+              'the deeper the scale-down, the further the unscaled '
+              'baseline drifts from the painted one');
     });
   });
 

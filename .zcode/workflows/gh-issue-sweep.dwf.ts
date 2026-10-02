@@ -1,17 +1,19 @@
 /* zcode-workflow
 description: "One tick of the recurring pipeline: find open GitHub issues, plan
   and implement every fix on a single branch, make analyze + the full test suite
-  pass, open one PR, wait for CI (including the iOS simulator run), perform a
-  full senior code review with a fix loop where every fix is pushed, verified
-  on the PR and re-CI'd, plus an independent final approval, then merge exactly
-  the head CI passed, watch the iOS Release pipeline deploy to TestFlight, and
+  pass, open one PR, wait for CI (analyze, host-run tests, and the unsigned iOS
+  build — no simulator is booted and the app is never launched), perform a full
+  senior code review with a fix loop where every fix is pushed, verified on the
+  PR and re-CI'd, plus an independent final approval, then merge exactly the
+  head CI passed, watch the iOS Release pipeline deploy to TestFlight, and
   close the issues."
 whenToUse: "Run on a schedule (every 30 minutes) or on demand whenever you want all open GitHub issues in wjdavis5/taxiGame triaged, implemented in one PR, code-reviewed at a senior level, merged, and deployed to TestFlight automatically."
 args: {}
 */
 /* gh-issue-sweep — one tick of the recurring pipeline.
    Open GitHub issues → plan → implement on one branch → analyze + full tests →
-   PR → CI (incl. iOS simulator) → senior review + fix loop (each fix pushed,
+   PR → CI (analyze, host tests, unsigned iOS build — the app is compiled,
+   never launched) → senior review + fix loop (each fix pushed,
    head-verified and re-CI'd — issue #88) + independent approval → merge the
    CI-green head (--match-head-commit) → TestFlight deploy → close issues.
    Runs from the repo root; the Flutter project is the taxi_game/ subdirectory.
@@ -670,7 +672,11 @@ for (let round = 1; round <= 3; round++) {
 }
 
 // ---------------------------------------------------------------- phase 5
-phase("Open the PR and wait for CI, including the iOS simulator run");
+// CI's PR job analyzes, runs the test suite on the macOS host, and compiles
+// the app unsigned for a device (flutter-builds.yml) — it never boots a
+// simulator or launches what it built, so the wait must not claim one
+// (issue #163).
+phase("Open the PR and wait for CI — analyze, host-run tests, and the unsigned iOS build");
 const numbers = toImplement.map((p) => "#" + p.number).join(" ");
 const prTitle = "fix: resolve open issues " + numbers + " (issue sweep)";
 const prBody = [
@@ -1158,7 +1164,15 @@ return {
         : "release-run identification pinned to the PR's merge commit (issues #61, #124): " + deployLine,
   ],
   notCovered: [
-    "on-device verification on a physical iPhone — the iOS simulator in CI is the closest check that ran",
+    // The honest gap: no workflow runs the app at all. PR CI analyzes,
+    // tests on the host, and compiles unsigned for a device
+    // (flutter-builds.yml); the release pipeline archives against a
+    // generic iOS destination. So the closest check to "it runs" is the
+    // compile itself — the claim must say that, not invent a simulator
+    // run that CI never performs (issue #163).
+    "on-device verification on a physical iPhone — the unsigned iOS build in " +
+      "CI is the closest check that ran; the app was never launched " +
+      "(CI analyzes, tests on the host, and compiles)",
     ...(uploadSkipped
       ? ["the TestFlight upload itself — the closed-train gate (issue #119) skipped it; the merge ships with the next upload, after a version bump"]
       : []),

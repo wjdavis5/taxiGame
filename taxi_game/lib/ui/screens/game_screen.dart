@@ -302,12 +302,24 @@ class LevelCompleteOverlay extends StatelessWidget {
               color: Colors.white,
             ),
             const SizedBox(height: 20),
-            Text(
-              handoff ? 'TUTORIAL COMPLETE!' : 'LEVEL COMPLETE!',
-              style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+            // The ladder's finish line (issue #159): "TUTORIAL
+            // COMPLETE!" is wider than the panel on every standard
+            // iPhone (296 px of bold type in a 255-273 px panel), and a
+            // bare Text wrapped into two flush-left lines while
+            // everything around it sat centred. The garage/HUD
+            // scale-down idiom (issues #156, #43 and #57): the box lays
+            // the title out under unbounded width — always one line —
+            // and scales it down to fit, the default centre alignment
+            // keeping it centred whether scaled or natural.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                handoff ? 'TUTORIAL COMPLETE!' : 'LEVEL COMPLETE!',
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
               ),
             ),
             // The rung's authored name ('First Ride', 'Bank It') — the

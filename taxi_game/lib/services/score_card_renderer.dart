@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/painting.dart';
 
 import '../game/systems/score_card.dart';
@@ -27,16 +28,23 @@ class ScoreCardRenderer {
 
   /// Renders [card] and PNG-encodes it.
   Future<Uint8List> renderPng(ScoreCardData card) async {
-    final recorder = ui.PictureRecorder();
-    final canvas = ui.Canvas(recorder);
-    _paint(canvas, card);
-    final picture = recorder.endRecording();
-    final image = await picture.toImage(cardWidth, cardHeight);
+    final image = await renderImage(card);
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     if (byteData == null) {
       throw StateError('Encoding the score card PNG produced no bytes.');
     }
     return byteData.buffer.asUint8List();
+  }
+
+  /// The raster under the PNG: the same card, unencoded, for tests that
+  /// scan the card's ink geometry (issue #160) — they ask where the paint
+  /// landed, and raw RGBA answers row by row without a codec round trip.
+  @visibleForTesting
+  Future<ui.Image> renderImage(ScoreCardData card) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    _paint(canvas, card);
+    return recorder.endRecording().toImage(cardWidth, cardHeight);
   }
 
   void _paint(ui.Canvas canvas, ScoreCardData card) {
@@ -61,11 +69,22 @@ class ScoreCardRenderer {
       letterSpacing: 10,
     );
 
-    // What the run was.
+    // The header block's line centres (issue #160): _drawCentered centers
+    // each line's *box* on its y, and the 220 px digits' box towers over
+    // everything above it — at the old centres (title 236, rank 330,
+    // score 420) the digits' ink began above where the rank's ink ended,
+    // so the number painted straight across the bottom of the rank's
+    // letters. The centres below space ink-to-ink instead: under the
+    // tests' Ahem — every glyph a full em square, this repo's
+    // pessimistic-ink convention — the rank's ink ends ~316 and the
+    // digits' begins ~335, a gap the geometry test holds to ≥ 16 px,
+    // and real device fonts, whose digits reach only cap height into
+    // the em, get more. The same nudge carries FINAL SCORE and the badge
+    // down with the number, still clear of the 760 divider.
     _drawCentered(
       canvas,
       card.title,
-      at: const ui.Offset(cardWidth / 2, 236),
+      at: const ui.Offset(cardWidth / 2, 220),
       size: 46,
       color: _muted,
       weight: ui.FontWeight.w700,
@@ -78,7 +97,7 @@ class ScoreCardRenderer {
     _drawCentered(
       canvas,
       card.rankTitle,
-      at: const ui.Offset(cardWidth / 2, 330),
+      at: const ui.Offset(cardWidth / 2, 296),
       size: 40,
       color: _accent,
       weight: ui.FontWeight.w900,
@@ -89,7 +108,7 @@ class ScoreCardRenderer {
     _drawCentered(
       canvas,
       '${card.score}',
-      at: const ui.Offset(cardWidth / 2, 420),
+      at: const ui.Offset(cardWidth / 2, 448),
       size: 220,
       color: _ink,
       weight: ui.FontWeight.w900,
@@ -97,7 +116,7 @@ class ScoreCardRenderer {
     _drawCentered(
       canvas,
       'FINAL SCORE',
-      at: const ui.Offset(cardWidth / 2, 590),
+      at: const ui.Offset(cardWidth / 2, 614),
       size: 34,
       color: _muted,
       weight: ui.FontWeight.w600,
@@ -105,7 +124,7 @@ class ScoreCardRenderer {
     );
 
     if (card.isPersonalBest) {
-      _drawBadge(canvas, 'NEW PERSONAL BEST', at: const ui.Offset(cardWidth / 2, 668));
+      _drawBadge(canvas, 'NEW PERSONAL BEST', at: const ui.Offset(cardWidth / 2, 690));
     }
 
     canvas.drawLine(
