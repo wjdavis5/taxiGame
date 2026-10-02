@@ -183,27 +183,50 @@ class _TodayCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
+            // The score group yields before the chip does (issue #157):
+            // nothing in this row could shrink, so a five-digit day on a
+            // 320 pt phone shoved the BANKED/WRECKED chip 16–50 px past
+            // the card's edge. The HUD's scale-down idiom (issues #43 and
+            // #57): the number and its label render at natural size while
+            // they fit and scale down together when they do not, while
+            // the chip stays rigid — the outcome is one fixed-width badge
+            // either way. Score and PTS must share the one FittedBox:
+            // a scaled FittedBox reports its child's *unscaled* baseline
+            // to this outer Row, so their baseline alignment has to live
+            // inside the pre-scale layout to survive shrinking.
             played
                 ? Row(
                     crossAxisAlignment: CrossAxisAlignment.baseline,
                     textBaseline: TextBaseline.alphabetic,
                     children: [
-                      Text(
-                        '${result!.score}',
-                        key: const Key('daily_today_score'),
-                        style: const TextStyle(
-                          fontSize: 44,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.yellow,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'PTS',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white70,
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.baseline,
+                            textBaseline: TextBaseline.alphabetic,
+                            children: [
+                              Text(
+                                '${result!.score}',
+                                key: const Key('daily_today_score'),
+                                style: const TextStyle(
+                                  fontSize: 44,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.yellow,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'PTS',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                       const SizedBox(width: 14),

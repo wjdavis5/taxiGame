@@ -254,6 +254,14 @@ class TaxiGame extends FlameGame
   /// panel. Null until a shift is banked; cleared when a new run starts.
   int? lastBankedScore;
 
+  /// What the most recent level completion actually credited to the
+  /// wallet (issue #155), for the completion panel's payout line. On the
+  /// banking rungs an unbanked finish pays the *better* of the chain
+  /// score and the flat reward — the number the panel must name, not the
+  /// flat one the level file still carries. Null until a level completes
+  /// without banking; cleared when a new run starts.
+  int? lastCompletionPayout;
+
   /// The settled record of the shift that just ended (issue #15) — the
   /// run-summary panel reads it. Set the instant the shift ends, before
   /// its overlay goes up, and cleared when the next run starts.
@@ -640,6 +648,7 @@ class TaxiGame extends FlameGame
     fareChain.reset();
     _dismissBankPrompt();
     lastBankedScore = null;
+    lastCompletionPayout = null;
     lastRunSummary = null;
     _runCoinsEarned = 0;
     _lifeLossDistancesPx.clear();
@@ -765,10 +774,12 @@ class TaxiGame extends FlameGame
 
     fareChain.reset();
     _dismissBankPrompt();
-    // A bank's payout line belongs to the run that earned it (issue #16
-    // teaches banking inside the ladder, and the completion panel shows
-    // the payout) — never to the level loaded after it.
+    // A payout line belongs to the run that earned it (issue #16 teaches
+    // banking inside the ladder, and the completion panel shows the
+    // payout) — a bank's or an unbanked finish's — never to the level
+    // loaded after it.
     lastBankedScore = null;
+    lastCompletionPayout = null;
 
     // Tear down the previous level, if any.
     _clearWorld();
@@ -1297,7 +1308,9 @@ class TaxiGame extends FlameGame
 
   /// Settles a completed level: freezes the run, pays the flat reward —
   /// unless the level was [banked], whose payout is the chain score
-  /// already in the wallet (issue #34) — and unlocks the next rung.
+  /// already in the wallet (issue #34) — and unlocks the next rung. On
+  /// the rungs that teach banking, an unbanked finish instead pays the
+  /// *better* of the chain score and the flat reward (issue #155).
   void _completeLevel({bool banked = false}) {
     // The completion panel owns the screen from here: the run is as
     // terminal as a settled shift (issue #71) — no pausing, banking, or
@@ -1343,8 +1356,22 @@ class TaxiGame extends FlameGame
 
     // Award coins and unlock the next level. A bank pays the chain score
     // OR the flat reward, never both (issue #34): the score is in, so the
-    // reward pays nothing.
-    gameState.completeLevel(currentLevelNumber, banked ? 0 : currentLevel.coinReward);
+    // reward pays nothing. On the rungs that teach banking the unbanked
+    // finish pays the *better* of the two (issue #155): the flat reward
+    // used to cap pushing on below banking — level 10's second prompt
+    // offered BANK 300-400 against a PUSH ON whose finish paid a flat
+    // 300 whatever the chain had earned, so pushing on could only lose.
+    // The max keeps "score OR reward, never both" — a sum would
+    // double-pay a score above the reward — while a ridden-clean finish
+    // still collects at least the authored reward, and every rung that
+    // does not teach banking keeps its flat payout untouched.
+    final payout = banked
+        ? 0
+        : currentLevel.bankPromptEnabled
+            ? math.max(fareChain.score, currentLevel.coinReward)
+            : currentLevel.coinReward;
+    if (!banked) lastCompletionPayout = payout;
+    gameState.completeLevel(currentLevelNumber, payout);
 
     overlays.add('levelComplete');
   }

@@ -369,8 +369,15 @@ void main() {
       expect(game.overlays.isActive('levelComplete'), isTrue);
       expect(game.lastBankedScore, isNull,
           reason: 'no bank happened, so no bank line');
-      expect(saveAtNine.totalCoins, coinsBefore + level.coinReward,
-          reason: 'completion pays the level reward alone');
+      // The pushed finish pays the better of the two payouts on a rung
+      // that teaches banking (issue #155): the run rode 125 at ×1, pushed
+      // to ×3, and finished 125 + 375 = 500 — above the flat 250 reward,
+      // which can no longer cap it below what a bank would have paid.
+      expect(game.score, 500, reason: '125 ridden, 375 pushed');
+      expect(game.lastCompletionPayout, 500,
+          reason: 'the panel names the payout actually credited');
+      expect(saveAtNine.totalCoins, coinsBefore + 500,
+          reason: 'completion pays max(score, reward) — the score here');
       expect(game.isGameActive, isFalse);
     });
 
@@ -426,10 +433,13 @@ void main() {
       expect(game.bankPrompt.isActive, isFalse,
           reason: 'a settled level owes no choice');
 
-      // And the stood-down prompt can never pay out twice.
+      // And the stood-down prompt can never pay out twice. The ridden
+      // finish scored 125 + 250 = 375 — the better of the two payouts
+      // (issue #155) — and the stray BANK cannot top it up.
       game.bankShift();
-      expect(saveAtNine.totalCoins, coinsBefore + level.coinReward,
-          reason: 'exactly the level reward was paid, exactly once');
+      expect(game.score, 375, reason: '125 at ×1, 250 at ×2, no push');
+      expect(saveAtNine.totalCoins, coinsBefore + 375,
+          reason: 'exactly max(score, reward) was paid, exactly once');
     });
 
     test('rungs that do not teach banking arm nothing', () async {
@@ -448,6 +458,119 @@ void main() {
       expect(game.bankPrompt.isActive, isFalse);
       expect(game.overlays.isActive('bankOrPush'), isFalse);
       expect(game.isGameActive, isTrue);
+    });
+  });
+
+  group('the graduation rung makes the last choice real (issue #155)', () {
+    // Level 10 — three fares at 100 each, flat reward 300 — is where the
+    // issue lived: its second bank-or-push prompt offered BANK 300-400
+    // while PUSH ON to the finish paid a flat 300 whatever the chain had
+    // earned, so pushing on could only lose. The unbanked finish now pays
+    // the better of the chain score and the flat reward, and both ways of
+    // playing the rung — riding the chain, or pushing both prompts — must
+    // show the push beating the bank it declined.
+
+    late GameStateService saveAtTen;
+
+    setUp(() async {
+      saveAtTen = await gameStateAtLevel(10);
+    });
+
+    Future<TaxiGame> mountGraduation() async {
+      final game = await mountGame(ladderGame(saveAtTen));
+      await game.loadLevel(10);
+      await tickAndSettle(game);
+      expect(game.currentLevel.pickupPoints, hasLength(3));
+      expect(game.currentLevel.coinReward, 300);
+      return game;
+    }
+
+    /// Collects every fare the rung offers — a delivery made past an
+    /// uncollected pickup strands the fare (issue #112), so all three
+    /// board before any kerb.
+    Future<void> collectFares(TaxiGame game) async {
+      for (final pickup in game.currentLevel.pickupPoints) {
+        game.player.position = Vector2(pickup.x, pickup.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+      expect(game.player.hasPassenger, isTrue);
+    }
+
+    /// Delivers fare [index] to its authored kerb.
+    Future<void> deliver(TaxiGame game, int index) async {
+      final dropoff = game.currentLevel.dropoffPoints[index];
+      game.player.position = Vector2(dropoff.x, dropoff.y + 30);
+      game.update(1 / 60);
+      await drain();
+    }
+
+    test('riding the chain, pushing the last choice beats banking it',
+        () async {
+      // The bank's offer: two ridden deliveries — 100 at ×1, 200 at ×2 —
+      // then BANK at the second prompt, the exact decision the issue
+      // found one-sided.
+      final banked = await mountGraduation();
+      await collectFares(banked);
+      await deliver(banked, 0);
+      await deliver(banked, 1);
+      expect(banked.bankPrompt.isActive, isTrue,
+          reason: 'the second prompt is where the issue lived');
+      banked.bankShift();
+      expect(banked.lastBankedScore, 300,
+          reason: 'the bankable chain is 100 + 200');
+
+      // The push's payoff: the same ride, PUSH ON at that prompt, and the
+      // last fare delivered at the ×4 the push bought — 100 + 200 + 400.
+      final coinsBefore = saveAtTen.totalCoins;
+      final pushed = await mountGraduation();
+      await collectFares(pushed);
+      await deliver(pushed, 0);
+      await deliver(pushed, 1);
+      pushed.pushOn();
+      await deliver(pushed, 2);
+
+      expect(pushed.overlays.isActive('levelComplete'), isTrue);
+      expect(pushed.score, 700,
+          reason: '100 at ×1, 200 at ×2, 400 at the pushed ×4');
+      expect(pushed.lastCompletionPayout, 700,
+          reason: 'the panel names the payout actually credited');
+      expect(saveAtTen.totalCoins, coinsBefore + 700,
+          reason: 'the finish pays the score it earned, not the flat 300');
+      expect(700, greaterThan(banked.lastBankedScore!),
+          reason: 'the choice the issue asked for: pushing on can win');
+    });
+
+    test('pushing both prompts beats banking the pushed chain', () async {
+      // The bank's offer: PUSH ON at the first prompt (×3), one more
+      // ridden delivery, then BANK at the second — 100 + 300.
+      final banked = await mountGraduation();
+      await collectFares(banked);
+      await deliver(banked, 0);
+      banked.pushOn();
+      await deliver(banked, 1);
+      banked.bankShift();
+      expect(banked.lastBankedScore, 400,
+          reason: 'the pushed chain banks 100 + 300');
+
+      // The push's payoff: both prompts pushed (×3, then ×5) and the run
+      // finished — 100 + 300 + 500.
+      final coinsBefore = saveAtTen.totalCoins;
+      final pushed = await mountGraduation();
+      await collectFares(pushed);
+      await deliver(pushed, 0);
+      pushed.pushOn();
+      await deliver(pushed, 1);
+      pushed.pushOn();
+      await deliver(pushed, 2);
+
+      expect(pushed.overlays.isActive('levelComplete'), isTrue);
+      expect(pushed.score, 900,
+          reason: '100 at ×1, 300 at the first pushed ×3, 500 at ×5');
+      expect(saveAtTen.totalCoins, coinsBefore + 900,
+          reason: 'the finish pays the score it earned, not the flat 300');
+      expect(900, greaterThan(banked.lastBankedScore!),
+          reason: 'even the richer bank loses to finishing the push');
     });
   });
 

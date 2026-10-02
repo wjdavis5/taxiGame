@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -280,4 +281,47 @@ void main() {
     // inside the screen: nothing may overflow at this width.
     expect(tester.takeException(), isNull);
   });
+
+  // The standard iPhones the issue names (issue #156): 375 pt (SE 3rd
+  // gen / mini under Display Zoom), 390 (iPhone 14/15), 393 (14/15 Pro).
+  // Every card keeps the row layout at these widths, whose middle
+  // column could not fund the longest Roboto-Bold names — "Family
+  // Minivan" showed as "Family Min..." at all three, "The Executive"
+  // at 375. Ahem, the test font, advances a square per glyph — roughly
+  // twice Roboto — so it truncated all seven names at every one of
+  // these widths before the fix: the check below is strictly
+  // conservative, failing on any regression the real font could show.
+  for (final width in [375.0, 390.0, 393.0]) {
+    testWidgets('on a ${width.round()} pt iPhone every car name shows in '
+        'full (issue #156)', (tester) async {
+      tester.view.physicalSize = Size(width, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(wrap(const GarageScreen()));
+      await tester.pump();
+
+      for (final vehicle in VehicleCatalog.vehicles) {
+        await tester.scrollUntilVisible(
+          find.text(vehicle.name),
+          120,
+          scrollable: find.byType(Scrollable).first,
+        );
+        // The name renders at natural one-line width inside a
+        // scale-down box, so its paragraph must never have needed the
+        // ellipsis — didExceedMaxLines is exactly what the "Family
+        // Min..." truncation set before the fix.
+        final paragraph =
+            tester.renderObject<RenderParagraph>(find.text(vehicle.name));
+        expect(
+          paragraph.didExceedMaxLines,
+          isFalse,
+          reason: '${vehicle.name} must not be cut short on a '
+              '${width.round()} pt screen',
+        );
+      }
+
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

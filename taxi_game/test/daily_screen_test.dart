@@ -112,6 +112,68 @@ void main() {
     expect(find.byKey(const Key('daily_outcome_banked')), findsNothing);
   });
 
+  group('the played score row fits a 320 pt phone (issue #157)', () {
+    /// Pumps the screen as the day's card looks on the narrowest real
+    /// surface — the 4-inch SE / Display Zoom width, the garage tests'
+    /// viewport (issue #149). Nothing in the played score row could
+    /// shrink, so a five-digit day shoved the BANKED/WRECKED chip 16–50
+    /// px past the card's edge. Ahem advances a square per glyph —
+    /// roughly twice Roboto — so 0.85 text scale stands in for real-font
+    /// metrics while staying wider than Roboto renders the same digits,
+    /// keeping the overflow check conservative where the bug lived.
+    Future<double> pumpPlayedAt320(
+      WidgetTester tester, {
+      required int score,
+      required bool banked,
+    }) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1.0;
+      tester.platformDispatcher.textScaleFactorTestValue = 0.85;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+      await gameState.recordDailyResult(
+          resultFor(DailyShift.todayKey, score: score, banked: banked));
+      await pumpScreen(tester);
+
+      // The key sits on the chip's text, so this is the label's right
+      // edge — 10 px (the chip's own right inset) inside the rounded
+      // badge. The card's content ends at 320 − 24 screen padding − 20
+      // card padding = 276; the row the chip lives in must not push it
+      // past that, which is exactly what an unshrinkable score did.
+      return tester
+          .getTopRight(
+              find.byKey(Key('daily_outcome_${banked ? 'banked' : 'wrecked'}')))
+          .dx;
+    }
+
+    testWidgets('a five-digit banked score keeps the chip inside the card',
+        (tester) async {
+      final chipRight =
+          await pumpPlayedAt320(tester, score: 12345, banked: true);
+
+      expect(tester.takeException(), isNull,
+          reason: 'the score row must lay out, not overflow its card');
+      expect(find.text('12345'), findsOneWidget);
+      expect(chipRight, lessThanOrEqualTo(276),
+          reason: 'the BANKED chip stays inside the card at 320 pt — the '
+              'score group scales down instead of shoving it out');
+    });
+
+    testWidgets('a six-digit wrecked score keeps the chip inside the card',
+        (tester) async {
+      final chipRight =
+          await pumpPlayedAt320(tester, score: 123456, banked: false);
+
+      expect(tester.takeException(), isNull,
+          reason: 'the score row must lay out, not overflow its card');
+      expect(find.text('123456'), findsOneWidget);
+      expect(chipRight, lessThanOrEqualTo(276),
+          reason: 'the WRECKED chip — wider than BANKED, and behind an even '
+              'wider score — stays inside the card at 320 pt');
+    });
+  });
+
   testWidgets('past shifts list newest first, with how each ended',
       (tester) async {
     await gameState.recordDailyResult(resultFor(daysAgoKey(3), score: 120));
