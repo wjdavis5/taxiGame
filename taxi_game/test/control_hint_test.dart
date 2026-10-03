@@ -229,14 +229,64 @@ void main() {
   });
 
   group('parked below the cab (issue #177)', () {
-    // One body, three screens. Fresh keyed games mount reliably inside a
+    // One body, four screens. Fresh keyed games mount reliably inside a
     // single testWidgets, while the first GameWidget game of a LATER
     // testWidgets in the same run never mounts under the fake clock — a
     // test-environment artifact this file cannot fix (every existing
-    // test here pumps its games within its own body) — so all three
+    // test here pumps its games within its own body) — so all four
     // placements are judged in one drive.
-    testWidgets('in every mode, at the smallest phone, the pill clears the '
-        'cab\'s tail', (tester) async {
+    testWidgets('in every mode, at the smallest phone, and on a '
+        'home-indicator phone, the pill clears the cab\'s tail',
+        (tester) async {
+      // The geometry issue #182 measured: a 420×912 phone, 70 pt of
+      // Dynamic Island, 34 pt of home indicator. GameScreen insets the
+      // game top-only, so the canvas keeps the bottom inset — and the
+      // overlay used to measure inside its own SafeArea, which dropped
+      // it: an 808 pt ruler against the 842 pt canvas the cab is
+      // rendered into, the pill riding back up onto the cab's tail.
+      // The tail below is read off the camera transform — where the cab
+      // is actually painted — not the shared cabTailOnScreen formula:
+      // that formula is frame arithmetic, and on the default flat test
+      // surface (no insets) it agreed with whatever frame the overlay
+      // measured, so it could never catch a wrong frame.
+      tester.view.physicalSize = const Size(420 * 3, 912 * 3);
+      tester.view.devicePixelRatio = 3;
+      // A view reports padding in physical pixels, like a real window:
+      // 70 pt top, 34 pt bottom, at 3× density.
+      tester.view.padding =
+          const FakeViewPadding(left: 0, top: 70 * 3, right: 0, bottom: 34 * 3);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPadding);
+
+      final homeIndicatorGame =
+          await pumpGameScreen(tester, endless: false, tag: 'hi');
+      expect(
+        tester.getSize(find.byType(GameWidget<TaxiGame>)).height,
+        842,
+        reason: 'the canvas eats the 70 pt top inset and keeps the 34 pt '
+            'bottom one — the exact canvas the issue measured',
+      );
+      final canvasTop =
+          tester.getTopLeft(find.byType(GameWidget<TaxiGame>)).dy;
+      final renderedTail = homeIndicatorGame.camera.localToGlobal(
+        homeIndicatorGame.player.position +
+            Vector2(0, homeIndicatorGame.player.stats.height / 2),
+      );
+      expect(
+        tester.getTopLeft(hintFinder).dy - canvasTop,
+        greaterThanOrEqualTo(renderedTail.y + 15.5),
+        reason: 'on a home-indicator phone the pill clears the cab\'s '
+            'rendered tail by its clearance, measured in the canvas frame '
+            'the cab is painted into — not a SafeArea-shortened one '
+            '(issue #182; half a pixel of float grace)',
+      );
+
+      // Back to the default flat test surface for the drives below.
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPadding();
+
       // The tutorial ladder: the camera lead parks the cab
       // [TaxiGame.levelCameraLead] below centre, and the fixed alignment
       // placed for a centred cab used to ride up onto the cab's tail on
