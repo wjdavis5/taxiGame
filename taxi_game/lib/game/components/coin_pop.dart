@@ -10,10 +10,13 @@ import '../taxi_game.dart';
 ///
 /// The counter itself is a Flutter widget above the game, so the coin aims
 /// at the world point beneath the counter's real chip — the HUD measures
-/// it and publishes the rect on the game (issue #188) — recomputed every
-/// frame, which keeps the coin on course while the camera follows the
-/// taxi. Before the HUD has measured (and headless), it falls back to a
-/// fixed top-right inset of the visible world. Removes itself on arrival.
+/// it and publishes the rect on the game (issue #188), in the *screen*
+/// frame, which is brought into the game canvas's frame before the camera
+/// conversion (issue #195: the canvas begins one top SafeArea inset below
+/// the screen origin on the real game screen) — recomputed every frame,
+/// which keeps the coin on course while the camera follows the taxi.
+/// Before the HUD has measured (and headless), it falls back to a fixed
+/// top-right inset of the visible world. Removes itself on arrival.
 class CoinPop extends PositionComponent with HasGameReference<TaxiGame> {
   CoinPop({
     required Vector2 startPosition,
@@ -146,11 +149,24 @@ class CoinPop extends PositionComponent with HasGameReference<TaxiGame> {
   /// The world point directly under the HUD coin counter: the measured
   /// chip's center converted into world coordinates, when the HUD has
   /// published one (issue #188); the fixed top-right inset otherwise.
+  ///
+  /// The published rect is measured with [RenderBox.localToGlobal], so its
+  /// frame is the app's screen — and the camera conversion expects the
+  /// *canvas* frame (Flame's `CameraComponent.globalToLocal` names its
+  /// input "global (canvas)"). Feeding the screen point straight in read
+  /// it one top inset low on every real device, where the game screen's
+  /// top-only SafeArea parks the canvas below the status bar, and the
+  /// coins landed one status-bar height under the counter (issue #195).
+  /// [Game.convertGlobalToLocalCoordinate] closes that gap — app screen to
+  /// game widget, identity while the game is not attached, so headless
+  /// tests see the canvas and screen frames coincide.
   Vector2 _hudTarget() {
     final chip = game.coinChipGlobalRect;
     if (chip != null) {
       return game.camera.globalToLocal(
-        Vector2(chip.center.dx, chip.center.dy),
+        game.convertGlobalToLocalCoordinate(
+          Vector2(chip.center.dx, chip.center.dy),
+        ),
       );
     }
     final visible = game.camera.visibleWorldRect;

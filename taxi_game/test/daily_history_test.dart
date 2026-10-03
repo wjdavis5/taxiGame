@@ -4,6 +4,7 @@ import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
+import 'helpers/calendar_days.dart';
 
 /// The on-device daily history (issue #19): one result per day, the first
 /// one counting, persisted through the same local-storage pipe as the
@@ -33,8 +34,10 @@ void main() {
 
   group('recording a completed daily', () {
     test('stores it and reads it back from storage', () async {
-      final yesterday =
-          DailyShift.dateKeyFor(DateTime.now().subtract(const Duration(days: 1)));
+      // Calendar yesterday, never now − 24h (issue #196): on the 25-hour
+      // fall-back day that is still today for the hour after midnight, and
+      // the "yesterday" result would spend today's one attempt instead.
+      final yesterday = DailyShift.dateKeyFor(calendarDaysFromNow(-1));
       await gameState.recordDailyResult(resultFor(yesterday, score: 340));
 
       expect(gameState.dailyHistory, hasLength(1));
@@ -74,8 +77,15 @@ void main() {
 
   group('the history window', () {
     test('trims the oldest days past maxRecordedDailyResults', () async {
+      // The window is 400+ days, so the walk crosses 2020's DST change
+      // days, where a +24h step repeats the fall-back calendar day
+      // (zone-dependent; the southern hemisphere hits it at April's
+      // fall-back while the walk is still anchored at midnight) — and the
+      // "first result counts" rule then drops one of the 405 records as a
+      // same-day duplicate. Calendar steps give one record per calendar
+      // day in every zone.
       for (var i = 0; i < GameStateService.maxRecordedDailyResults + 5; i++) {
-        final day = DateTime(2020, 1, 1).add(Duration(days: i));
+        final day = calendarDaysFrom(DateTime(2020, 1, 1), i);
         await gameState.recordDailyResult(
             resultFor(DailyShift.dateKeyFor(day), score: i));
       }
