@@ -14,6 +14,7 @@ import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/daily_screen.dart';
 import 'package:taxi_game/ui/screens/game_screen.dart';
+import 'helpers/calendar_days.dart';
 import 'helpers/fake_audio_platform.dart';
 /// The Daily Shift screen (issue #19): today's result and the history
 /// behind it — the two things a player checks before screenshotting their
@@ -63,8 +64,11 @@ void main() {
     );
   }
 
+  /// Calendar days ago, never now − n·24h (issue #196): on the 25-hour
+  /// fall-back day, now − 24h is still today for the hour after midnight,
+  /// and a "history" row planted for today disappears into the today card.
   String daysAgoKey(int days) =>
-      DailyShift.dateKeyFor(DateTime.now().subtract(Duration(days: days)));
+      DailyShift.dateKeyFor(calendarDaysFromNow(-days));
 
   testWidgets('a fresh player sees the invitation and an empty history',
       (tester) async {
@@ -318,8 +322,7 @@ void main() {
       await gameState
           .recordDailyResult(resultFor(DailyShift.todayKey, score: 340));
       await plantGhost(
-        dateKey: DailyShift.dateKeyFor(
-            DateTime.now().subtract(const Duration(days: 1))),
+        dateKey: DailyShift.dateKeyFor(calendarDaysFromNow(-1)),
       );
 
       await pumpScreen(tester);
@@ -353,8 +356,10 @@ void main() {
       // rebuilds on a save change, so the card — and the day its tap is
       // guarded to — are still D's; the tap must not start D+1's course
       // as ghostless free practice (whose trace would become D+1's
-      // ghost, overwriting D's).
-      DailyShift.clock = () => DateTime.now().add(const Duration(days: 1));
+      // ghost, overwriting D's). Tomorrow at noon — calendar tomorrow,
+      // never now + 24h (issue #196), which on the 25-hour fall-back day
+      // is still day D for an hour and makes the refusal vacuous.
+      DailyShift.clock = () => calendarDaysFromNow(1);
       addTearDown(() => DailyShift.clock = DateTime.now);
 
       await tester.tap(find.byKey(const Key('daily_race_ghost_button')));
@@ -443,7 +448,10 @@ void main() {
     }
 
     void rollToTomorrow() {
-      DailyShift.clock = () => DateTime.now().add(const Duration(days: 1));
+      // Calendar tomorrow at noon (issue #196): now + 24h is not tomorrow
+      // for an hour at each end of a DST change day, and the rollover this
+      // steps through must actually cross a midnight.
+      DailyShift.clock = () => calendarDaysFromNow(1);
       addTearDown(() => DailyShift.clock = DateTime.now);
     }
 

@@ -10,6 +10,7 @@ import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/main_menu_screen.dart';
 import 'package:taxi_game/ui/screens/records_screen.dart';
+import 'helpers/calendar_days.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -334,7 +335,10 @@ void main() {
 
     /// Moves the clock into tomorrow, restoring the real one afterwards.
     void rollToTomorrow() {
-      DailyShift.clock = () => DateTime.now().add(const Duration(days: 1));
+      // Calendar tomorrow at noon (issue #196): now + 24h is still today
+      // for an hour at each end of a DST change day, and a "rollover"
+      // that stays on day D proves nothing about the card flipping.
+      DailyShift.clock = () => calendarDaysFromNow(1);
       addTearDown(() => DailyShift.clock = DateTime.now);
     }
 

@@ -4,6 +4,7 @@ import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/models/ghost_trace.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
+import 'helpers/calendar_days.dart';
 
 /// The ghost trace's persistence and best-run rules (issue #20): one
 /// trace under its own key, replaced only by a strictly better run on
@@ -23,8 +24,11 @@ void main() {
     await gameState.loadSaveData();
   });
 
+  /// Calendar days ago, never now − n·24h (issue #196): a duration step
+  /// can land on today across a DST change day, and a ghost planted "n
+  /// days ago" for today is not another day's ghost at all.
   String daysAgoKey(int days) =>
-      DailyShift.dateKeyFor(DateTime.now().subtract(Duration(days: days)));
+      DailyShift.dateKeyFor(calendarDaysFromNow(-days));
 
   Future<bool> recordGhost({
     String? dateKey,

@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flame/components.dart';
+import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -14,10 +14,14 @@ import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/systems/impact_fx.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/traffic_pattern.dart';
+import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
+import 'package:taxi_game/services/haptics_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
+import 'package:taxi_game/ui/screens/game_screen.dart';
 import 'package:taxi_game/ui/widgets/hud_overlay.dart';
+import 'helpers/fake_audio_platform.dart';
 
 /// Mounts [game] headlessly (the pattern flame_test uses) so component
 /// `onLoad` hooks run, then returns it.
@@ -596,75 +600,115 @@ void main() {
       expect(settled.transform.storage[0], closeTo(1.0, 1e-9));
     });
 
-    testWidgets('delivery coins land in the measured chip, not the pause '
-        'button (issue #188)', (tester) async {
+    testWidgets('delivery coins land in the measured chip on the real game '
+        'screen, not a status bar under it (issues #188, #195)',
+        (tester) async {
+      // A live GameScreen, the control-hint tests' pump (fake audio
+      // platform, the four providers): the screen mounts the game inside
+      // a top-only SafeArea, which is what makes this test able to tell
+      // the two coordinate frames apart. The #188 test pumped the HUD
+      // alone on a flat surface, where the canvas and the screen share
+      // one origin — so the frame bug #195 reported could not fail it.
+      installFakeAudioPlatform();
       tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetPadding);
 
-      // The issue's phones: a 375 pt one, a 393 pt one, a 430 pt one —
-      // three widths, three chip positions the fixed inset missed by
-      // 60-160 px. The HUD is pumped alone (the existing pattern above);
-      // the game is resized to the same surface so the canvas and the
-      // widget tree share one coordinate space, exactly as the GameWidget
-      // and its overlays do in the real game screen's Stack.
-      for (final size in const [
-        Size(375, 667),
-        Size(393, 852),
-        Size(430, 932),
-      ]) {
+      // Three surfaces. The control row is the flat test surface — no
+      // inset, canvas and screen coincide, and a failure there means the
+      // harness is broken, not the game. The two inset rows are the
+      // issue's phones: the HUD publishes the chip in *screen*
+      // coordinates while the camera conversion expects the *canvas*
+      // frame, and with the canvas parked one top inset below the screen
+      // origin the pre-#195 code read the chip a whole status bar (a
+      // 59 pt Dynamic Island, a 47 pt bar) too low — into the scoring
+      // row, one row under the counter.
+      const surfaces = [
+        (Size(375, 667), 0.0), // control: no inset, the frames coincide
+        (Size(393, 852), 59.0), // the Dynamic Island phone
+        (Size(430, 932), 47.0), // the status-bar phone
+      ];
+      for (var row = 0; row < surfaces.length; row++) {
+        final (size, topInset) = surfaces[row];
         tester.view.physicalSize = size;
-
-        // Mounted in the real async zone (the repo's widget-test
-        // pattern): game loading touches real I/O — the level bundle,
-        // the audio cache warm — which never completes in the tester's
-        // fake-async zone on its own.
-        final game = (await tester.runAsync<TaxiGame>(() async {
-          final game = TaxiGame(
-            levelLoader: LevelLoaderService(),
-            gameState: gameState,
-          );
-          game.onGameResize(Vector2(size.width, size.height));
-          await game.onLoad();
-          await game.ready();
-          return game;
-        }))!;
+        // The view reports padding in physical pixels; the dpr is 1, so
+        // the points pass through untouched (the #182 idiom).
+        tester.view.padding =
+            FakeViewPadding(left: 0, top: topInset, right: 0, bottom: 0);
 
         await tester.pumpWidget(
-          ChangeNotifierProvider<GameStateService>.value(
-            value: gameState,
+          MultiProvider(
+            providers: [
+              ChangeNotifierProvider<GameStateService>.value(value: gameState),
+              Provider<AudioService>.value(value: AudioService()),
+              Provider<HapticsService>.value(value: HapticsService()),
+              Provider<LevelLoaderService>.value(value: LevelLoaderService()),
+            ],
             child: MaterialApp(
-              home: Scaffold(body: HudOverlay(game: game)),
+              key: ValueKey('app-coin-$row'),
+              home: GameScreen(
+                key: ValueKey('screen-coin-$row'),
+                endlessSeed: 7,
+              ),
             ),
           ),
         );
-        // Past the measurer's 100 ms tick — and past the next one after
-        // a settled frame: pump fires timers *before* building the new
-        // frame, so a tick always measures the last laid-out tree. The
-        // pill's pulse starts at scale 1.3 on first build and settles at
-        // 250 ms; a tick at 400 ms reads the *old* tree, so the second
-        // pump crosses the 500 ms tick, which reads the settled
-        // (scale 1.0) frame. Fixed pumps, not pumpAndSettle — the HUD
-        // polls forever.
-        await tester.pump(const Duration(milliseconds: 400));
-        await tester.pump(const Duration(milliseconds: 200));
+
+        // Wait for the run to go live for real — the control-hint tests'
+        // poll-to-condition deadline: the load runs on real futures, the
+        // game's machinery ticks on pumps.
+        final game = tester
+            .widget<GameWidget<TaxiGame>>(find.byType(GameWidget<TaxiGame>))
+            .game!;
+        var waitedMs = 0;
+        while (!(game.isGameActive && game.isPlayerReady) && waitedMs < 5000) {
+          await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 50)));
+          await tester.pump(const Duration(milliseconds: 50));
+          waitedMs += 50;
+        }
+        expect(game.isGameActive, isTrue,
+            reason: 'the run must be live at $size');
+
+        // Past the measurer's 100 ms tick and the pill's 250 ms pulse.
+        // The HUD mounts with the game's async load, so the pulse can
+        // begin long after the screen's first frame — a fixed pump that
+        // outlasted it on a bare overlay (the #188 test) races it here.
+        // Poll until the published rect stops moving instead: the pulse
+        // is center-aligned, so only its edges ride the scale, and two
+        // equal ticks mean the pill has settled (fixed pumps, never
+        // pumpAndSettle — the HUD polls forever).
+        double? previousTop;
+        var settled = false;
+        for (var i = 0; i < 30 && !settled; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+          final top = game.coinChipGlobalRect?.top;
+          settled = top != null && top == previousTop;
+          previousTop = top;
+        }
+        expect(settled, isTrue,
+            reason: 'the published chip rect settled at $size');
 
         final chip = game.coinChipGlobalRect;
         expect(chip, isNotNull,
             reason: 'the HUD published the chip rect at $size');
+        // The rect is a *screen*-frame measurement: the top inset is in
+        // it — the chip parks below the bar — so the padded row's bounds
+        // are checked against the inset, not the raw screen edge.
         expect(chip!.width, greaterThan(0), reason: 'chip rect at $size');
         expect(chip.height, greaterThan(0), reason: 'chip rect at $size');
-        // Measured in the surface's own coordinates, not the fallback's
-        // fixed inset: the chip sits inside the padded top row.
-        expect(chip.top, greaterThanOrEqualTo(16),
-            reason: 'chip rect at $size');
+        expect(chip.top, greaterThanOrEqualTo(topInset + 16),
+            reason: 'chip rect at $size with a $topInset top inset');
         expect(chip.right, lessThanOrEqualTo(size.width - 16),
             reason: 'chip rect at $size');
 
-        // Fly a real coin to the published chip and read where it lands
-        // on screen: inside the chip, outside the pause button beside
-        // it. The world.add + ready hop runs in the real zone too. The
-        // coin detaches itself on arrival, but its final position is
-        // still read off the reference — that is the arrival point.
+        // Fly a real coin to the published chip, in the real zone like
+        // the loading above. The arrival point is read off the reference
+        // afterwards; the detach itself needs one game tick — Flame
+        // queues removals for the next update ("neither adding nor
+        // removing are immediate"), and the live loop that would drain
+        // that queue only runs on pumps, so one 16 ms pump flushes it.
         late CoinPop coin;
         await tester.runAsync(() async {
           coin = CoinPop(
@@ -675,19 +719,30 @@ void main() {
           await game.ready();
           coin.update(CoinPop.flightDuration);
         });
+        await tester.pump(const Duration(milliseconds: 16));
         expect(coin.parent, isNull,
             reason: 'the coin completed its flight at $size');
-        final landed = game.camera.localToGlobal(coin.position);
 
-        expect(chip.contains(Offset(landed.x, landed.y)), isTrue,
-            reason: 'coin lands in the chip at $size (landed $landed, '
-                'chip $chip)');
+        // Where the coin landed *on screen*: the camera conversion reads
+        // in the canvas frame, so the canvas origin — the GameWidget's
+        // top-left, one top inset below the screen origin — goes back on
+        // (#182's canvas-frame arithmetic). Homing on the chip's screen
+        // point as if it were canvas, the pre-#195 coin landed
+        // `topInset` under the counter's center, clear outside the chip.
+        final canvasTopLeft =
+            tester.getTopLeft(find.byType(GameWidget<TaxiGame>));
+        final inCanvas = game.camera.localToGlobal(coin.position);
+        final landed = Offset(
+            canvasTopLeft.dx + inCanvas.x, canvasTopLeft.dy + inCanvas.y);
+        expect(chip.contains(landed), isTrue,
+            reason: 'coin lands in the chip at $size with a $topInset top '
+                'inset (landed $landed, chip $chip)');
         final pauseRect = tester.getRect(find.byIcon(Icons.pause));
-        expect(pauseRect.contains(Offset(landed.x, landed.y)), isFalse,
+        expect(pauseRect.contains(landed), isFalse,
             reason: 'coin must not land on the pause button at $size '
                 '(landed $landed, pause $pauseRect)');
 
-        // Tearing the HUD down withdraws the measurement again.
+        // Tearing the screen down withdraws the measurement again.
         await tester.pumpWidget(const SizedBox.shrink());
         expect(game.coinChipGlobalRect, isNull,
             reason: 'dispose clears the published rect at $size');

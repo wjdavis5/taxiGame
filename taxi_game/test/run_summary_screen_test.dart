@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'helpers/calendar_days.dart';
 import 'helpers/fake_audio_platform.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -477,8 +478,10 @@ void main() {
       // Day D: the daily settles with its ghost stored, and the summary
       // — whose RACE YOUR GHOST was built for D — is on screen.
       final dayD = DailyShift.todayKey;
-      final dayE = DailyShift.dateKeyFor(
-          DateTime.now().add(const Duration(days: 1)));
+      // Calendar tomorrow (issue #196): now + 24h is still day D for an
+      // hour at each end of a DST change day, and then this "D+1" was
+      // never another day at all.
+      final dayE = DailyShift.dateKeyFor(calendarDaysFromNow(1));
       await plantGhostForToday();
       final game = dailyGame();
       await game.startEndlessRun(
@@ -489,8 +492,11 @@ void main() {
 
       // Midnight passes with the summary left open. Nothing notifies the
       // panel, so the button — and the settled run's pinned day — are
-      // still D's; the tap must not hand out D+1's course.
-      DailyShift.clock = () => DateTime.now().add(const Duration(days: 1));
+      // still D's; the tap must not hand out D+1's course. Pinned to
+      // calendar tomorrow at noon (issue #196) — a 24-hour pin is still
+      // day D across a DST change day, and the refused tap would never
+      // have been tested against a genuinely different day.
+      DailyShift.clock = () => calendarDaysFromNow(1);
       addTearDown(() => DailyShift.clock = DateTime.now);
 
       await tester.tap(find.byKey(const ValueKey('race_ghost_button')));

@@ -254,12 +254,17 @@ class TaxiGame extends FlameGame
   /// by [HudOverlay] on its polling timer (issue #188) — the same
   /// measure-and-publish shape as [bankPanelOustsGhostBadge], run in
   /// reverse: the widget owns the truth, the game holds it where world
-  /// code can read it. [CoinPop] homes on the chip's center, converted
-  /// into world coordinates through the camera, so delivery coins land
-  /// in the counter the player watches instead of the fixed top-right
-  /// inset they used to aim at — which on every phone is the pause
-  /// button. Null until the HUD has measured a frame, and again once it
-  /// is gone; the coin then falls back to the old inset.
+  /// code can read it. The rect's frame is the app's screen, *not* the
+  /// game canvas: [CoinPop] brings the chip's center into the canvas
+  /// frame ([Game.convertGlobalToLocalCoordinate]) before the camera
+  /// conversion, because the canvas origin sits one top SafeArea inset
+  /// below the screen origin on the real game screen — reading the screen
+  /// point as a canvas one was the one-status-bar miss of issue #195. It
+  /// homes on that converted point so delivery coins land in the counter
+  /// the player watches instead of the fixed top-right inset they used to
+  /// aim at — which on every phone is the pause button. Null until the
+  /// HUD has measured a frame, and again once it is gone; the coin then
+  /// falls back to the old inset.
   Rect? coinChipGlobalRect;
 
   /// What the most recent bank paid out, in coins, for the banked-shift

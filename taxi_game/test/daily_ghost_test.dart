@@ -12,6 +12,7 @@ import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
+import 'helpers/calendar_days.dart';
 
 /// The ghost replay wiring (issue #20): a finished run on the daily
 /// course offers its path as the day's ghost; a ghost race — a later run
@@ -222,8 +223,11 @@ void main() {
     });
 
     test('a ghost from another day never takes the road', () async {
-      final yesterday = DailyShift.dateKeyFor(
-          DateTime.now().subtract(const Duration(days: 1)));
+      // Calendar yesterday (issue #196): on the 25-hour fall-back day,
+      // now − 24h is still today for the hour after midnight — and a
+      // "yesterday" ghost planted for today is exactly the same-day ghost
+      // this test must not match.
+      final yesterday = DailyShift.dateKeyFor(calendarDaysFromNow(-1));
       await plantGhost(dateKey: yesterday);
 
       final daily = await mountGame(dailyGame());
@@ -391,13 +395,15 @@ void main() {
       final dayD = DailyShift.todayKey;
       final dayDGhost = gameState.todayGhost;
       expect(dayDGhost, isNotNull, reason: 'precondition: D has a ghost');
-      final dayE = DailyShift.dateKeyFor(
-          DateTime.now().add(const Duration(days: 1)));
+      // Calendar tomorrow (issue #196): a 24-hour step from now can still
+      // be day D across a DST change day, and then this D+1 — and the
+      // pinned clock below — were never another day at all.
+      final dayE = DailyShift.dateKeyFor(calendarDaysFromNow(1));
 
       // Midnight passes with the summary up (issue #96): the tap the
       // bug would have honoured starts a D+1 ghost race whose trace —
       // the first for that "new" day — overwrites D's ghost outright.
-      DailyShift.clock = () => DateTime.now().add(const Duration(days: 1));
+      DailyShift.clock = () => calendarDaysFromNow(1);
       addTearDown(() => DailyShift.clock = DateTime.now);
       game.raceGhost();
 
