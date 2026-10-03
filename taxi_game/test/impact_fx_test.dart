@@ -220,7 +220,10 @@ void main() {
   });
 
   group('CoinPop', () {
-    /// The world point the coin aims at: directly under the HUD chip.
+    /// The world point the coin aims at when no HUD has published a chip
+    /// rect (issue #188's fallback): the fixed top-right inset of the
+    /// visible world. Headless games never measure a chip, so this is
+    /// what their coins home on.
     Vector2 hudTarget(TaxiGame game) {
       final visible = game.camera.visibleWorldRect;
       return Vector2(
@@ -255,8 +258,11 @@ void main() {
       expect(coin.parent, isNull);
     });
 
-    test('flies to the world point under the HUD coin counter', () async {
+    test('flies to the world point under the fixed inset while no chip is '
+        'measured (the fallback)', () async {
       final game = await mountGame(freshGame());
+      expect(game.coinChipGlobalRect, isNull,
+          reason: 'sanity: a headless game has never measured a chip');
       final start = Vector2(200, 400);
       final target = hudTarget(game);
       final coin = CoinPop(
@@ -278,7 +284,8 @@ void main() {
       expect(coin.parent, isNull);
     });
 
-    test('the homing leg closes on the counter monotonically', () async {
+    test('the fallback homing leg closes on the counter monotonically',
+        () async {
       final game = await mountGame(freshGame());
       final target = hudTarget(game);
       final coin = CoinPop(
@@ -298,6 +305,34 @@ void main() {
         previous = current;
       }
       expect(coin.position, target);
+    });
+
+    test('homes on the HUD\'s measured chip the moment one is published',
+        () async {
+      final game = await mountGame(freshGame());
+      // A chip parked mid-row, nowhere near the fixed top-right inset —
+      // the issue's whole geometry: the real chip sits 60-160 px from
+      // where the fallback aims (usually on the pause button).
+      const chip = Rect.fromLTWH(140, 76, 90, 37);
+      game.coinChipGlobalRect = chip;
+      final target = game.camera.globalToLocal(
+        Vector2(chip.center.dx, chip.center.dy),
+      );
+      final fallback = hudTarget(game);
+      expect(target, isNot(fallback),
+          reason: 'sanity: the measured chip is genuinely elsewhere');
+
+      final coin = CoinPop(
+        startPosition: Vector2(200, 400),
+        random: math.Random(4),
+      );
+      game.world.add(coin);
+      await game.ready();
+
+      coin.update(CoinPop.flightDuration);
+      expect(coin.position.x, closeTo(target.x, 1e-6));
+      expect(coin.position.y, closeTo(target.y, 1e-6));
+      expect(coin.parent, isNull);
     });
 
     test('same seed, same flight', () async {
@@ -559,6 +594,104 @@ void main() {
             .first,
       );
       expect(settled.transform.storage[0], closeTo(1.0, 1e-9));
+    });
+
+    testWidgets('delivery coins land in the measured chip, not the pause '
+        'button (issue #188)', (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      // The issue's phones: a 375 pt one, a 393 pt one, a 430 pt one —
+      // three widths, three chip positions the fixed inset missed by
+      // 60-160 px. The HUD is pumped alone (the existing pattern above);
+      // the game is resized to the same surface so the canvas and the
+      // widget tree share one coordinate space, exactly as the GameWidget
+      // and its overlays do in the real game screen's Stack.
+      for (final size in const [
+        Size(375, 667),
+        Size(393, 852),
+        Size(430, 932),
+      ]) {
+        tester.view.physicalSize = size;
+
+        // Mounted in the real async zone (the repo's widget-test
+        // pattern): game loading touches real I/O — the level bundle,
+        // the audio cache warm — which never completes in the tester's
+        // fake-async zone on its own.
+        final game = (await tester.runAsync<TaxiGame>(() async {
+          final game = TaxiGame(
+            levelLoader: LevelLoaderService(),
+            gameState: gameState,
+          );
+          game.onGameResize(Vector2(size.width, size.height));
+          await game.onLoad();
+          await game.ready();
+          return game;
+        }))!;
+
+        await tester.pumpWidget(
+          ChangeNotifierProvider<GameStateService>.value(
+            value: gameState,
+            child: MaterialApp(
+              home: Scaffold(body: HudOverlay(game: game)),
+            ),
+          ),
+        );
+        // Past the measurer's 100 ms tick — and past the next one after
+        // a settled frame: pump fires timers *before* building the new
+        // frame, so a tick always measures the last laid-out tree. The
+        // pill's pulse starts at scale 1.3 on first build and settles at
+        // 250 ms; a tick at 400 ms reads the *old* tree, so the second
+        // pump crosses the 500 ms tick, which reads the settled
+        // (scale 1.0) frame. Fixed pumps, not pumpAndSettle — the HUD
+        // polls forever.
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump(const Duration(milliseconds: 200));
+
+        final chip = game.coinChipGlobalRect;
+        expect(chip, isNotNull,
+            reason: 'the HUD published the chip rect at $size');
+        expect(chip!.width, greaterThan(0), reason: 'chip rect at $size');
+        expect(chip.height, greaterThan(0), reason: 'chip rect at $size');
+        // Measured in the surface's own coordinates, not the fallback's
+        // fixed inset: the chip sits inside the padded top row.
+        expect(chip.top, greaterThanOrEqualTo(16),
+            reason: 'chip rect at $size');
+        expect(chip.right, lessThanOrEqualTo(size.width - 16),
+            reason: 'chip rect at $size');
+
+        // Fly a real coin to the published chip and read where it lands
+        // on screen: inside the chip, outside the pause button beside
+        // it. The world.add + ready hop runs in the real zone too. The
+        // coin detaches itself on arrival, but its final position is
+        // still read off the reference — that is the arrival point.
+        late CoinPop coin;
+        await tester.runAsync(() async {
+          coin = CoinPop(
+            startPosition: Vector2(200, 400),
+            random: math.Random(4),
+          );
+          game.world.add(coin);
+          await game.ready();
+          coin.update(CoinPop.flightDuration);
+        });
+        expect(coin.parent, isNull,
+            reason: 'the coin completed its flight at $size');
+        final landed = game.camera.localToGlobal(coin.position);
+
+        expect(chip.contains(Offset(landed.x, landed.y)), isTrue,
+            reason: 'coin lands in the chip at $size (landed $landed, '
+                'chip $chip)');
+        final pauseRect = tester.getRect(find.byIcon(Icons.pause));
+        expect(pauseRect.contains(Offset(landed.x, landed.y)), isFalse,
+            reason: 'coin must not land on the pause button at $size '
+                '(landed $landed, pause $pauseRect)');
+
+        // Tearing the HUD down withdraws the measurement again.
+        await tester.pumpWidget(const SizedBox.shrink());
+        expect(game.coinChipGlobalRect, isNull,
+            reason: 'dispose clears the published rect at $size');
+      }
     });
   });
 }

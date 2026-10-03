@@ -93,6 +93,14 @@ class EndlessCourse {
   static const double rideGrowthMax = 125.0;
   static const double slotTailMargin = 150.0;
 
+  /// How far any stop keeps from a junction band's edge (issue #189):
+  /// the pickup/dropoff detection radius (40 px), so a passenger nudged
+  /// clear of a cross street is still collectable without the taxi ever
+  /// having to halt inside the junction itself. Junctions are working
+  /// intersections, not addresses — nothing the fare course places ever
+  /// waits inside one.
+  static const double junctionStopClearance = 40.0;
+
   /// The long-haul fare's ride (issue #25): the longest ride the slot can
   /// legally hold — the pickup at the slot's earliest inset and the
   /// dropoff exactly at the slot's tail margin. Sits past the worst
@@ -138,6 +146,15 @@ class EndlessCourse {
       final random = Random(_slotSeed(index) ^ (0x51EC0DE * (a + 1)));
       distance += minRelocationRide +
           random.nextDouble() * (maxRelocationRide - minRelocationRide);
+      // A hop that lands in a junction band runs on to the band's far
+      // edge (issue #189): forward only, so the chain stays always-ahead
+      // and strictly monotonic attempt over attempt. Pure arithmetic on
+      // the hop's result — the draw itself is untouched, and a hop that
+      // already clears every junction is extended by nothing at all.
+      if (RunEnvironment.junctionBandContains(distance,
+          margin: junctionStopClearance)) {
+        distance = _clearOfJunctionAhead(distance);
+      }
     }
     return distance;
   }
@@ -224,14 +241,73 @@ class EndlessCourse {
         break; // Standard geometry; the VIP's deal is payout and clock.
     }
 
+    // Junctions are working cross streets, not addresses (issue #189): a
+    // passenger planted inside a junction band waits where cross traffic
+    // runs and the corner sightlines break — and fare #33's pickup landed
+    // in the 45,000 px junction under literally every seed, because its
+    // whole drawn inset range sits inside that band. Any stop that lands
+    // in a band — widened by [junctionStopClearance] so the taxi never
+    // has to stop inside the junction to collect — is nudged out by pure
+    // arithmetic on the band grid: no fresh RNG draws, so every
+    // unaffected slot keeps byte-identical geometry and the same seed
+    // still deals the same course.
+    var pickupDistance = index * slotLength + pickupInset;
+    if (RunEnvironment.junctionBandContains(pickupDistance,
+        margin: junctionStopClearance)) {
+      // Forward only, further up the road: the nudge grows the inset, so
+      // the [minPickupInset] floor still holds.
+      pickupDistance = _clearOfJunctionAhead(pickupDistance);
+    }
+
+    // A nudged pickup eats ride room the slot used to spend on inset;
+    // the cap keeps the dropoff inside the slot's tail margin. For an
+    // unnudged pickup the cap cannot bind — the ranges were tuned so
+    // maxPickupInset + maxRideLength + rideGrowthMax, and the long-haul's
+    // minPickupInset + longHaulRideLength, both land exactly on the
+    // ceiling — so untouched slots stay bit-for-bit as dealt.
+    final rideCeiling =
+        (index + 1) * slotLength - slotTailMargin - pickupDistance;
+    if (rideLength > rideCeiling) rideLength = rideCeiling;
+
+    var dropoffDistance = pickupDistance + rideLength;
+    if (RunEnvironment.junctionBandContains(dropoffDistance,
+        margin: junctionStopClearance)) {
+      // To whichever band edge the slot still holds: the far edge while
+      // the dropoff can afford it (long rides stay long — the drawn
+      // dropoff range only reaches junctions centred 600–1200 px into a
+      // slot), the near edge when the far edge pokes past the slot's
+      // ceiling, which among those centres only 1200 does — and there
+      // the near edge still leaves 1000 − maxPickupInset = 725 px of
+      // ride. Either way the [minRideLength] floor holds, which the
+      // assert below pins.
+      final center = (dropoffDistance / RunEnvironment.intersectionSpacing)
+              .round() *
+          RunEnvironment.intersectionSpacing;
+      final farEdge = center +
+          RunEnvironment.intersectionHalfBand +
+          junctionStopClearance;
+      final nearEdge = center -
+          RunEnvironment.intersectionHalfBand -
+          junctionStopClearance;
+      final slotCeiling = (index + 1) * slotLength - slotTailMargin;
+      dropoffDistance = farEdge <= slotCeiling ? farEdge : nearEdge;
+      assert(
+        dropoffDistance >= pickupDistance + minRideLength,
+        'junction nudge left fare $index an unrideable '
+        '${dropoffDistance - pickupDistance} px ride',
+      );
+    }
+
+    // The ride actually dealt, post-nudge — the reward must pay for the
+    // ride the player really drives, not the one the draws described.
+    rideLength = dropoffDistance - pickupDistance;
+
     // True distances into the run (issue #30): placed at the live
     // shift's frame when one is given — the frame the camera is actually
     // in, whether the slot sits before, behind, or across a pending fold
     // (issue #53) — or the canonical mapping for pure queries. Pickup and
     // dropoff share one slot, and a slot never straddles a fold boundary
     // (the period is a whole number of slots), so one shift covers both.
-    final pickupDistance = index * slotLength + pickupInset;
-    final dropoffDistance = pickupDistance + rideLength;
     final shift =
         worldShift ?? WorldOrigin.shiftForDistance(pickupDistance);
     final pickupY = shift - pickupDistance;
@@ -266,6 +342,18 @@ class EndlessCourse {
       pickupDistance: pickupDistance,
       dropoffDistance: dropoffDistance,
     );
+  }
+
+  /// The first stoppable distance at or after [distance] that clears the
+  /// junction band it sits in: the band's far edge plus the stop
+  /// clearance. Pure band-grid arithmetic — no RNG, no seed — so calling
+  /// it can never redraw the course a seed already dealt (issue #189).
+  static double _clearOfJunctionAhead(double distance) {
+    const spacing = RunEnvironment.intersectionSpacing;
+    final center = (distance / spacing).round() * spacing;
+    return center +
+        RunEnvironment.intersectionHalfBand +
+        junctionStopClearance;
   }
 
   /// SplitMix64-style mixing so (seed, index) pairs land on independent,

@@ -79,8 +79,41 @@ void main() {
   }
 
   group('the license inventory (issue #4)', () {
-    test('lists every audio file the bundle ships', () async {
+    /// LICENSES.txt is two documents: the inventory proper, and — from
+    /// `## Removed assets` on — the record of what was pulled from the
+    /// bundle when audio last went away (the CC-BY menu_music.mp3 among
+    /// it) plus the maintenance notes. Every check in this group runs
+    /// against the shipped half alone: the original name check
+    /// substring-matched the whole file, so a re-added menu_music.mp3
+    /// was "named" by its own removal entry and passed (issue #190).
+    Future<(String, String)> licenseHalves() async {
+      final licenses = await rootBundle.loadString(
+        'assets/licenses/LICENSES.txt',
+      );
+      const marker = '## Removed assets';
+      final splitAt = licenses.indexOf(marker);
+      expect(splitAt, greaterThanOrEqualTo(0),
+          reason: 'the inventory must keep its Removed assets section — '
+              'the checks here split the file there to tell claims about '
+              'the bundle apart from history');
+      return (licenses.substring(0, splitAt), licenses.substring(splitAt));
+    }
+
+    /// Every filename-shaped token in [text]. Names are matched on those
+    /// token boundaries, never as bare substrings: `scrape.wav` would be
+    /// a substring of a hypothetical `disc_scrape.wav`, and a plain
+    /// `contains` would credit the inventory with a name it never wrote.
+    Set<String> filenameTokens(String text) =>
+        RegExp(r'[A-Za-z0-9_.-]+').allMatches(text).map((m) => m[0]!).toSet();
+
+    test('names every shipped audio file, and none of the removed ones',
+        () async {
+      final (shippedHalf, removedHalf) = await licenseHalves();
+
       final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+      // Every extension, not a .wav filter — the count check this group
+      // used to have filtered .wav before asserting 12, so a re-added
+      // .mp3 slipped past it unseen (issue #190).
       final shipped = manifest
           .listAssets()
           .where((path) => path.startsWith('assets/audio/'))
@@ -88,28 +121,51 @@ void main() {
       expect(shipped, isNotEmpty,
           reason: 'the audio bundle must not silently go empty');
 
-      final licenses = await rootBundle.loadString(
-        'assets/licenses/LICENSES.txt',
-      );
+      final inventoryNames = filenameTokens(shippedHalf);
+      final removedNames = filenameTokens(removedHalf);
       for (final asset in shipped) {
         final name = asset.split('/').last;
-        expect(licenses.contains(name), isTrue,
-            reason: '$asset ships but LICENSES.txt never names it');
+        expect(inventoryNames.contains(name), isTrue,
+            reason: '$asset ships but the license inventory never names it');
+        expect(removedNames.contains(name), isFalse,
+            reason: '$asset ships but is also named at or after the '
+                'Removed assets marker — that section must only ever name '
+                'files that stay out of the bundle');
       }
     });
 
-    test('covers the two asset folders the pubspec declares', () async {
+    test('names exactly the files the bundle ships — no more, no fewer',
+        () async {
+      final (shippedHalf, _) = await licenseHalves();
+
       final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
-      final shipped = manifest.listAssets().where(
-            (path) => path.startsWith('assets/audio/'),
-          );
-      expect(
-        shipped.where((path) => path.endsWith('.wav')),
-        hasLength(12),
-        reason: 'six Kenney effects, three Kenney jingles, and the three '
-            'generated loops (engine, brake, music). If this count changes, '
-            'assets/licenses/LICENSES.txt must change with it.',
-      );
+      final onDisk = manifest
+          .listAssets()
+          .where((path) => path.startsWith('assets/audio/'))
+          .map((path) => path.split('/').last)
+          .toSet();
+
+      // The inventory writes shipped names two ways: as full
+      // `assets/audio/…` paths (the generated files) and as the
+      // right-hand `→ shipped.ext` column of the Kenney conversion
+      // table. The dot requirement keeps the parenthetical "(original
+      // pack file → shipped as)" out of the parse. Set equality catches
+      // both directions the old hasLength(12)-on-.wav could not: a file
+      // that ships unnamed, and a name that ships no file.
+      final named = <String>{
+        ...RegExp(r'assets/audio/[\w/]+\.\w+')
+            .allMatches(shippedHalf)
+            .map((m) => m[0]!.split('/').last),
+        ...RegExp(r'→\s*([\w-]+\.[\w-]+)')
+            .allMatches(shippedHalf)
+            .map((m) => m[1]!),
+      };
+
+      expect(onDisk, equals(named),
+          reason: 'the bundle and the license inventory must name the same '
+              'audio files: anything on disk but unnamed ships uncredited, '
+              'and anything named but not on disk is the inventory lying '
+              'about the bundle');
     });
   });
 

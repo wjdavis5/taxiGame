@@ -10,7 +10,16 @@ import '../../models/fare_type.dart';
 import '../../services/game_state_service.dart';
 
 /// HUD overlay that displays during gameplay
-class HudOverlay extends StatelessWidget {
+///
+/// Stateful for one reason: measuring where the coin chip actually sits
+/// (issue #188). The chip shares its row with a title pill that scales
+/// down to fit and a pause button, so its position depends on the title
+/// badge's subtree — which rebuilds when the async level-name load lands
+/// and on every distance-digit change, none of which rebuild this row.
+/// A post-frame callback would see none of that; the polling timer below
+/// (this file's own idiom, e.g. [_PauseButtonState]) re-measures for the
+/// HUD's whole life instead.
+class HudOverlay extends StatefulWidget {
   const HudOverlay({super.key, required this.game});
 
   /// The vertical band the ghost-gap badge adds below the scoring row
@@ -27,7 +36,57 @@ class HudOverlay extends StatelessWidget {
   final TaxiGame game;
 
   @override
+  State<HudOverlay> createState() => _HudOverlayState();
+}
+
+class _HudOverlayState extends State<HudOverlay> {
+  Timer? _timer;
+
+  /// On the coin pill's Container, so its [RenderBox] can be measured
+  /// wherever the row parks it (issue #188).
+  final GlobalKey _coinChipKey = GlobalKey(debugLabel: 'hud_coin_chip');
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (!mounted) return;
+      _publishCoinChipRect();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    // The published rect describes this overlay's chip; once the overlay
+    // is gone it is stale, and [CoinPop] must fall back rather than aim
+    // at a chip that no longer exists.
+    widget.game.coinChipGlobalRect = null;
+    super.dispose();
+  }
+
+  /// Measures the coin chip's global rect and publishes it to the game
+  /// (issue #188): delivery coins aim at the counter the player watches,
+  /// not a fixed corner inset that lands on the pause button. Written as
+  /// a plain field, no setState — the rect feeds [CoinPop]'s world-side
+  /// homing and nothing here renders it, so a rebuild would buy nothing.
+  /// The rect is measured *inside* the pulse's Transform.scale, but the
+  /// scale is center-aligned, so the center the coins home on is
+  /// invariant through the 250 ms pulse.
+  void _publishCoinChipRect() {
+    final context = _coinChipKey.currentContext;
+    final renderObject = context?.findRenderObject();
+    if (renderObject is RenderBox &&
+        renderObject.attached &&
+        renderObject.hasSize) {
+      widget.game.coinChipGlobalRect =
+          renderObject.localToGlobal(Offset.zero) & renderObject.size;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final game = widget.game;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -78,13 +137,16 @@ class HudOverlay extends StatelessWidget {
                     ),
                   ),
                 ),
-                
+
                 // Coins
                 Consumer<GameStateService>(
                   builder: (context, gameState, child) {
                     // Keyed on the total so a coin award restarts the
                     // pulse: the counter pops as the coin pops land in it
-                    // (issue #7).
+                    // (issue #7). The key below rides the pill itself —
+                    // inside the scale transform, whose center alignment
+                    // keeps the pill's measured center put while it pops
+                    // (issue #188).
                     return TweenAnimationBuilder<double>(
                       key: ValueKey('coin-pulse-${gameState.totalCoins}'),
                       tween: Tween(begin: 1.3, end: 1.0),
@@ -93,6 +155,7 @@ class HudOverlay extends StatelessWidget {
                       builder: (context, scale, child) =>
                           Transform.scale(scale: scale, child: child),
                       child: Container(
+                        key: _coinChipKey,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 15,
                           vertical: 8,
@@ -123,7 +186,7 @@ class HudOverlay extends StatelessWidget {
                     );
                   },
                 ),
-                
+
                 // Pause button: stands down while a summary owns the
                 // screen (issue #52) or the first-ever bank-or-push
                 // primer holds its freeze (issue #132) — the polling

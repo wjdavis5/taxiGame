@@ -446,12 +446,22 @@ class LevelFailedOverlay extends StatelessWidget {
               color: Colors.white,
             ),
             const SizedBox(height: 20),
-            Text(
-              missedFare ? 'FARE MISSED!' : 'CRASH!',
-              style: const TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+            // The completion panel's #159 fix, 130 lines below its first
+            // use: 'FARE MISSED!' is 384 px of bold type against the
+            // 200 px this panel's column offers on a 320 pt phone, and
+            // the bare Text wrapped into two flush-left lines while the
+            // panel sat centred (issue #187). The scale-down box lays
+            // the title out under unbounded width — always one line —
+            // and shrinks it to fit, centred either way.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                missedFare ? 'FARE MISSED!' : 'CRASH!',
+                style: const TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
               ),
             ),
             const SizedBox(height: 10),

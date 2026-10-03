@@ -47,12 +47,22 @@ class RunSummaryPanel extends StatelessWidget {
                 color: Colors.white,
               ),
               const SizedBox(height: 12),
-              Text(
-                _banked ? 'SHIFT BANKED' : 'SHIFT OVER',
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+              // The small-phone pass (issue #187): on a 320 pt screen the
+              // panel's content column is 200 px wide, and 'SHIFT BANKED'
+              // is 336 px of bold type — the bare Text wrapped into two
+              // flush-left lines while everything around it sat centred.
+              // The completion panel's #159 scale-down idiom: lay the
+              // title out under unbounded width — always one line — and
+              // scale it down to fit.
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  _banked ? 'SHIFT BANKED' : 'SHIFT OVER',
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
               ),
               // The daily's settled attempt (issue #19): the result is in —
@@ -69,20 +79,28 @@ class RunSummaryPanel extends StatelessWidget {
                     color: Colors.amber,
                     borderRadius: BorderRadius.circular(30),
                   ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.event, size: 20, color: Colors.black),
-                      SizedBox(width: 6),
-                      Text(
-                        "TODAY'S DAILY IS IN",
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black,
+                  // The PB pill's rule, one branch up: the banner's rigid
+                  // Row overflows the same 200 px column on a 320 pt phone
+                  // with the same flex exception, so it rides the same
+                  // scale-down box — natural size where it fits, one
+                  // shrinking whole where it does not (issue #187).
+                  child: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.event, size: 20, color: Colors.black),
+                        SizedBox(width: 6),
+                        Text(
+                          "TODAY'S DAILY IS IN",
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -98,13 +116,19 @@ class RunSummaryPanel extends StatelessWidget {
               if (_banked)
                 // The payout: the whole run score, now permanent in the
                 // wallet — the thing pushing would have grown and a crash
-                // would have taken.
-                Text(
-                  '+${summary.score} Coins',
-                  style: const TextStyle(
-                    fontSize: 24,
-                    color: Colors.yellow,
-                    fontWeight: FontWeight.bold,
+                // would have taken. Scale-down, not wrap (issue #187):
+                // the banked branch's twin of the wreck's Forfeited line
+                // — '+240 Coins' is 240 px of type against the 200 px
+                // column on a 320 pt phone.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    '+${summary.score} Coins',
+                    style: const TextStyle(
+                      fontSize: 24,
+                      color: Colors.yellow,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 )
               else ...[
@@ -119,12 +143,18 @@ class RunSummaryPanel extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  'Forfeited: ${summary.score} coins',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    color: Colors.yellow,
-                    fontWeight: FontWeight.bold,
+                // Scale-down, not wrap (issue #187): the forfeit number
+                // is the wreck's headline — 'Forfeited: 90 coins' is 380
+                // px of type in the same 200 px column on a 320 pt phone.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    'Forfeited: ${summary.score} coins',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      color: Colors.yellow,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -149,20 +179,33 @@ class RunSummaryPanel extends StatelessWidget {
                     color: Colors.yellow,
                     borderRadius: BorderRadius.circular(30),
                   ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.emoji_events, size: 20, color: Colors.black),
-                      SizedBox(width: 6),
-                      Text(
-                        'NEW PERSONAL BEST',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black,
+                  // The pill's Row is rigid on purpose — a personal best
+                  // banner must read at full size wherever it fits — so
+                  // on a 320 pt phone (200 px of panel column against a
+                  // ~292 px pill) it overflowed the yellow stripe out
+                  // over the panel's edge instead of shrinking (issue
+                  // #187). The scale-down idiom again, around the whole
+                  // Row: it lays out at natural size under unbounded
+                  // width and shrinks as one when it must, icon, gap and
+                  // text together.
+                  child: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.emoji_events,
+                            size: 20, color: Colors.black),
+                        SizedBox(width: 6),
+                        Text(
+                          'NEW PERSONAL BEST',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 )
               else if (summary.previousBest > 0)
@@ -253,11 +296,19 @@ class RunSummaryPanel extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
                 ),
-                child: Text(
-                  game.isDailyShift ? 'ENDLESS SHIFT' : 'DRIVE AGAIN',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
+                // The button's 80 px of horizontal padding plus 220 px of
+                // 'DRIVE AGAIN' never fit a 320 pt phone's 200 px panel
+                // column, and the label wrapped inside its own button
+                // (issue #187). Scale-down keeps it one line at whatever
+                // size fits.
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    game.isDailyShift ? 'ENDLESS SHIFT' : 'DRIVE AGAIN',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ),
@@ -331,11 +382,25 @@ class RunSummaryPanel extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 15,
-              color: Colors.white70,
+          // The label yields, the value stays rigid (issue #187, after
+          // the HUD scoring row's #43 rule): 'Fares delivered' is 225 px
+          // of 15 px type against the 200 px column on a 320 pt phone,
+          // and the bare Row overflowed with a flex exception. A whole-
+          // row scale-down box would left-pack the row — unbounded width
+          // leaves spaceBetween no free space to spend — so only the
+          // label rides one, inside a loose Flexible: natural size
+          // wherever it fits (the layout is unchanged on every wider
+          // phone), scaled down alone when it does not.
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 15,
+                  color: Colors.white70,
+                ),
+              ),
             ),
           ),
           Text(

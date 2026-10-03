@@ -9,6 +9,7 @@ import 'package:taxi_game/game/components/dropoff_zone.dart';
 import 'package:taxi_game/game/components/pickup_zone.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
+import 'package:taxi_game/game/systems/run_environment.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/fare_type.dart';
 import 'package:taxi_game/models/passenger_data.dart';
@@ -115,6 +116,11 @@ void main() {
 
       for (var i = 0; i < 2000; i++) {
         final fare = course.fare(i);
+        // A slot hosting a junction may bend the pinned geometry (issue
+        // #189): stops move clear of the band, so insets can grow and
+        // rides can shorten (long-haul) or stretch (a dropoff pushed to
+        // the band's far edge). Everywhere else the exact pins stand.
+        final junctionSlot = slotHostsJunction(i);
         switch (fare.fareType) {
           case FareType.longHaul:
             sawLongHaul = true;
@@ -124,19 +130,44 @@ void main() {
             // every period; the road does not). (closeTo, not equals: the
             // world's Vector2s store float32, and deep slots read
             // geometry a few thousandths off its true values.)
-            expect(
-              fare.pickupDistance,
-              closeTo(
-                  i * EndlessCourse.slotLength + EndlessCourse.minPickupInset,
-                  0.01),
-              reason: 'fare $i long-haul pickup inset',
-            );
-            expect(fare.rideLength,
-                closeTo(EndlessCourse.longHaulRideLength, 0.01),
-                reason: 'fare $i long-haul ride');
-            expect(fare.rideLength,
-                greaterThan(EndlessCourse.maxRideLength + EndlessCourse.rideGrowthMax),
-                reason: 'the long-haul is visibly further than any standard ride');
+            if (junctionSlot) {
+              // The nudge only ever moves the pickup forward and only
+              // ever shortens the ride: the floors are what must hold.
+              expect(
+                fare.pickupDistance,
+                greaterThanOrEqualTo(i * EndlessCourse.slotLength +
+                    EndlessCourse.minPickupInset -
+                    0.01),
+                reason: 'fare $i long-haul pickup keeps its inset floor '
+                    '(junction slot)',
+              );
+              expect(
+                fare.pickupDistance,
+                lessThan((i + 1) * EndlessCourse.slotLength),
+                reason: 'fare $i long-haul stays in its slot '
+                    '(junction slot)',
+              );
+              expect(
+                fare.rideLength,
+                greaterThanOrEqualTo(EndlessCourse.minRideLength - 0.01),
+                reason: 'fare $i long-haul ride stays rideable '
+                    '(junction slot)',
+              );
+            } else {
+              expect(
+                fare.pickupDistance,
+                closeTo(
+                    i * EndlessCourse.slotLength + EndlessCourse.minPickupInset,
+                    0.01),
+                reason: 'fare $i long-haul pickup inset',
+              );
+              expect(fare.rideLength,
+                  closeTo(EndlessCourse.longHaulRideLength, 0.01),
+                  reason: 'fare $i long-haul ride');
+              expect(fare.rideLength,
+                  greaterThan(EndlessCourse.maxRideLength + EndlessCourse.rideGrowthMax),
+                  reason: 'the long-haul is visibly further than any standard ride');
+            }
           case FareType.awkward:
             sawAwkward = true;
             // The far-side crossing: opposite kerbs, shortest ride.
@@ -147,19 +178,45 @@ void main() {
               containsAll([fare.pickup.x, fare.dropoff.x]),
               reason: 'fare $i still parks on the kerbs',
             );
-            expect(fare.rideLength, closeTo(EndlessCourse.awkwardRideLength, 0.01),
-                reason: 'fare $i awkward ride is the shortest drawn');
+            if (junctionSlot) {
+              // The nudge can only stretch an awkward ride — a dropoff
+              // pushed to the band's far edge — never shrink it: the
+              // cap cannot bind on a 551 px ride. The stretch tops out
+              // at the room the slot itself has.
+              expect(
+                fare.rideLength,
+                greaterThanOrEqualTo(
+                    EndlessCourse.awkwardRideLength - 0.01),
+                reason: 'fare $i awkward ride keeps its floor '
+                    '(junction slot)',
+              );
+              expect(
+                fare.rideLength,
+                lessThanOrEqualTo(
+                    EndlessCourse.longHaulRideLength + 0.01),
+                reason: 'fare $i awkward ride stays inside its slot '
+                    '(junction slot)',
+              );
+            } else {
+              expect(fare.rideLength,
+                  closeTo(EndlessCourse.awkwardRideLength, 0.01),
+                  reason: 'fare $i awkward ride is the shortest drawn');
+            }
           case FareType.vip:
             sawVip = true;
             // The VIP buys payout and clock, not geometry: a standard
-            // ride the player can judge at a glance.
+            // ride the player can judge at a glance. In a junction slot
+            // the nudge may stretch the ride to the band's far edge
+            // (issue #189) — still never past the room the slot has.
             expect(fare.rideLength,
                 greaterThanOrEqualTo(EndlessCourse.minRideLength),
                 reason: 'fare $i vip ride');
             expect(
               fare.rideLength,
-              lessThanOrEqualTo(
-                  EndlessCourse.maxRideLength + EndlessCourse.rideGrowthMax),
+              lessThanOrEqualTo(junctionSlot
+                  ? EndlessCourse.longHaulRideLength
+                  : EndlessCourse.maxRideLength +
+                      EndlessCourse.rideGrowthMax),
               reason: 'fare $i vip ride');
           case FareType.standard:
             break;
@@ -526,4 +583,23 @@ void main() {
           reason: 'a level\'s pickups are mandatory — nothing to decline');
     });
   });
+}
+
+/// Whether slot [index] of the course borders a junction's stop-keeping
+/// zone (band widened by the course's stop clearance) — the slots whose
+/// fares the junction nudge (issue #189) may legitimately bend, and the
+/// only slots whose exact-geometry pins are relaxed above.
+bool slotHostsJunction(int index) {
+  const reach = RunEnvironment.intersectionHalfBand +
+      EndlessCourse.junctionStopClearance;
+  const spacing = RunEnvironment.intersectionSpacing;
+  final from = index * EndlessCourse.slotLength;
+  final to = (index + 1) * EndlessCourse.slotLength;
+  final first = math.max(1, (from / spacing).floor());
+  final last = (to / spacing).ceil();
+  for (var k = first; k <= last; k++) {
+    final center = k * spacing;
+    if (center + reach > from && center - reach < to) return true;
+  }
+  return false;
 }

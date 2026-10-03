@@ -585,13 +585,19 @@ void main() {
       expect(game.score, fare0.reward);
 
       // Let the camera catch up so the next fare generates and mounts,
-      // then deliver it: it pays 2x.
+      // then deliver it straight through fare 0's still-open prompt,
+      // which resolves as its default push (issue #186): the fare pays
+      // the pushed 3x, not the unpushed 2x.
       await tickAndSettle(game);
       final fare1 = game.course!.fare(1);
       deliverFare(game, fare1);
-      expect(game.fareChain.multiplier, 3);
-      expect(game.score, fare0.reward + 2 * fare1.reward,
-          reason: 'score accrues as fare value x current multiplier');
+      expect(game.fareChain.multiplier, 4,
+          reason: 'the superseded push stepped the chain, then the '
+              'delivery stepped it again');
+      expect(game.score, fare0.reward + 3 * fare1.reward,
+          reason: 'score accrues as fare value x current multiplier — '
+              'driving straight through the prompt pays the push '
+              '(issue #186)');
       expect(gameState.totalCoins, coinsBefore + fare0.reward + fare1.reward,
           reason: 'coins pay unbunched: the economy is unchanged');
     });

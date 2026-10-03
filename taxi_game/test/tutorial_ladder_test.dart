@@ -434,12 +434,14 @@ void main() {
       expect(game.bankPrompt.isActive, isFalse,
           reason: 'a settled level owes no choice');
 
-      // And the stood-down prompt can never pay out twice. The ridden
-      // finish scored 125 + 250 = 375 — the better of the two payouts
-      // (issue #155) — and the stray BANK cannot top it up.
+      // And the stood-down prompt can never pay out twice. The open
+      // choice resolved as its default push the moment the second kerb
+      // scored it (issue #186): the ridden finish is 125 at ×1 plus 375
+      // at the pushed ×3 = 500 — the better of the two payouts (issue
+      // #155) — and the stray BANK cannot top it up.
       game.bankShift();
-      expect(game.score, 375, reason: '125 at ×1, 250 at ×2, no push');
-      expect(saveAtNine.totalCoins, coinsBefore + 375,
+      expect(game.score, 500, reason: '125 at ×1, 375 at the pushed ×3');
+      expect(saveAtNine.totalCoins, coinsBefore + 500,
           reason: 'exactly max(score, reward) was paid, exactly once');
     });
 
@@ -508,9 +510,11 @@ void main() {
 
     test('riding the chain, pushing the last choice beats banking it',
         () async {
-      // The bank's offer: two ridden deliveries — 100 at ×1, 200 at ×2 —
-      // then BANK at the second prompt, the exact decision the issue
-      // found one-sided.
+      // The bank's offer: two ridden deliveries — the second reached
+      // straight through the first's open prompt, which resolves as its
+      // default push (issue #186): 100 at ×1, 300 at the superseded
+      // push's ×3 — then BANK at the second prompt, the exact decision
+      // the issue found one-sided.
       final banked = await mountGraduation();
       await collectFares(banked);
       await deliver(banked, 0);
@@ -518,11 +522,12 @@ void main() {
       expect(banked.bankPrompt.isActive, isTrue,
           reason: 'the second prompt is where the issue lived');
       banked.bankShift();
-      expect(banked.lastBankedScore, 300,
-          reason: 'the bankable chain is 100 + 200');
+      expect(banked.lastBankedScore, 400,
+          reason: 'the bankable chain is 100 + 300 at the pushed ×3');
 
       // The push's payoff: the same ride, PUSH ON at that prompt, and the
-      // last fare delivered at the ×4 the push bought — 100 + 200 + 400.
+      // last fare delivered at the ×5 both pushes bought — 100 + 300 +
+      // 500.
       final coinsBefore = saveAtTen.totalCoins;
       final pushed = await mountGraduation();
       await collectFares(pushed);
@@ -532,13 +537,14 @@ void main() {
       await deliver(pushed, 2);
 
       expect(pushed.overlays.isActive('levelComplete'), isTrue);
-      expect(pushed.score, 700,
-          reason: '100 at ×1, 200 at ×2, 400 at the pushed ×4');
-      expect(pushed.lastCompletionPayout, 700,
+      expect(pushed.score, 900,
+          reason: '100 at ×1, 300 at the superseded push\'s ×3, 500 at '
+              'the explicitly pushed ×5');
+      expect(pushed.lastCompletionPayout, 900,
           reason: 'the panel names the payout actually credited');
-      expect(saveAtTen.totalCoins, coinsBefore + 700,
+      expect(saveAtTen.totalCoins, coinsBefore + 900,
           reason: 'the finish pays the score it earned, not the flat 300');
-      expect(700, greaterThan(banked.lastBankedScore!),
+      expect(900, greaterThan(banked.lastBankedScore!),
           reason: 'the choice the issue asked for: pushing on can win');
     });
 
@@ -923,6 +929,53 @@ void main() {
       // No telemetry on this run: the fallback collision line.
       expect(find.text('You collided with traffic.'), findsOneWidget);
       expect(find.text('FARE MISSED!'), findsNothing);
+    });
+
+    testWidgets('the failure title stays one centred line at every iPhone '
+        'width (issue #187)', (tester) async {
+      // The completion title's #159 sweep, applied to the failure panel's
+      // own title: 'FARE MISSED!' is 384 px of bold type against the 200
+      // px this panel's column offers on a 320 pt phone, and the bare
+      // Text wrapped into two flush-left lines while the panel sat
+      // centred. Both branches ride the same scale-down box now, so both
+      // are pinned. Ahem advances a square per glyph — roughly twice
+      // Roboto — so the checks are strictly conservative (the garage
+      // width-sweep reasoning, issue #156).
+      addTearDown(tester.view.reset);
+      final game = await failureGame(tester);
+
+      for (final width in [320.0, 375.0, 390.0, 393.0]) {
+        tester.view.physicalSize = Size(width, 1600);
+        tester.view.devicePixelRatio = 1.0;
+
+        for (final (reason, title) in [
+          (LevelFailReason.fareMissed, 'FARE MISSED!'),
+          (LevelFailReason.crash, 'CRASH!'),
+        ]) {
+          game.lastFailReason = reason;
+          await showPanel(tester, game);
+
+          final finder = find.text(title);
+          expect(finder, findsOneWidget);
+          // One line of ink: this Text sets no maxLines, so the
+          // paragraph's own height is what sees a wrap (one Ahem line ≈
+          // the font size, two ≈ double).
+          final paragraph = tester.renderObject<RenderParagraph>(finder);
+          final fontSize = tester.widget<Text>(finder).style!.fontSize!;
+          expect(
+            paragraph.size.height,
+            lessThan(fontSize * 1.5),
+            reason: '$title must be a single line on a ${width.round()} pt '
+                'screen — two Ahem lines measure ~${(fontSize * 2).round()}',
+          );
+          // And the line it laid out under was unbounded — the
+          // scale-down box's doing. A bare Text holds the panel's width
+          // as its constraint, and that is what wraps it.
+          expect(paragraph.constraints.maxWidth, equals(double.infinity),
+              reason: '$title must lay out under the FittedBox\'s '
+                  'unbounded width to be wrap-proof');
+        }
+      }
     });
   });
 }

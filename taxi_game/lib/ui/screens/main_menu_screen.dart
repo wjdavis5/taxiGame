@@ -44,21 +44,32 @@ class MainMenuScreen extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   // Game Title
+                  //
+                  // The scale-down box (issue #187): 'CAB HUSTLE' at 48 px
+                  // is ~480 px of bold type, and the 280 px left on a
+                  // 320 pt iPhone wrapped the title into two flush-left
+                  // lines — the menu's headline, broken on the oldest
+                  // phones still running iOS 15. The garage/HUD/completion
+                  // idiom (issues #156, #159): one line, laid out under
+                  // unbounded width, scaled down to whatever fits.
                   const Padding(
                     padding: EdgeInsets.all(20.0),
-                    child: Text(
-                      'CAB HUSTLE',
-                      style: TextStyle(
-                        fontSize: 48,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        shadows: [
-                          Shadow(
-                            offset: Offset(2, 2),
-                            blurRadius: 4,
-                            color: Colors.black45,
-                          ),
-                        ],
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'CAB HUSTLE',
+                        style: TextStyle(
+                          fontSize: 48,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          shadows: [
+                            Shadow(
+                              offset: Offset(2, 2),
+                              blurRadius: 4,
+                              color: Colors.black45,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
