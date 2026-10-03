@@ -227,9 +227,12 @@ record yet.
 #   taxi_game/fastlane/whats_new.txt <- What's New (issue #199): Apple
 #                                       requires it on every version after
 #                                       the first; the submit lane writes it
-#                                       onto the version, and the gate fails
-#                                       red before the build if it is
-#                                       missing or empty
+#                                       onto the version — except on the
+#                                       app's first version, where Apple
+#                                       offers no such field and the lane
+#                                       skips the write (issue #204) — and
+#                                       the gate fails red before the build
+#                                       if it is missing or empty
 git commit -am "release: 1.0.1" && git push
 ```
 
