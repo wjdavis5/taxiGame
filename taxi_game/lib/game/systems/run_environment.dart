@@ -871,25 +871,40 @@ class RunEnvironment {
 
   // --- Intersections ------------------------------------------------------
 
+  /// Whether [distance] sits inside an intersection band widened by
+  /// [margin] on each side. The band grid is a fact about the road, not
+  /// the seed, so this is the one shared lookup: traffic, construction
+  /// clearance, and the fare course all ask the same rectangle instead
+  /// of three re-derivations of it (issue #189 — the fares used to not
+  /// consult it at all). [margin] lets a caller keep a whole footprint
+  /// clear of the junction, not just a centre point.
+  ///
+  /// The band is centred on the junction at every multiple of
+  /// [intersectionSpacing] and spans ±[intersectionHalfBand] — the same
+  /// rectangle the renderer paints and the construction clearance keeps
+  /// cones away from (both already treat the multiple as the centre).
+  /// This lookup used to answer `d % spacing < halfBand * 2`, a band
+  /// starting at the junction's centre: traffic materialised on the
+  /// lower half of every cross street while a 160 px strip of plain road
+  /// above the junction was held empty (issue #152). The first junction
+  /// is still a full spacing out — its band opens at
+  /// `spacing − halfBand − margin`, 8,840 px at margin 0 — so the start
+  /// line does not sit in a phantom one.
+  static bool junctionBandContains(double distance, {double margin = 0.0}) {
+    final d = math.max(0.0, distance);
+    final reach = intersectionHalfBand + margin;
+    if (d < intersectionSpacing - reach) return false;
+    final m = d % intersectionSpacing;
+    return m < reach || m > intersectionSpacing - reach;
+  }
+
   /// Whether [distance] sits inside an intersection band: a cross street
   /// crossing the road. Traffic never spawns inside one — the junction is
   /// working for its living — so every crossing reads as a brief clear
-  /// patch of city. The band is centred on the junction at every multiple
-  /// of [intersectionSpacing] and spans ±[intersectionHalfBand] — the same
-  /// rectangle the renderer paints and the construction clearance keeps
-  /// cones away from (both already treat the multiple as the centre). This
-  /// lookup used to answer `d % spacing < halfBand * 2`, a band starting
-  /// at the junction's centre: traffic materialised on the lower half of
-  /// every cross street while a 160 px strip of plain road above the
-  /// junction was held empty (issue #152). The first junction is still a
-  /// full spacing out — its band opens at `spacing − halfBand`, 8,840 px —
-  /// so the start line does not sit in a phantom one.
-  bool isIntersectionAt(double distance) {
-    final d = math.max(0.0, distance);
-    if (d < intersectionSpacing - intersectionHalfBand) return false;
-    final m = d % intersectionSpacing;
-    return m < intersectionHalfBand || m > intersectionSpacing - intersectionHalfBand;
-  }
+  /// patch of city. Delegates to [junctionBandContains], the shared band
+  /// lookup (issue #189).
+  bool isIntersectionAt(double distance) =>
+      junctionBandContains(distance);
 
   // --- Determinism --------------------------------------------------------
 

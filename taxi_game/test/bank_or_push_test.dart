@@ -265,6 +265,86 @@ void main() {
     });
   });
 
+  group('the superseded prompt pays the default push (issue #186)', () {
+    test('on level 10, kerbs reached back-to-back with the prompt '
+        'untouched pay exactly the explicit PUSH ON ride', () async {
+      // The issue's arithmetic: level 10's three fares at 100 each, and
+      // a player who never touches the prompt. Waiting each window out
+      // resolved it as a push before the next kerb landed (900); driving
+      // straight through left the open prompt unresolved until the fresh
+      // window restarted it — the pending push died with it, and the
+      // ride paid 600. The open prompt now resolves as its default push
+      // the moment the next kerb is reached, so both ways of not banking
+      // pay the same.
+
+      Future<TaxiGame> mountGraduation() async {
+        final game = TaxiGame(
+          levelLoader: LevelLoaderService(),
+          gameState: gameState,
+        )
+          ..overlays.addEntry(
+              'levelComplete', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
+          ..overlays.addEntry('pauseMenu', (_, __) => const SizedBox.shrink());
+        await mountGame(game);
+        await game.loadLevel(10);
+        await tickAndSettle(game);
+        // No primer: a save that has seen a prompt runs its windows over
+        // live traffic — the only way a delivery can land while one is
+        // open (on device the primer's freeze stops the cab outright, so
+        // nothing can supersede it).
+        gameState.markBankPromptSeen();
+        return game;
+      }
+
+      // The untouched ride: collect every fare first (issue #112 — a
+      // delivery made past an uncollected pickup strands it behind the
+      // one-way street), then take every kerb back-to-back without ever
+      // answering the windows.
+      final untouched = await mountGraduation();
+      for (final pickup in untouched.currentLevel.pickupPoints) {
+        untouched.player.position = Vector2(pickup.x, pickup.y + 30);
+        untouched.update(1 / 60);
+      }
+      expect(untouched.player.hasPassenger, isTrue,
+          reason: 'all three fares aboard before any kerb');
+      for (final dropoff in untouched.currentLevel.dropoffPoints) {
+        untouched.player.position = Vector2(dropoff.x, dropoff.y + 30);
+        untouched.update(1 / 60);
+        // Deliberately no pushOn()/bankShift() here: each window stays
+        // exactly as its dropoff left it until the next kerb supersedes
+        // it.
+      }
+
+      expect(untouched.overlays.isActive('levelComplete'), isTrue);
+      expect(untouched.bankPrompt.isActive, isFalse,
+          reason: 'the settled level owes no choice');
+      expect(untouched.score, 900,
+          reason: '100 at ×1, then 300 and 500 at the superseded pushes\' '
+              '×3 and ×5 — the drive-through ride pays its default pushes');
+
+      // The identical explicit ride: PUSH ON at every window the
+      // untouched ride drove through. Same course, same arithmetic —
+      // and now the same payout.
+      final explicit = await mountGraduation();
+      for (final pickup in explicit.currentLevel.pickupPoints) {
+        explicit.player.position = Vector2(pickup.x, pickup.y + 30);
+        explicit.update(1 / 60);
+      }
+      for (final dropoff in explicit.currentLevel.dropoffPoints) {
+        explicit.player.position = Vector2(dropoff.x, dropoff.y + 30);
+        explicit.update(1 / 60);
+        if (explicit.bankPrompt.isActive) explicit.pushOn();
+      }
+
+      expect(explicit.score, 900,
+          reason: 'the explicit PUSH ON ride pins the same arithmetic');
+      expect(untouched.score, explicit.score,
+          reason: 'issue #186: driving straight to the next dropoff pays '
+              'exactly what waiting each window out pays');
+    });
+  });
+
   group('the prompt widget', () {
     /// Mounts an endless game and delivers [fare], inside [tester.runAsync]:
     /// mounting loads real sprite assets, and real IO can only complete in

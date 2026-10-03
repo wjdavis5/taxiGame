@@ -250,6 +250,18 @@ class TaxiGame extends FlameGame
   /// it so the readout returns with the resolution.
   bool bankPanelOustsGhostBadge = false;
 
+  /// The HUD coin chip's rect in global (screen) coordinates, as measured
+  /// by [HudOverlay] on its polling timer (issue #188) — the same
+  /// measure-and-publish shape as [bankPanelOustsGhostBadge], run in
+  /// reverse: the widget owns the truth, the game holds it where world
+  /// code can read it. [CoinPop] homes on the chip's center, converted
+  /// into world coordinates through the camera, so delivery coins land
+  /// in the counter the player watches instead of the fixed top-right
+  /// inset they used to aim at — which on every phone is the pause
+  /// button. Null until the HUD has measured a frame, and again once it
+  /// is gone; the coin then falls back to the old inset.
+  Rect? coinChipGlobalRect;
+
   /// What the most recent bank paid out, in coins, for the banked-shift
   /// panel. Null until a shift is banked; cleared when a new run starts.
   int? lastBankedScore;
@@ -919,6 +931,20 @@ class TaxiGame extends FlameGame
     // in just short of this kerb paid a fare the wreck had already
     // forfeited.
     if (_shiftOver) return;
+
+    // A still-open prompt from the previous dropoff resolves as its
+    // default push the moment this kerb is reached (issue #186): driving
+    // straight on is choosing to push — the street never waits for the
+    // window — so the bonus must land before this delivery scores, not
+    // die with the restarted window below. (The superseded prompt also
+    // cannot wait for its timeout: that path paid more for dithering
+    // than driving did, on level 10 by 300 coins.) Unguarded by the
+    // primer: on device its freeze makes this unreachable — the cab
+    // cannot move to a kerb while the world is stopped — and the tests
+    // that pin it drive the cab by hand straight through the paused
+    // primer, exactly as they always have.
+    if (bankPrompt.isActive) pushOn();
+
     passengersDelivered++;
     player.hasPassenger =
         passengers.any((p) => p.isPickedUp && !p.isDelivered);
@@ -968,6 +994,13 @@ class TaxiGame extends FlameGame
     // fare, arming the bank prompt over the wreck, and paying a forfeit
     // out a second time through BANK.
     if (_shiftOver) return;
+
+    // Same rule as the level dropoff above (issue #186): the open prompt
+    // resolves as its default push before this fare scores, so driving
+    // straight to the next kerb pays exactly what waiting each window
+    // out pays — never less.
+    if (bankPrompt.isActive) pushOn();
+
     player.hasPassenger = fareController?.hasActivePickup ?? false;
 
     // Score the delivery against the fare chain (issue #12); the coin
@@ -1118,9 +1151,11 @@ class TaxiGame extends FlameGame
     _completeLevel(banked: true);
   }
 
-  /// Push on: keep driving at the increased multiplier. The window
-  /// closing without a choice lands here too — pushing is the default,
-  /// and it must pay the same whether it was chosen or merely allowed.
+  /// Push on: keep driving at the increased multiplier. Two more paths
+  /// land here besides the button: the window closing without a choice,
+  /// and — since issue #186 — the next delivery superseding an
+  /// still-open prompt. Pushing is the default, and it must pay the same
+  /// however it happens: chosen, allowed, or driven straight through.
   void pushOn() {
     if (bankPrompt.push() == null) return;
     _applyPushBonus();

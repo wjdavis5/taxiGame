@@ -1,6 +1,7 @@
 import 'package:flame/game.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'helpers/fake_audio_platform.dart';
@@ -652,6 +653,96 @@ void main() {
       expect(audio.runningCalls, 0,
           reason: 'a settled shift has no engine claim to assert');
       expect(audio.intensityCalls, 0);
+    });
+  });
+
+  group('small phones keep the summary one line everywhere (issue #187)', () {
+    testWidgets('every headline, pill, and button label stays a single '
+        'unwrapped line at every iPhone width', (tester) async {
+      // On a 320 pt phone the panel's content column runs 200 px (40 px
+      // margins, 20 px padding), against 336 px of 'SHIFT BANKED', 380 px
+      // of 'Forfeited: 90 coins', a ~292 px NEW PERSONAL BEST pill, and a
+      // 300 px DRIVE AGAIN button — before the fix, the titles wrapped
+      // into two flush-left lines and the pill's rigid Row overflowed its
+      // yellow stripe with a flex exception. The completion panel's #159
+      // sweep pattern, pinned the same way: one line of ink, laid out
+      // under the scale-down box's unbounded width. Ahem advances a
+      // square per glyph — roughly twice Roboto — so the checks are
+      // strictly conservative (the #156 garage width-sweep reasoning).
+      addTearDown(tester.view.reset);
+      final banked = endlessGame();
+      final wrecked = endlessGame();
+      final daily = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: 9,
+        isDailyShift: true,
+      );
+
+      for (final width in [320.0, 375.0, 390.0, 393.0]) {
+        tester.view.physicalSize = Size(width, 1600);
+        tester.view.devicePixelRatio = 1.0;
+
+        // (game, summary, the texts that must stay one line on it)
+        final panels = <(TaxiGame, RunSummary, List<String>)>[
+          (banked, bankedSummary, [
+            'SHIFT BANKED',
+            '+240 Coins',
+            'NEW PERSONAL BEST',
+            'DRIVE AGAIN',
+            'Fares delivered',
+          ]),
+          (wrecked, wreckedSummary,
+              ['SHIFT OVER', 'Forfeited: 90 coins']),
+          (daily, bankedSummary,
+              ['ENDLESS SHIFT', "TODAY'S DAILY IS IN"]),
+        ];
+        for (final (game, summary, oneLineTexts) in panels) {
+          await showPanel(tester, game, summary);
+
+          for (final label in oneLineTexts) {
+            final finder = find.text(label);
+            expect(finder, findsOneWidget);
+            final paragraph = tester.renderObject<RenderParagraph>(finder);
+            final fontSize = tester.widget<Text>(finder).style!.fontSize!;
+            expect(
+              paragraph.size.height,
+              lessThan(fontSize * 1.5),
+              reason: '$label must be a single line on a ${width.round()} pt '
+                  'screen — two Ahem lines measure ~${(fontSize * 2).round()}',
+            );
+            expect(
+              paragraph.constraints.maxWidth,
+              equals(double.infinity),
+              reason: '$label must lay out under the FittedBox\'s unbounded '
+                  'width to be wrap-proof',
+            );
+          }
+
+          // The PB pill's whole point is being one gold banner: scaled
+          // down as one, it must stay inside the panel the stripe used
+          // to overflow. (The flex exception the bare Row raised needs
+          // no separate pin — any overflow fails the pump itself.)
+          if (summary.isPersonalBest) {
+            final pill =
+                tester.getRect(find.byKey(const ValueKey('pb_banner')));
+            final panel =
+                tester.getRect(find.byKey(const ValueKey('run_summary_panel')));
+            expect(
+              pill.left,
+              greaterThanOrEqualTo(panel.left - 0.5),
+              reason: 'the NEW PERSONAL BEST pill must not overflow left on '
+                  'a ${width.round()} pt screen (pill $pill, panel $panel)',
+            );
+            expect(
+              pill.right,
+              lessThanOrEqualTo(panel.right + 0.5),
+              reason: 'the NEW PERSONAL BEST pill must not overflow right on '
+                  'a ${width.round()} pt screen (pill $pill, panel $panel)',
+            );
+          }
+        }
+      }
     });
   });
 }

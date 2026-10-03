@@ -9,9 +9,11 @@ import '../taxi_game.dart';
 /// counter (issue #7).
 ///
 /// The counter itself is a Flutter widget above the game, so the coin aims
-/// at the world point beneath it — the top-right corner of the visible
-/// world — recomputed every frame, which keeps the coin on course while
-/// the camera follows the taxi. Removes itself on arrival.
+/// at the world point beneath the counter's real chip — the HUD measures
+/// it and publishes the rect on the game (issue #188) — recomputed every
+/// frame, which keeps the coin on course while the camera follows the
+/// taxi. Before the HUD has measured (and headless), it falls back to a
+/// fixed top-right inset of the visible world. Removes itself on arrival.
 class CoinPop extends PositionComponent with HasGameReference<TaxiGame> {
   CoinPop({
     required Vector2 startPosition,
@@ -41,8 +43,12 @@ class CoinPop extends PositionComponent with HasGameReference<TaxiGame> {
   /// Coin radius in world px.
   static const double radius = 7.0;
 
-  /// Where the HUD counter sits, inset from the top-right corner of the
-  /// visible world (the HUD's own top-right coin chip).
+  /// Where the coin aims when the HUD has not published its chip's rect
+  /// (issue #188's fallback): inset from the top-right corner of the
+  /// visible world. The chip actually shares its row with the title pill
+  /// and the pause button, so on real screens this inset lands 60-160 px
+  /// away from the counter — usually on the pause button — which is why
+  /// the measured rect wins whenever there is one.
   static const double hudInsetX = 64;
   static const double hudInsetY = 46;
 
@@ -137,8 +143,16 @@ class CoinPop extends PositionComponent with HasGameReference<TaxiGame> {
     canvas.drawCircle(const Offset(-2, -2), 1.8, _shinePaint);
   }
 
-  /// The world point directly under the HUD coin counter.
+  /// The world point directly under the HUD coin counter: the measured
+  /// chip's center converted into world coordinates, when the HUD has
+  /// published one (issue #188); the fixed top-right inset otherwise.
   Vector2 _hudTarget() {
+    final chip = game.coinChipGlobalRect;
+    if (chip != null) {
+      return game.camera.globalToLocal(
+        Vector2(chip.center.dx, chip.center.dy),
+      );
+    }
     final visible = game.camera.visibleWorldRect;
     return Vector2(visible.right - hudInsetX, visible.top + hudInsetY);
   }

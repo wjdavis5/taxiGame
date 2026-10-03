@@ -47,9 +47,13 @@ class BankPrompt {
   double get fractionRemaining =>
       windowSeconds <= 0 ? 0.0 : (_remainingSeconds / windowSeconds).clamp(0, 1);
 
-  /// Offers the choice after a completed dropoff. Offering while a prompt
-  /// is already up (a second fare delivered in quick succession) restarts
-  /// the window — the freshest dropoff owns the decision.
+  /// Offers the choice after a completed dropoff. A prompt already up
+  /// when the next dropoff arrives is resolved as its default push by
+  /// the game *before* this is called (issue #186) — driving straight on
+  /// is a push, and the restarted window never swallows the pending
+  /// bonus — so what [offer] itself does to any leftover state is
+  /// unreachable in play: restart the window, the freshest dropoff
+  /// owning the decision.
   void offer() {
     _active = true;
     _remainingSeconds = windowSeconds;
