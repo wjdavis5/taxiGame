@@ -1,3 +1,4 @@
+import 'lifetime_run_totals.dart';
 import 'personal_bests.dart';
 
 /// Save data model that persists player progress
@@ -18,6 +19,13 @@ class SaveData {
   /// The player's lifetime records (issue #21): best banked score,
   /// longest chain, furthest distance, most fares in one shift.
   PersonalBests personalBests;
+
+  /// The player's lifetime shift totals (issue #183): shifts ended,
+  /// score, distance, fares, lives lost, time driven, counted over every
+  /// shift ever ended. Stored, never queried over the shift history —
+  /// the history trims at 200 shifts, and totals that stop there then
+  /// fall are the bug this block replaces.
+  LifetimeRunTotals lifetimeRunTotals;
 
   /// The best score any endless shift has ever ended with, banked or
   /// forfeited (issue #15). Compared against at every shift end.
@@ -50,8 +58,10 @@ class SaveData {
     this.controlHintDismissed = false,
     this.bankPromptSeen = false,
     PersonalBests? personalBests,
+    LifetimeRunTotals? lifetimeRunTotals,
     required this.settings,
-  }) : personalBests = personalBests ?? PersonalBests();
+  })  : personalBests = personalBests ?? PersonalBests(),
+        lifetimeRunTotals = lifetimeRunTotals ?? LifetimeRunTotals();
 
   /// Create default save data for new players
   factory SaveData.createDefault() {
@@ -85,6 +95,13 @@ class SaveData {
           ? PersonalBests()
           : PersonalBests.fromJson(
               json['personalBests'] as Map<String, dynamic>),
+      // Saves written before issue #183 have no totals block; a missing
+      // key means "nothing counted yet", not a corrupt save — the load
+      // path then seeds the block once from the history window.
+      lifetimeRunTotals: json['lifetimeRunTotals'] == null
+          ? LifetimeRunTotals()
+          : LifetimeRunTotals.fromJson(
+              json['lifetimeRunTotals'] as Map<String, dynamic>),
       // Saves written before issue #37 have no hint flag at all — and a
       // save that exists at all means its player has already driven.
       // A missing key therefore reads as dismissed: the stick hint is
@@ -115,6 +132,7 @@ class SaveData {
       'controlHintDismissed': controlHintDismissed,
       'bankPromptSeen': bankPromptSeen,
       'personalBests': personalBests.toJson(),
+      'lifetimeRunTotals': lifetimeRunTotals.toJson(),
       'settings': settings.toJson(),
     };
   }

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:taxi_game/models/lifetime_run_totals.dart';
 import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/models/run_stats.dart';
 
@@ -87,6 +88,75 @@ void main() {
       expect(stats.totalFares, 8);
       expect(stats.totalLivesLost, 3);
       expect(stats.totalDurationSeconds, 260.0);
+    });
+
+    test('without lifetime totals, shiftsEnded is the window count',
+        () {
+      // The pre-#183 shape — a bare compute over a record list — answers
+      // every row from the window, exactly as it always did.
+      final stats = RunStats.compute([rec(score: 10), rec(score: 20)]);
+
+      expect(stats.shiftsEnded, 2);
+      expect(stats.runCount, 2);
+    });
+  });
+
+  group('lifetime totals (issue #183)', () {
+    test('the six Totals rows read the lifetime counters, not the window',
+        () {
+      // A veteran save: 350 shifts ended, while the history window can
+      // hold only the last 200 of them — smaller sums of everything.
+      final lifetime = LifetimeRunTotals(
+        shiftsEnded: 350,
+        totalScore: 35000,
+        totalDistancePx: 3500000,
+        totalFares: 700,
+        totalLivesLost: 210,
+        totalDurationSeconds: 350000,
+      );
+      final window = List.generate(
+        200,
+        (i) => rec(
+            distancePx: 100, score: 10, fares: 1, durationSeconds: 10),
+      );
+
+      final stats = RunStats.compute(window, lifetime: lifetime);
+
+      expect(stats.shiftsEnded, 350,
+          reason: '"Shifts ended" is the lifetime count — the window '
+              'pinned it at 200 before issue #183');
+      expect(stats.totalScore, 35000);
+      expect(stats.totalDistanceMetres, 350000);
+      expect(stats.totalFares, 700);
+      expect(stats.totalLivesLost, 210);
+      expect(stats.totalDurationSeconds, 350000);
+      expect(stats.runCount, 200,
+          reason: 'runCount stays the window size — the shares\' '
+              'denominator, never the lifetime count');
+    });
+
+    test('medians, run-length bands and bank-vs-push stay on the window',
+        () {
+      final lifetime = LifetimeRunTotals(shiftsEnded: 350);
+      final window = [
+        rec(score: 10, distancePx: 1000, durationSeconds: 30, banked: true),
+        rec(score: 20, distancePx: 3000, durationSeconds: 60, banked: false),
+      ];
+
+      final stats = RunStats.compute(window, lifetime: lifetime);
+
+      expect(stats.medianScore, 15.0,
+          reason: 'the typical shift describes recent shifts, not the '
+              'lifetime');
+      expect(stats.medianDistanceMetres, 200.0);
+      expect(stats.runLengthDistribution.first.count, 2,
+          reason: 'both window shifts (100 m, 300 m) sit in the '
+              'under-500 m band — the bands count the window\'s two '
+              'shifts, not the 350 lifetime ones');
+      expect(stats.bankedCount, 1);
+      expect(stats.forfeitedCount, 1);
+      expect(stats.bankedShare, 0.5,
+          reason: 'window-scoped counts over the window denominator');
     });
   });
 
