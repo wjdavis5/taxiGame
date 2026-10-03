@@ -145,8 +145,14 @@ class GameStateService extends ChangeNotifier {
   List<RunRecord> get runHistory => List.unmodifiable(_runHistory);
 
   /// The shift history aggregated for tuning (issue #17): totals, medians,
-  /// run-length distribution, bank-vs-push ratio.
-  RunStats get runStats => RunStats.compute(_runHistory);
+  /// run-length distribution, bank-vs-push ratio. Since issue #183 the
+  /// six totals read the save's lifetime counters — the window trims at
+  /// [maxRecordedRuns], and totals folded over it freeze at 200 then fall
+  /// — while the medians, the run-length bands and the bank-vs-push
+  /// counts stay window-scoped, with [RunStats.runCount] the window's own
+  /// size as their denominator.
+  RunStats get runStats =>
+      RunStats.compute(_runHistory, lifetime: _saveData.lifetimeRunTotals);
 
   /// Every completed Daily Shift, oldest first (issue #19) — the player's
   /// daily history. At most one result per day ever exists.
@@ -255,6 +261,15 @@ class GameStateService extends ChangeNotifier {
       _saveData.personalBests.cleanBankedShifts = windowCleanBanks;
       migratedCleanBanks = true;
     }
+    // The lifetime totals' seed of the same shape (issue #183): a save
+    // written before the totals block existed stores nothing, and its
+    // only record of anything is the window. Each counter takes the
+    // larger of what is stored and what the window holds — per field —
+    // and the seed persists immediately, before the window can trim a
+    // shift out from under it. Post-migration saves always hold the
+    // larger number, so this no-ops from then on.
+    final migratedTotals =
+        _saveData.lifetimeRunTotals.seedFromWindow(_runHistory);
     // The ghost trace loads with everything else (issue #20); a missing
     // or corrupt one just means no ghost to race, never a crash.
     _dailyGhost = _storageService.loadDailyGhost();
@@ -264,7 +279,7 @@ class GameStateService extends ChangeNotifier {
     // from a load; the records screen simply shows them earned.
     _evaluateAchievements(announce: false);
     notifyListeners();
-    if (migratedCleanBanks) await save();
+    if (migratedCleanBanks || migratedTotals) await save();
   }
 
   /// Save current data to storage
@@ -322,14 +337,17 @@ class GameStateService extends ChangeNotifier {
   ///
   /// The same shift is folded into the lifetime records (issue #21)
   /// first — best banked score, longest chain, furthest distance, most
-  /// fares — and the achievements are then evaluated against the new
-  /// standing, because shift end is where every gameplay measure lands.
+  /// fares — and into the lifetime totals (issue #183), the six monotone
+  /// counters the stats screen's Totals read, before the window trim can
+  /// age the shift out of any sum. The achievements are then evaluated
+  /// against the new standing, because shift end is where every gameplay
+  /// measure lands.
   /// The evaluation runs **before the first await**: the shift-end flow
   /// is fire-and-forget, and its very next synchronous step drains the
   /// unlock queue to build the run summary — so the queue must be filled
   /// before this method suspends on storage.
   Future<void> recordEndlessRun(RunRecord record) async {
-    final recordsImproved = _saveData.personalBests.applyRun(
+    _saveData.personalBests.applyRun(
       score: record.score,
       banked: record.banked,
       longestChain: record.longestChain,
@@ -337,6 +355,12 @@ class GameStateService extends ChangeNotifier {
       faresDelivered: record.faresDelivered,
       livesLost: record.livesLost,
     );
+    // The same shift folds into the lifetime totals (issue #183) — before
+    // the window trim below, so a shift leaving the window can never take
+    // itself back out of the totals. Every counter only moves up, and the
+    // block lives in the save, so the save must reach the disk on every
+    // recorded shift now, records improved or not.
+    _saveData.lifetimeRunTotals.applyRun(record);
     _runHistory.add(record);
     if (_runHistory.length > maxRecordedRuns) {
       _runHistory.removeRange(0, _runHistory.length - maxRecordedRuns);
@@ -344,9 +368,7 @@ class GameStateService extends ChangeNotifier {
     notifyListeners();
     _evaluateAchievements();
     await _storageService.saveRunHistory(_runHistory);
-    // A record-setting shift must reach the disk even when it earns no
-    // achievement — the records live in the save, not the history.
-    if (recordsImproved) await save();
+    await save();
   }
 
   /// Records a completed Daily Shift (issue #19) and persists it. One

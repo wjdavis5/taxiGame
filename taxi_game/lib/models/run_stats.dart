@@ -1,3 +1,4 @@
+import 'lifetime_run_totals.dart';
 import 'run_record.dart';
 
 /// Aggregates a history of ended shifts into the tuning view (issue #17).
@@ -10,11 +11,23 @@ import 'run_record.dart';
 /// and the bank-vs-push ratio that says whether the banking pressure of
 /// issue #13 actually bites.
 ///
+/// Since issue #183 the six Totals read the lifetime counters the caller
+/// passes in ([LifetimeRunTotals], stored in the save): the history is a
+/// fixed window that trims at 200 shifts, and totals folded over that
+/// window froze at 200 and then fell as old shifts aged out. The medians,
+/// the run-length bands and the bank-vs-push counts stay window-scoped —
+/// they describe recent shifts — with [runCount] the window's own size,
+/// because it is the denominator of [bankedShare] and the bands'
+/// fractions, and a share of window counts over a lifetime count is not
+/// any ratio at all. A compute without lifetime totals folds the window
+/// for everything, exactly as it always did.
+///
 /// Pure computation over [RunRecord]s — no Flutter, no I/O — so every
 /// number is unit testable, matching [FareChain] and [LivesTracker].
 class RunStats {
   RunStats._({
     required this.runCount,
+    required this.shiftsEnded,
     required this.totalScore,
     required this.totalDistanceMetres,
     required this.totalFares,
@@ -32,7 +45,11 @@ class RunStats {
   /// Aggregates [records], oldest first (order only matters for the
   /// medians, which sort anyway). An empty history is a valid, all-zero
   /// result — a fresh install before the first shift ends.
-  factory RunStats.compute(List<RunRecord> records) {
+  ///
+  /// [lifetime], when the caller has it, supplies the six Totals rows
+  /// (issue #183); everything else always reads the window.
+  factory RunStats.compute(List<RunRecord> records,
+      {LifetimeRunTotals? lifetime}) {
     final distances = records.map((r) => r.distanceMetres).toList();
     final lifeLosses = <double>[];
     var banked = 0;
@@ -43,11 +60,15 @@ class RunStats {
 
     return RunStats._(
       runCount: records.length,
-      totalScore: records.fold(0, (sum, r) => sum + r.score),
-      totalDistanceMetres: distances.fold(0.0, (sum, m) => sum + m),
-      totalFares: records.fold(0, (sum, r) => sum + r.faresDelivered),
-      totalLivesLost: lifeLosses.length,
-      totalDurationSeconds:
+      shiftsEnded: lifetime?.shiftsEnded ?? records.length,
+      totalScore:
+          lifetime?.totalScore ?? records.fold(0, (sum, r) => sum + r.score),
+      totalDistanceMetres: lifetime?.totalDistanceMetres ??
+          distances.fold(0.0, (sum, m) => sum + m),
+      totalFares: lifetime?.totalFares ??
+          records.fold(0, (sum, r) => sum + r.faresDelivered),
+      totalLivesLost: lifetime?.totalLivesLost ?? lifeLosses.length,
+      totalDurationSeconds: lifetime?.totalDurationSeconds ??
           records.fold(0.0, (sum, r) => sum + r.durationSeconds),
       medianScore: _median(records.map((r) => r.score.toDouble()).toList()),
       medianDistanceMetres: _median(distances),
@@ -60,26 +81,43 @@ class RunStats {
     );
   }
 
-  /// How many shifts the history holds.
+  /// How many shifts the history window holds — the denominator of
+  /// [bankedShare] and the run-length fractions, and deliberately not the
+  /// lifetime count: those shares are over window-scoped counts.
   final int runCount;
 
   // --- Totals -------------------------------------------------------------
 
-  /// Every shift's final score added up.
+  /// Every shift that has ever ended — the "Shifts ended" row. The
+  /// lifetime counter (issue #183) when [LifetimeRunTotals] was passed
+  /// in; the window's own count otherwise. Deliberately not [runCount]:
+  /// the window trims at 200 shifts, and a "Shifts ended" that stops
+  /// there is the bug this field exists to end.
+  final int shiftsEnded;
+
+  /// Every shift's final score added up — lifetime (issue #183) when the
+  /// caller passed the counters in, the window's sum otherwise.
   final int totalScore;
 
-  /// Every shift's distance added up, in metres.
+  /// Every shift's distance added up, in metres — lifetime (issue #183)
+  /// when the caller passed the counters in, the window's sum otherwise.
   final double totalDistanceMetres;
 
-  /// Fares delivered across all shifts.
+  /// Fares delivered across all shifts — lifetime (issue #183) when the
+  /// caller passed the counters in, the window's sum otherwise. This row
+  /// is one the window used to send *down*: a fare-heavy old shift aging
+  /// out while a quiet new one arrived.
   final int totalFares;
 
   /// Lives lost across all shifts — crashes survived into a stall count;
-  /// only the ones that cost a life do.
+  /// only the ones that cost a life do. Lifetime (issue #183) when the
+  /// caller passed the counters in, the window's count otherwise.
   final int totalLivesLost;
 
   /// Drive time across all shifts, in seconds (each record's
-  /// [RunRecord.durationSeconds] summed).
+  /// [RunRecord.durationSeconds] summed) — lifetime (issue #183) when the
+  /// caller passed the counters in, the window's sum otherwise. Another
+  /// row the window could send down, the same way as [totalFares].
   final double totalDurationSeconds;
 
   // --- Medians: what a typical shift looks like ---------------------------

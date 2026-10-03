@@ -968,6 +968,11 @@ let deployed = false;
 // got nothing, and the issues still close (on what actually happened) so
 // the next sweep does not re-implement merged work.
 let uploadSkipped = false;
+// True when the release run's outcome could not be established at all —
+// the watch went red and the run's own state was unreadable or not yet
+// completed (issue #184). The board and report must say unknown rather
+// than failed: no failure was witnessed either.
+let deployUnknown = false;
 let deployLine = "the iOS Release pipeline did not register a run";
 let releaseRunId: string | null = null;
 let commitSha: string | null = null;
@@ -1039,97 +1044,211 @@ if (commitSha === null) {
       "Watching the iOS Release pipeline (run " + releaseRunId +
       ", commit " + shortSha + ") deploy to TestFlight",
     );
-    const release = await world.run(
-      "gh",
-      ["run", "watch", releaseRunId, "--exit-status", "--interval", "60"],
-      { timeoutMs: 2700000 },
-    );
-    if (release.exitCode !== 0) {
-      deployLine =
-        "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") FAILED — the merge is on main but TestFlight did not get a build";
-    } else {
-      // A green watch is not a deploy (issue #124). The release workflow's
-      // closed-train gate (issue #119) skips the build and the upload when
-      // App Store Connect's version train no longer accepts builds, and the
-      // run stays green while doing it — so exit code 0 from the watch says
-      // nothing about whether TestFlight received anything, yet reading the
-      // deploy straight off that exit code is exactly what used to close
-      // issues as deployed-to-TestFlight on runs that uploaded no build at
-      // all. The only trustworthy signal is the conclusion of the Upload to
-      // TestFlight step inside the Build, sign, and upload job (names
-      // pinned to .github/workflows/ios-release.yml): success → an upload
-      // happened; skipped (the step or the whole job) → the gate stood the
-      // run down and the merge ships with the next upload, after a version
-      // bump; anything unreadable — gh run view failing, JSON that will
-      // not parse, a renamed job or step, a conclusion that is neither
-      // success nor skipped — claims no deploy at all and rides the
-      // leave-open failed path below rather than closing issues on a guess.
-      const releaseJobs = await world.run(
+    // The watch itself is guarded (issue #184): world.run reports command
+    // failures as exit codes, but what it does when timeoutMs expires is
+    // undocumented (the issue marks it inferred), and a throw here used to
+    // error the whole sweep after the merge — verdict lost, issues left
+    // wherever the board last had them. A thrown watch is recorded as a
+    // red one (exit code -1, the error as its stderr) so the red-watch
+    // handling below owns it like any real non-zero exit.
+    let release: { exitCode: number; stdout: string; stderr: string };
+    try {
+      release = await world.run(
         "gh",
-        ["run", "view", releaseRunId, "--json", "jobs"],
+        ["run", "watch", releaseRunId, "--exit-status", "--interval", "60"],
+        { timeoutMs: 2700000 },
+      );
+    } catch (watchError) {
+      release = { exitCode: -1, stdout: "", stderr: String(watchError) };
+    }
+    const watchGreen = release.exitCode === 0;
+    // The caveat every verdict below appends when the watch went red
+    // (issue #184): its exit code and a tail of what it printed, so a
+    // human reading the report can see exactly what was — and was not —
+    // trusted.
+    const watchTail = tail(release.stderr || release.stdout);
+    const watchCaveat = watchGreen
+      ? ""
+      : " — gh run watch exited " + release.exitCode +
+        (watchTail !== "" ? ", its tail: " + watchTail : "");
+    // The jobs read is hoisted out of the green-only arm (issue #184): a
+    // release run can go red AFTER the upload step succeeded — a later
+    // `if: always()` step in ios-release.yml — and the watch can die with
+    // the run still going; in both cases the step's own recorded
+    // conclusion is still the ground truth, so it is read after every
+    // watch outcome, not only a green one. A green watch is not a deploy
+    // either (issue #124). The release workflow's closed-train gate
+    // (issue #119) skips the build and the upload when App Store
+    // Connect's version train no longer accepts builds, and the run stays
+    // green while doing it — so exit code 0 from the watch says nothing
+    // about whether TestFlight received anything, yet reading the deploy
+    // straight off that exit code is exactly what used to close issues as
+    // deployed-to-TestFlight on runs that uploaded no build at all. The
+    // only trustworthy signal is the conclusion of the Upload to
+    // TestFlight step inside the Build, sign, and upload job (names
+    // pinned to .github/workflows/ios-release.yml): success → an upload
+    // happened; skipped (the step or the whole job) on a run known green
+    // → the gate stood the run down and the merge ships with the next
+    // upload, after a version bump; anything unreadable — gh run view
+    // failing, JSON that will not parse, a renamed job or step, a
+    // conclusion that is neither success nor skipped — claims no deploy at
+    // all and rides the leave-open failed path below rather than closing
+    // issues on a guess.
+    const releaseJobs = await world.run(
+      "gh",
+      ["run", "view", releaseRunId, "--json", "jobs"],
+      { timeoutMs: 60000 },
+    );
+    let stepConclusion: string | null = null;
+    let jobConclusion: string | null = null;
+    let unreadable = "";
+    if (releaseJobs.exitCode !== 0) {
+      unreadable =
+        "gh run view --json jobs exited " + releaseJobs.exitCode + ": " +
+        tail(releaseJobs.stderr || releaseJobs.stdout);
+    } else {
+      try {
+        // `gh run view --json <fields>` answers with an object keyed by
+        // the requested fields — the same shape `.headRefOid` and
+        // `.mergeCommit` are read through elsewhere in this script;
+        // only `gh run list --json` returns a bare array. The #124 fix
+        // cast this stdout as the array, `.find` threw into the catch
+        // below, and every green release run therefore read as
+        // "could not be parsed" — no deploy, no skip, and every merged
+        // fix rode the leave-open failed path with its issues still
+        // open for the next sweep (issue #128).
+        const runView = JSON.parse(releaseJobs.stdout) as {
+          jobs: {
+            name: string;
+            conclusion: string;
+            steps: { name: string; conclusion: string }[];
+          }[];
+        };
+        const uploadJob = runView.jobs.find(
+          (j) => j.name === "Build, sign, and upload",
+        );
+        if (uploadJob === undefined) {
+          unreadable = "the run reports no job named Build, sign, and upload";
+        } else {
+          jobConclusion = uploadJob.conclusion;
+          const uploadStep = uploadJob.steps.find(
+            (s) => s.name === "Upload to TestFlight",
+          );
+          if (uploadStep === undefined) {
+            unreadable =
+              "the Build, sign, and upload job reports no step named Upload to TestFlight";
+          } else {
+            stepConclusion = uploadStep.conclusion;
+          }
+        }
+      } catch (parseError) {
+        unreadable =
+          "the run's jobs JSON could not be parsed: " + String(parseError);
+      }
+    }
+    // A red watch is not a verdict about the run (issue #184): `gh run
+    // watch --exit-status` exits non-zero both when the run concludes
+    // failure and when the watch itself dies, and the old code decided
+    // "failed deploy" off the exit code alone — leaving issues open after
+    // a run that had already uploaded, and asserting a failure nobody
+    // witnessed. So a red watch asks the run itself what happened, in the
+    // #128 shape: exit-code checked before the parse, parse guarded,
+    // object keyed by the requested fields.
+    let runStateRead = false;
+    let runCompleted = false;
+    let runConclusion: string | null = null;
+    let runUnknownWhy = "";
+    if (!watchGreen) {
+      const runState = await world.run(
+        "gh",
+        ["run", "view", releaseRunId, "--json", "status,conclusion"],
         { timeoutMs: 60000 },
       );
-      let stepConclusion: string | null = null;
-      let jobConclusion: string | null = null;
-      let unreadable = "";
-      if (releaseJobs.exitCode !== 0) {
-        unreadable =
-          "gh run view --json jobs exited " + releaseJobs.exitCode + ": " +
-          tail(releaseJobs.stderr || releaseJobs.stdout);
+      if (runState.exitCode !== 0) {
+        runUnknownWhy =
+          "gh run view --json status,conclusion exited " + runState.exitCode + ": " +
+          tail(runState.stderr || runState.stdout);
       } else {
         try {
-          // `gh run view --json <fields>` answers with an object keyed by
-          // the requested fields — the same shape `.headRefOid` and
-          // `.mergeCommit` are read through elsewhere in this script;
-          // only `gh run list --json` returns a bare array. The #124 fix
-          // cast this stdout as the array, `.find` threw into the catch
-          // below, and every green release run therefore read as
-          // "could not be parsed" — no deploy, no skip, and every merged
-          // fix rode the leave-open failed path with its issues still
-          // open for the next sweep (issue #128).
-          const runView = JSON.parse(releaseJobs.stdout) as {
-            jobs: {
-              name: string;
-              conclusion: string;
-              steps: { name: string; conclusion: string }[];
-            }[];
+          const stateView = JSON.parse(runState.stdout) as {
+            status: string;
+            conclusion: string | null;
           };
-          const uploadJob = runView.jobs.find(
-            (j) => j.name === "Build, sign, and upload",
-          );
-          if (uploadJob === undefined) {
-            unreadable = "the run reports no job named Build, sign, and upload";
-          } else {
-            jobConclusion = uploadJob.conclusion;
-            const uploadStep = uploadJob.steps.find(
-              (s) => s.name === "Upload to TestFlight",
-            );
-            if (uploadStep === undefined) {
-              unreadable =
-                "the Build, sign, and upload job reports no step named Upload to TestFlight";
-            } else {
-              stepConclusion = uploadStep.conclusion;
-            }
+          runStateRead = true;
+          runCompleted = stateView.status === "completed";
+          runConclusion = stateView.conclusion;
+          if (!runCompleted) {
+            runUnknownWhy =
+              "the run reports status " + stateView.status + ", not completed";
+          } else if (runConclusion === null) {
+            runUnknownWhy =
+              "the run reports status completed with no conclusion";
           }
-        } catch (parseError) {
-          unreadable =
-            "the run's jobs JSON could not be parsed: " + String(parseError);
+        } catch (stateError) {
+          runUnknownWhy =
+            "the run's state JSON could not be parsed: " + String(stateError);
         }
       }
-      // deployed is the step's conclusion and nothing else — never again
-      // the watch exit code (issue #124).
-      deployed = stepConclusion === "success";
-      uploadSkipped =
-        !deployed && (jobConclusion === "skipped" || stepConclusion === "skipped");
-      deployLine = deployed
-        ? "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") uploaded the build to TestFlight — its Upload to TestFlight step concluded success"
-        : uploadSkipped
-          ? "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") stayed green but skipped the Upload to TestFlight step — the closed-train gate (issue #119) stood the run down, so TestFlight got no build from this merge and it ships with the next upload, after a version bump"
-          : "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") went green, but its Upload to TestFlight step's conclusion could not be established (" +
-            (unreadable !== ""
-              ? unreadable
-              : "the step concluded " + String(stepConclusion) + ", not success") +
-            "), so the sweep claims no TestFlight upload";
+    }
+    // Known-green is the watch's own exit 0 or a success conclusion read
+    // back from the run; known-red is a completed run with any other
+    // conclusion. Everything else — a run still going, a state that could
+    // not be read — is unknown, and unknown claims neither direction.
+    const runKnownGreen =
+      watchGreen ||
+      (runStateRead && runCompleted && runConclusion === "success");
+    const runKnownRed =
+      !watchGreen && runStateRead && runCompleted &&
+      runConclusion !== null && runConclusion !== "success";
+    // deployed is the step's conclusion and nothing else — never the
+    // watch exit code (issue #124) — and it is read after any watch
+    // outcome (issue #184): an upload that succeeded before a later red
+    // `if: always()` step, or before a dead watch, is a deploy, and the
+    // close arm below then closes the issues on what actually happened.
+    deployed = stepConclusion === "success";
+    // uploadSkipped stays a green-run verdict only (issue #184): a red
+    // run skips its upload step for mundane reasons — an earlier job
+    // failed, so the upload never ran — and reading that as the
+    // closed-train gate would close issues on a gate that never spoke.
+    uploadSkipped =
+      !deployed && runKnownGreen &&
+      (jobConclusion === "skipped" || stepConclusion === "skipped");
+    if (deployed) {
+      deployLine =
+        "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") uploaded the build to TestFlight — its Upload to TestFlight step concluded success" +
+        watchCaveat;
+    } else if (uploadSkipped) {
+      deployLine =
+        "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") stayed green but skipped the Upload to TestFlight step — the closed-train gate (issue #119) stood the run down, so TestFlight got no build from this merge and it ships with the next upload, after a version bump" +
+        watchCaveat;
+    } else if (!runKnownGreen && !runKnownRed) {
+      // The run's outcome is unknown — still running when the watch gave
+      // up, or its state could not be read. Neither direction is
+      // claimed: no deploy (nothing says the upload ran), no failure
+      // either (nothing says it did not), and the issues stay open.
+      deployUnknown = true;
+      deployLine =
+        "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") ended with an unknown outcome — " +
+        runUnknownWhy + watchCaveat +
+        " — so the sweep claims neither a TestFlight deploy nor a failed one";
+    } else if (runKnownRed) {
+      // The only arm allowed to claim TestFlight got no build (issue
+      // #184): the run itself concluded something other than success, and
+      // the upload step's own conclusion is named alongside it.
+      deployLine =
+        "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") concluded " + String(runConclusion) +
+        (unreadable !== ""
+          ? ", but its Upload to TestFlight step's conclusion could not be established (" + unreadable + "), so no deploy is claimed"
+          : " with its Upload to TestFlight step concluding " + String(stepConclusion) + " — the merge is on main but TestFlight did not get a build") +
+        watchCaveat;
+    } else {
+      deployLine =
+        "the iOS Release pipeline (run " + releaseRunId + ", commit " + shortSha + ") went green, but its Upload to TestFlight step's conclusion could not be established (" +
+        (unreadable !== ""
+          ? unreadable
+          : "the step concluded " + String(stepConclusion) + ", not success") +
+        "), so the sweep claims no TestFlight upload" +
+        watchCaveat;
     }
   }
 }
@@ -1158,7 +1277,10 @@ if (deployed) {
   }
 } else {
   for (const p of toImplement) {
-    report({ issue: p.number, title: p.title, status: "failed", note: "merged but deploy failed" }, "issues");
+    // Unknown is not failed (issue #184): the run's outcome was never
+    // established, so the board note must not claim a failure no one
+    // witnessed either.
+    report({ issue: p.number, title: p.title, status: "failed", note: "merged but " + (deployUnknown ? "the deploy outcome is unknown" : "deploy failed") }, "issues");
   }
 }
 
@@ -1193,14 +1315,16 @@ return {
       " (analyze, the full test suite, and the unsigned iOS build) — the head the merge was pinned to (--match-head-commit, issue #88)",
     "senior review approved: " + verdict.summary,
     "independent final review approved: " + fresh.summary,
-    // Three deploy states, never two (issue #124): upload green is claimed
-    // only off the upload step's own success conclusion, the skipped arm
-    // denies the upload outright, and everything else defers to deployLine.
+    // Three deploy states, never two (issues #124 and #184): upload green
+    // is claimed only off the upload step's own success conclusion — read
+    // after any watch outcome — the skipped arm denies the upload outright
+    // on a run known green, and everything else defers to deployLine,
+    // which on a red watch claims only what the run itself established.
     deployed
-      ? "gh run watch (iOS Release run " + releaseRunId + ", pinned to the PR's merge commit — issue #61) — TestFlight upload green: the Upload to TestFlight step concluded success (issue #124)"
+      ? "gh run watch (iOS Release run " + releaseRunId + ", pinned to the PR's merge commit — issue #61) — TestFlight upload green: the Upload to TestFlight step concluded success (issues #124, #184)"
       : uploadSkipped
         ? "gh run watch (iOS Release run " + releaseRunId + ", pinned to the PR's merge commit — issue #61) — green, but the Upload to TestFlight step was skipped by the closed-train gate (issue #119): no TestFlight upload"
-        : "release-run identification pinned to the PR's merge commit (issues #61, #124): " + deployLine,
+        : "release-run identification pinned to the PR's merge commit (issues #61, #124, #184): " + deployLine,
   ],
   notCovered: [
     // The honest gap is the physical device: PR CI analyzes, tests on

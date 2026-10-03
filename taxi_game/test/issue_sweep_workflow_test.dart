@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// The issue-sweep workflow's push and CI contract (issue #88), its
 /// gate-log round trip (issue #97), its branch-safety pins (issues #108
-/// and #118), its deploy-verdict pins (issues #124 and #128), its
+/// and #118), its deploy-verdict pins (issues #124, #128, and #184), its
 /// CI-claim wording pins (issue #163 — claims must state what CI really
 /// runs; #168 later added a simulator launch, and the pins follow it),
 /// and its phase-1 fail-closed pins (issue #176).
@@ -26,7 +26,13 @@ import 'package:flutter_test/flutter_test.dart';
 /// a TestFlight deploy. The #128 bug was one layer deeper: the jobs read
 /// back from the green run were cast as a bare array, but `gh run view
 /// --json jobs` answers `{"jobs":[…]}`, so the lookup threw into the catch
-/// and every verdict read as unreadable — no deploy ever recorded.
+/// and every verdict read as unreadable — no deploy ever recorded. The
+/// #184 bug was the red side of the same verdict: a non-zero `gh run
+/// watch` exit printed the failure claim off the exit code alone, though
+/// the watch exits non-zero both when the run fails and when the watch
+/// itself dies — so a run that went red *after* a successful upload step
+/// (a later `if: always()` step) left already-deployed issues open, and a
+/// dead watch asserted a failure nobody had witnessed.
 void main() {
   // flutter test runs from the package directory (the assumption
   // vehicle_sprites_test.dart makes for assets); the workflow lives one
@@ -431,6 +437,125 @@ void main() {
       // the contract; the shape is the script's to know.
       expect(script, isNot(contains('"--jq"')),
           reason: 'the jobs query must keep asking for the raw field');
+    });
+  });
+
+  group('a red or dead watch is not a verdict about the run (issue #184)',
+      () {
+    // The #124 fix taught the *green* arm to read the upload step's own
+    // conclusion; the red arm still read its verdict off the watch exit
+    // code alone. But `gh run watch --exit-status` exits non-zero both
+    // when the run concludes failure and when the watch itself dies, and
+    // a run can go red *after* a successful upload step (a later
+    // `if: always()` step in ios-release.yml) — so the sweep left
+    // already-deployed issues open, or asserted the failure claim
+    // without knowing the run's outcome at all. The step read now runs
+    // after every watch outcome, and a red watch asks the run itself
+    // before claiming either direction.
+    test('a thrown watch is recorded as a red one, not an error', () {
+      // world.run reports command failures as exit codes, but its
+      // timeoutMs-expiry behavior is undocumented (the issue marks it
+      // inferred) — a throw used to error the sweep after the merge,
+      // losing the verdict entirely. It is caught and shaped like a
+      // non-zero exit so the red-watch handling owns it.
+      expect(script, contains('catch (watchError)'));
+      expect(
+          script,
+          contains(
+              'release = { exitCode: -1, stdout: "", stderr: String(watchError) }'),
+          reason: 'a dead watch must ride the red-watch path, not error '
+              'the sweep with the merge already on main');
+    });
+
+    test('the upload-step read runs after any watch outcome', () {
+      // The jobs read is hoisted out of the green-only arm — an upload
+      // that succeeded before a later red step or before a dead watch is
+      // still a deploy — and the run-state read happens only on a red
+      // watch, after that unconditional read.
+      final jobsReadAt = script.indexOf('"--json", "jobs"');
+      final redGuardAt = script.indexOf('if (!watchGreen)');
+      final stateReadAt = script.indexOf('"--json", "status,conclusion"');
+      expect(jobsReadAt, greaterThan(-1));
+      expect(redGuardAt, greaterThan(-1));
+      expect(stateReadAt, greaterThan(-1));
+      expect(jobsReadAt, lessThan(redGuardAt),
+          reason: 'the step read must not depend on the watch being green');
+      expect(stateReadAt, greaterThan(redGuardAt),
+          reason: 'the run-state read belongs to the red-watch branch');
+
+      // The watch's own exit code is bound once, as a fact about the
+      // watch — never again as the verdict.
+      expect(script, contains('const watchGreen = release.exitCode === 0'));
+    });
+
+    test('the run-state read is exit-code checked and object-shaped', () {
+      // The #128 lesson applied to the second read: `gh run view --json
+      // status,conclusion` answers an object keyed by the fields, and a
+      // failed gh is an exit code with empty stdout — parse only after
+      // the check, and only a parsed read may establish green or red.
+      final exitAt = script.indexOf('runState.exitCode !== 0');
+      final parseAt = script.indexOf('JSON.parse(runState.stdout)');
+      expect(exitAt, greaterThan(-1));
+      expect(parseAt, greaterThan(-1));
+      expect(exitAt, lessThan(parseAt),
+          reason: 'a failed state read is an unknown outcome, not a '
+              'SyntaxError on empty stdout');
+      expect(script, contains('runStateRead'),
+          reason: 'green and red are derivable only from a parsed read');
+      expect(script, contains('runConclusion === "success"'),
+          reason: 'known-green is the watch or a read-back success');
+      expect(script, contains('runConclusion !== "success"'),
+          reason: 'known-red is a completed run with another conclusion');
+    });
+
+    test('a skipped upload step only reads as the gate on a known-green '
+        'run', () {
+      // A red run skips its upload step for mundane reasons — an earlier
+      // job failed and the upload never ran — and reading that as the
+      // closed-train gate would close issues on a gate that never spoke.
+      expect(script, contains('!deployed && runKnownGreen'),
+          reason: 'uploadSkipped must be gated on the run being known '
+              'green, not just on a skipped conclusion');
+    });
+
+    test('the unknown outcome claims neither direction', () {
+      // Still running when the watch gave up, or a state that could not
+      // be read: no deploy is claimed (nothing says the upload ran), no
+      // failure either (nothing says it did not) — and the board says
+      // unknown, not failed.
+      expect(script,
+          contains('claims neither a TestFlight deploy nor a failed one'));
+      expect(script, contains('the deploy outcome is unknown'),
+          reason: 'the board note must not claim a failure that was '
+              'never established');
+    });
+
+    test('the failure claim is made only on a run known red', () {
+      // Exactly once in the script, inside the arm that has read the
+      // run's own conclusion — never again off the watch exit code.
+      expect(RegExp('TestFlight did not get a build').allMatches(script),
+          hasLength(1),
+          reason: 'the failure claim must stay inside the known-red arm');
+      final phraseAt = script.indexOf('TestFlight did not get a build');
+      final redArmAt = script.indexOf('else if (runKnownRed)');
+      expect(redArmAt, greaterThan(-1),
+          reason: 'the known-red arm must exist as its own branch');
+      expect(phraseAt, greaterThan(redArmAt),
+          reason: 'the claim may only follow an established conclusion');
+      expect(script, isNot(contains('FAILED — the merge is on main')),
+          reason: 'the old exit-code-only red arm must not return');
+    });
+
+    test('a verdict kept against a red watch names the watch itself', () {
+      // Whenever a deploy or a gate-skip is still claimed after the watch
+      // went red, the report appends the watch's exit code and a tail of
+      // its output, so a human can see what was — and was not — trusted.
+      expect(script, contains('gh run watch exited " + release.exitCode'));
+      expect(script, contains('tail(release.stderr || release.stdout)'),
+          reason: 'the caveat carries a tail of the watch output');
+      expect(script, contains('watchCaveat'),
+          reason: 'the caveat is appended to the verdicts kept against a '
+              'red watch');
     });
   });
 

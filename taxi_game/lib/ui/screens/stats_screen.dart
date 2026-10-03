@@ -13,6 +13,13 @@ import '../../services/game_state_service.dart';
 /// what a typical (median) shift looks like, the distribution of run
 /// lengths, and the bank-vs-push ratio. Everything is read from local
 /// storage; nothing here has ever been near a network.
+///
+/// The Totals rows are lifetime numbers (issue #183), stored in the save
+/// rather than folded over the history: the history keeps only the last
+/// [GameStateService.maxRecordedRuns] shifts, and totals over that window
+/// froze at 200 and then fell as old shifts aged out. The medians, the
+/// run-length bands and the bank-or-push counts below them still describe
+/// those recent shifts.
 class StatsScreen extends StatelessWidget {
   const StatsScreen({super.key});
 
@@ -143,7 +150,10 @@ class _StatsList extends StatelessWidget {
         const _SectionLabel('Totals'),
         _Card(
           children: [
-            _statRow('Shifts ended', '${stats.runCount}',
+            // Lifetime, not the window count (issue #183): the window
+            // pins at maxRecordedRuns, and a "Shifts ended" that stops
+            // there is the bug this row left behind.
+            _statRow('Shifts ended', '${stats.shiftsEnded}',
                 valueKey: const Key('stats_shifts_total')),
             _statRow('Total score', '${stats.totalScore}'),
             _statRow('Distance driven',

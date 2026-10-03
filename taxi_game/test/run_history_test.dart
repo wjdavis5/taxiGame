@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/models/run_record.dart';
@@ -115,6 +117,119 @@ void main() {
       final reloaded = await restarted();
       expect(reloaded.runHistory, isEmpty);
       expect(reloaded.totalCoins, 0);
+    });
+
+    test('wipes the lifetime totals with everything else (issue #183)',
+        () async {
+      for (var i = 1; i <= GameStateService.maxRecordedRuns + 1; i++) {
+        await gameState.recordEndlessRun(run(score: i));
+      }
+      expect(gameState.runStats.shiftsEnded,
+          GameStateService.maxRecordedRuns + 1);
+
+      gameState.resetProgress();
+
+      expect(gameState.runStats.shiftsEnded, 0);
+      expect(gameState.runStats.totalScore, 0);
+
+      final reloaded = await restarted();
+      expect(reloaded.runStats.shiftsEnded, 0,
+          reason: 'a fresh save carries a fresh totals block');
+    });
+  });
+
+  group('the lifetime totals (issue #183)', () {
+    test('the shift after the trim still counts — nothing freezes or falls',
+        () async {
+      // The issue's own case, maxRecordedRuns + 1 shifts: shift 1 has
+      // fallen off the window, and the rows the issue names — "Shifts
+      // ended", "Fares delivered", "Time driven" — must still count it.
+      for (var i = 1; i <= GameStateService.maxRecordedRuns + 1; i++) {
+        await gameState.recordEndlessRun(run(score: i));
+      }
+
+      expect(gameState.runHistory.length, GameStateService.maxRecordedRuns);
+      expect(gameState.runHistory.first.score, 2,
+          reason: 'shift 1 fell off the front of the window');
+
+      final stats = gameState.runStats;
+      expect(stats.runCount, GameStateService.maxRecordedRuns,
+          reason: 'the window stays the shares\' denominator');
+      expect(stats.shiftsEnded, GameStateService.maxRecordedRuns + 1);
+      // run() carries score i, 2 fares, 90 s and 5000 px per shift.
+      expect(stats.totalScore, 20301, reason: 'the sum of 1..201');
+      expect(stats.totalFares, 2 * (GameStateService.maxRecordedRuns + 1));
+      expect(stats.totalDurationSeconds,
+          90.0 * (GameStateService.maxRecordedRuns + 1));
+      expect(stats.totalDistanceMetres,
+          500 * (GameStateService.maxRecordedRuns + 1));
+    });
+
+    test('survive a restart — they live in the save, not the window',
+        () async {
+      for (var i = 1; i <= GameStateService.maxRecordedRuns + 1; i++) {
+        await gameState.recordEndlessRun(run(score: i));
+      }
+
+      final reloaded = await restarted();
+      expect(reloaded.runHistory.length, GameStateService.maxRecordedRuns);
+      expect(reloaded.runStats.shiftsEnded,
+          GameStateService.maxRecordedRuns + 1);
+      expect(reloaded.runStats.totalScore, 20301);
+      expect(reloaded.runStats.totalDurationSeconds,
+          90.0 * (GameStateService.maxRecordedRuns + 1));
+    });
+
+    test('a pre-fix save seeds its totals from the window once', () async {
+      // The migration case: a history written by an older build, and a
+      // save with no lifetimeRunTotals block — the shape every save in
+      // the wild has the first time this build loads it. The seed is the
+      // window's own sums, persisted immediately.
+      SharedPreferences.setMockInitialValues({
+        StorageService.runHistoryKey: jsonEncode(
+          [for (var i = 1; i <= 3; i++) run(score: i).toJson()],
+        ),
+        StorageService.saveDataKey: jsonEncode({
+          'currentLevel': 1,
+          'totalCoins': 0,
+          'totalGems': 0,
+          'unlockedVehicles': ['taxi_yellow'],
+          'selectedVehicle': 'taxi_yellow',
+          'achievements': {},
+          'endlessBestScore': 0,
+          'controlHintDismissed': true,
+          'bankPromptSeen': true,
+          'personalBests': {},
+          'settings': {
+            'soundEnabled': true,
+            'musicEnabled': true,
+            'vibrationEnabled': true,
+            'musicVolume': 0.7,
+            'sfxVolume': 0.8,
+          },
+          // no lifetimeRunTotals — the pre-#183 save shape
+        }),
+      });
+      final storage = StorageService();
+      await storage.init();
+      final loaded = GameStateService(storage);
+      await loaded.loadSaveData();
+
+      expect(loaded.runHistory.length, 3);
+      expect(loaded.runStats.shiftsEnded, 3,
+          reason: 'seeded from the window: three shifts in it');
+      expect(loaded.runStats.totalScore, 6, reason: '1 + 2 + 3');
+      expect(loaded.runStats.totalFares, 6);
+      expect(loaded.runStats.totalDurationSeconds, 270.0);
+
+      // And the seed reached the disk: a restart finds the stored block,
+      // and the window still agrees with it, so the seed no-ops.
+      final reloadedStorage = StorageService();
+      await reloadedStorage.init();
+      final reloaded = GameStateService(reloadedStorage);
+      await reloaded.loadSaveData();
+      expect(reloaded.runStats.shiftsEnded, 3);
+      expect(reloaded.runStats.totalScore, 6);
     });
   });
 

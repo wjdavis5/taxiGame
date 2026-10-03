@@ -165,6 +165,37 @@ void main() {
       expect(find.text('2 – 4 km'), findsOneWidget);
       expect(find.text('Over 4 km'), findsOneWidget);
     });
+
+    testWidgets(
+        'the totals keep counting past the 200-shift window (issue #183)',
+        (tester) async {
+      // The issue's own case at widget level: maxRecordedRuns + 1 shifts
+      // recorded, the first fallen off the window, and every Totals row
+      // still counting all of them.
+      for (var i = 1; i <= GameStateService.maxRecordedRuns + 1; i++) {
+        await recordRun(score: i);
+      }
+
+      await tester.pumpWidget(wrap(const StatsScreen()));
+      await tester.pump();
+
+      expect(
+        tester.widget<Text>(find.byKey(const Key('stats_shifts_total'))),
+        isA<Text>().having((t) => t.data, 'data',
+            '${GameStateService.maxRecordedRuns + 1}'),
+        reason: 'the window pins at maxRecordedRuns — the row is the '
+            'lifetime count, or the issue is back',
+      );
+      expect(find.text('20301'), findsOneWidget,
+          reason: 'the sum of scores 1..201 — the window would show the '
+              'sum of 2..201');
+      expect(find.text('603'), findsOneWidget,
+          reason: '3 fares × 201 shifts');
+      expect(find.text('3:37:45'), findsOneWidget,
+          reason: '65 s × 201 shifts, as a clock');
+      expect(find.text('80.4 km'), findsOneWidget,
+          reason: '400 m × 201 shifts');
+    });
   });
 
   testWidgets('renders without overflow on a narrow portrait screen',
