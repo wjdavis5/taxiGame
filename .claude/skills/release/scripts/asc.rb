@@ -156,7 +156,12 @@ def print_blockers
   puts '  *** EMPTY *** no localizations' if locs.empty?
   locs.each do |loc|
     a = loc['attributes']
-    %w[description keywords supportUrl].each do |k|
+    # whatsNew rides the same check (issue #199): Apple requires release
+    # notes on every version after the first, so an editable version with
+    # none is a submission the gate would refuse — the submit lane writes
+    # it from fastlane/whats_new.txt, and this line is how a human sees
+    # whether it landed.
+    %w[description keywords supportUrl whatsNew].each do |k|
       puts format('  %-14s %s', k, a[k].to_s.empty? ? '*** EMPTY ***' : 'set')
     end
     c2, sets = get("/v1/appStoreVersionLocalizations/#{loc['id']}/appScreenshotSets?limit=5")

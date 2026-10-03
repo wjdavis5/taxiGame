@@ -22,7 +22,13 @@ import 'package:taxi_game/services/storage_service.dart';
 /// hands it over without a third press. The pause menu's RESUME re-feeds
 /// the same way (issue #103): a thumb that moved during the pause is
 /// tracked, and the cab must not leave the menu driving the axes it
-/// entered with.
+/// entered with. The release's fade-out draws throughout (issue #202):
+/// the ring's geometry outlives the thumb exactly as long as the fade
+/// does, so the ring and knob are painted while they fade instead of
+/// vanishing the instant the thumb lifts. The thumb handover (issue
+/// #200): a second thumb that lands while the first holds is
+/// remembered, and the owner's lift hands the stick straight to it —
+/// no dead coast, no third press.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -332,6 +338,149 @@ void main() {
       expect(game.player.throttleInput, 0);
     });
 
+    /// A second thumb's landing while the owner holds (issue #200),
+    /// with the position the thumb rests at by then.
+    DragStartEvent secondThumbDown() => DragStartEvent(
+          8,
+          game,
+          DragStartDetails(globalPosition: const Offset(120, 700)),
+        );
+
+    DragUpdateEvent secondThumbGlide(Offset delta, Offset thumb) =>
+        DragUpdateEvent(
+          8,
+          game,
+          DragUpdateDetails(delta: delta, globalPosition: thumb),
+        );
+
+    test('the waiting thumb inherits the stick the moment the owner '
+        'lifts (issue #200)', () async {
+      await mountRun();
+
+      // The owner drives; a second thumb lands lower-half mid-drive and
+      // glides while it waits — 60 px right, to rest at (180, 700).
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      expect(game.player.throttleInput, greaterThan(0));
+
+      stick.onDragStart(secondThumbDown());
+      stick.onDragUpdate(
+        secondThumbGlide(const Offset(60, 0), const Offset(180, 700)),
+      );
+      expect(stick.isActive, isTrue,
+          reason: 'the owner still holds the stick');
+      expect(game.player.throttleInput, greaterThan(0),
+          reason: 'the waiting thumb\'s glide feeds nothing while the '
+              'owner holds');
+
+      // The lift is the handover: no dead coast, no third press. The
+      // new owner starts at dead centre, so nothing feeds yet.
+      stick.onDragEnd(DragEndEvent(7, DragEndDetails()));
+      expect(stick.isActive, isTrue,
+          reason: 'the waiting thumb owns the stick the moment the '
+              'owner lifts');
+      expect(game.player.throttleInput, 0,
+          reason: 'a fresh origin sits inside the dead zone');
+
+      // The inherited origin is where the waiting thumb *rests* —
+      // (180, 700), tracked through the glide — not where it landed at
+      // (120, 700). Gliding back to the landing point is therefore a
+      // 60 px left glide: full left lock. A stale origin would compute
+      // a (0, 0) offset and read dead centre.
+      stick.onDragUpdate(
+        secondThumbGlide(const Offset(-60, 0), const Offset(120, 700)),
+      );
+      expect(game.player.steeringInput, -1.0,
+          reason: 'the handover tracked the waiting thumb, so the origin '
+              'moved with it');
+      expect(game.player.throttleInput, 0, reason: 'the glide was pure '
+          'horizontal');
+    });
+
+    test('a waiting thumb that lifts before the owner hands nothing over '
+        '(issue #200)', () async {
+      await mountRun();
+
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      stick.onDragStart(secondThumbDown());
+
+      // The waiting thumb gives up and lifts first: its claim dies with
+      // it, so the owner's later lift releases outright rather than
+      // handing the stick to a pointer that left the screen.
+      stick.onDragEnd(DragEndEvent(8, DragEndDetails()));
+      stick.onDragEnd(DragEndEvent(7, DragEndDetails()));
+
+      expect(stick.isActive, isFalse,
+          reason: 'no handover: the waiting thumb lifted first');
+      expect(game.player.throttleInput, 0);
+
+      // And the dropped pointer feeds nothing afterwards — the exact
+      // dead-stick symptom the old code left every second thumb with.
+      stick.onDragUpdate(
+        secondThumbGlide(const Offset(0, -60), const Offset(120, 640)),
+      );
+      expect(game.player.throttleInput, 0,
+          reason: 'a pointer that lifted owns nothing');
+    });
+
+    test('a run ending under two thumbs hands the stick to nobody '
+        '(issue #200)', () async {
+      await mountRun();
+
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      stick.onDragStart(secondThumbDown());
+
+      // The third crash ends the run under both thumbs: the terminal
+      // freeze releases through _freezePlayer, which empties the
+      // waiting room with the ownership — a waiting thumb must not
+      // inherit a dead run when the owner's lift arrives after the end.
+      game.onCrash();
+      advanceGameTime(TaxiGame.crashStallSeconds + 0.01);
+      game.onCrash();
+      advanceGameTime(TaxiGame.crashStallSeconds + 0.01);
+      game.onCrash();
+      expect(game.isGameActive, isFalse, reason: 'the shift is over');
+
+      stick.onDragEnd(DragEndEvent(7, DragEndDetails()));
+      expect(stick.isActive, isFalse,
+          reason: 'the ending cleared the waiting room: no handover');
+
+      stick.onDragUpdate(
+        secondThumbGlide(const Offset(0, -60), const Offset(120, 640)),
+      );
+      expect(game.player.throttleInput, 0,
+          reason: 'the once-waiting thumb feeds nothing on a dead run');
+    });
+
+    test('a thumb landing while paused waits for nothing (issue #200)',
+        () async {
+      await mountRun();
+
+      stick.onDragStart(touchDown());
+      stick.onDragUpdate(glide(const Offset(0, -60)));
+      game.pauseGame();
+
+      // Pause outranks the waiting room as it outranks the claim (the
+      // issue #105 ordering): a menu owns the screen, so this landing
+      // is refused outright and queues nothing.
+      stick.onDragStart(secondThumbDown());
+      stick.onDragEnd(DragEndEvent(7, DragEndDetails()));
+      expect(stick.isActive, isFalse,
+          reason: 'nothing was queued while paused, so the lift '
+              'releases outright');
+
+      game.resumeGame();
+      expect(game.player.throttleInput, 0,
+          reason: 'the resume re-feeds an owner that does not exist');
+      stick.onDragUpdate(
+        secondThumbGlide(const Offset(0, -60), const Offset(120, 640)),
+      );
+      expect(game.player.throttleInput, 0,
+          reason: 'the refused landing never became an owner');
+    });
+
     test('a crash under a held thumb suspends the stick, not kills it '
         '(issue #91)', () async {
       await mountRun();
@@ -615,7 +764,8 @@ void main() {
           reason: 'the live game re-feeds the held offset');
     });
 
-    test('the ring fades out after release and in while held', () async {
+    test('the ring fades out after release and in while held (issue #202)',
+        () async {
       await mountRun();
 
       stick.onDragStart(touchDown());
@@ -623,10 +773,27 @@ void main() {
       expect(stick.opacity, 1.0);
 
       stick.release();
+      // The thumb is gone but the ring is not: the fade-out needs the
+      // geometry for its whole 125 ms, where the bug's release() nulled
+      // the origin and offset the instant the thumb lifted — an opacity
+      // faithfully fading over a ring that was already undrawable.
+      expect(stick.hasGeometry, isTrue,
+          reason: 'release keeps the geometry the fade still draws');
       stick.update(0.05); // half a second of the 8/s fade
       expect(stick.opacity, closeTo(0.6, 1e-9));
+      expect(stick.hasGeometry, isTrue,
+          reason: 'mid-fade, the ring is still drawable');
+
       stick.update(1);
       expect(stick.opacity, 0.0);
+      expect(stick.hasGeometry, isFalse,
+          reason: 'the finished fade drops the geometry it kept');
+
+      // A fresh claim starts from a clean slate either way: the dropped
+      // geometry is not the last touch's ghost.
+      stick.onDragStart(touchDown(at: const Offset(120, 700)));
+      stick.update(1);
+      expect(stick.hasGeometry, isTrue);
     });
   });
 }

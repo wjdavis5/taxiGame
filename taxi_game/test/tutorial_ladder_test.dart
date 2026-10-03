@@ -831,23 +831,31 @@ void main() {
       expect(game.overlays.isActive('levelComplete'), isFalse);
     });
 
-    testWidgets('the title stays one centred line at every iPhone width '
-        '(issue #159)', (tester) async {
+    testWidgets('the title and payout stay one centred line at every iPhone '
+        'width (issues #159, #201)', (tester) async {
       // "TUTORIAL COMPLETE!" is wider than the panel on every standard
       // iPhone (296 px of bold type in a 255-273 px panel at 375-393 pt),
       // and the bare Text had no scale-down box — it wrapped into two
-      // flush-left lines while everything around it sat centred. Both
-      // branches ride the same box now, so both are pinned. Ahem
-      // advances a square per glyph — roughly twice Roboto — so the
-      // unfixed Text wrapped at every one of these widths: the check is
-      // strictly conservative, failing on anything the real font could
-      // show (the garage width-sweep reasoning, issue #156).
+      // flush-left lines while everything around it sat centred. #201
+      // caught the payout line the same panel had missed: 'Banked:
+      // +125 Coins' at 24 px wrapped on a 320 pt phone's ~200 px column,
+      // and both its branches ride one box — the widget is either
+      // branch's text, never two labels. Ahem advances a square per
+      // glyph — roughly twice Roboto — so the unfixed Text wrapped at
+      // every one of these widths: the check is strictly conservative,
+      // failing on anything the real font could show (the garage
+      // width-sweep reasoning, issue #156).
       addTearDown(tester.view.reset);
       final handoff = await panelGame(tester, GameLevel.ladderLength);
       final midLadder = await panelGame(tester, 1);
+      // The handoff panel names a bank (issue #34); the mid-ladder one
+      // falls to the flat reward branch — one game per branch.
+      handoff.lastBankedScore = 125;
       final panels = <(TaxiGame, String)>[
         (handoff, 'TUTORIAL COMPLETE!'),
         (midLadder, 'LEVEL COMPLETE!'),
+        (handoff, 'Banked: +125 Coins'),
+        (midLadder, '+50 Coins'),
       ];
 
       for (final width in [320.0, 375.0, 390.0, 393.0]) {

@@ -350,11 +350,22 @@ class RunSummaryPanel extends StatelessWidget {
                     game.raceGhost();
                   },
                   icon: const Icon(Icons.flash_on),
-                  label: const Text(
-                    'RACE YOUR GHOST',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                  // DRIVE AGAIN's rule (issue #187), one button down:
+                  // the icon-plus-label row leaves this label less than
+                  // DRIVE AGAIN's whole width, and 'RACE YOUR GHOST' at
+                  // 18 px is more type than a 320 pt phone's 200 px
+                  // panel column holds — the bare label wrapped into
+                  // two lines inside its own button (issue #201). The
+                  // same scale-down box keeps it one line at whatever
+                  // size fits.
+                  label: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      'RACE YOUR GHOST',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),

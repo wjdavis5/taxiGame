@@ -1,0 +1,8 @@
+What's new:
+
+- The steering stick now switches thumbs instantly — no more dead
+  steering when you swap fingers mid-drive.
+- The stick ring fades out smoothly when you lift your thumb.
+- Layout fixes on smaller iPhones: long labels no longer wrap or
+  overflow their buttons and panels.
+- General stability and polish.

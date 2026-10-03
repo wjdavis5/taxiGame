@@ -385,11 +385,14 @@ void main() {
     });
   });
 
-  testWidgets('the title stays one line at every iPhone width (issue #187)',
-      (tester) async {
+  testWidgets('the title and daily status stay one line at every iPhone '
+      'width (issues #187, #201)', (tester) async {
     // 'CAB HUSTLE' at 48 px is ~480 px of bold type, and the 280 px left
     // on a 320 pt iPhone wrapped the menu's headline into two flush-left
-    // lines. The completion panel's #159 sweep pattern: one line of ink,
+    // lines. #201 caught the daily block's status line doing the same:
+    // the unplayed branch — '$dayKey · ONE SHIFT, SAME FOR EVERYONE' —
+    // wrapped under the button, and it rides the title's scale-down box
+    // now. The completion panel's #159 sweep pattern: one line of ink,
     // laid out under the scale-down box's unbounded width. Ahem advances
     // a square per glyph — roughly twice Roboto — so the checks are
     // strictly conservative (the #156 garage width-sweep reasoning).
@@ -404,22 +407,31 @@ void main() {
       await tester.pumpWidget(buildMenu(gameStateService, storageService));
       await tester.pump();
 
-      final finder = find.text('CAB HUSTLE');
-      expect(finder, findsOneWidget);
-      final paragraph = tester.renderObject<RenderParagraph>(finder);
-      final fontSize = tester.widget<Text>(finder).style!.fontSize!;
-      expect(
-        paragraph.size.height,
-        lessThan(fontSize * 1.5),
-        reason: 'CAB HUSTLE must be a single line on a ${width.round()} pt '
-            'screen — two Ahem lines measure ~${(fontSize * 2).round()}',
-      );
-      expect(
-        paragraph.constraints.maxWidth,
-        equals(double.infinity),
-        reason: 'CAB HUSTLE must lay out under the FittedBox\'s unbounded '
-            'width to be wrap-proof',
-      );
+      // (the label the reason strings name, its finder)
+      final labels = <(String, Finder)>[
+        ('CAB HUSTLE', find.text('CAB HUSTLE')),
+        // Keyed, not text-matched: the status carries the day's date,
+        // and the key is what production and the other tests find it by.
+        ('the daily status line',
+            find.byKey(const ValueKey('daily_status'))),
+      ];
+      for (final (name, finder) in labels) {
+        expect(finder, findsOneWidget);
+        final paragraph = tester.renderObject<RenderParagraph>(finder);
+        final fontSize = tester.widget<Text>(finder).style!.fontSize!;
+        expect(
+          paragraph.size.height,
+          lessThan(fontSize * 1.5),
+          reason: '$name must be a single line on a ${width.round()} pt '
+              'screen — two Ahem lines measure ~${(fontSize * 2).round()}',
+        );
+        expect(
+          paragraph.constraints.maxWidth,
+          equals(double.infinity),
+          reason: '$name must lay out under the FittedBox\'s unbounded '
+              'width to be wrap-proof',
+        );
+      }
     }
   });
 }

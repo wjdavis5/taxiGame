@@ -1,4 +1,5 @@
 import 'dart:async' show Completer;
+import 'dart:io' show Directory, File;
 
 import 'package:audioplayers_platform_interface/audioplayers_platform_interface.dart'
     show AVAudioSessionCategory;
@@ -646,5 +647,105 @@ void main() {
     final audio = AudioService();
     await audio.initialize();
     await audio.initialize();
+  });
+
+  group('the asset cache folder (issue #198)', () {
+    /// The UUID-v4 shape audioplayers mints per AudioCache construction
+    /// — duplicated here (not imported) because the service's own copy
+    /// is the private half of the sweep's contract.
+    final uuidShape = RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    );
+
+    test('initialize pins the cache id to one fixed, non-UUID name',
+        () async {
+      await AudioService().initialize();
+
+      // The one assignment every load reads at copy time — the warm, the
+      // voice and engine players, the BGM, all through this shared
+      // AudioCache instance. Pinned, every launch overwrites one folder
+      // instead of minting a UUID-named ~1 MB one apiece that nothing
+      // ever deleted.
+      expect(FlameAudio.audioCache.cacheId, AudioService.audioCacheId);
+      // And the pinned name must not be UUID-shaped: the backlog sweep
+      // hunts exactly that shape, and it may never be able to take the
+      // live folder.
+      expect(uuidShape.hasMatch(AudioService.audioCacheId), isFalse,
+          reason: 'a UUID-shaped pinned name would feed the live cache '
+              'folder to the sweep');
+    });
+
+    test('the sweep deletes minted audio cache folders and spares the rest',
+        () async {
+      // A real slice of the temp directory, planted with every kind of
+      // neighbor the sweep can meet — no path_provider fake needed, the
+      // helper takes the directory.
+      final temp = await Directory.systemTemp.createTemp('sweep_198');
+      addTearDown(() async {
+        try {
+          await temp.delete(recursive: true);
+        } catch (_) {}
+      });
+
+      // Two minted folders, both shapes AudioCache writes: wavs nested
+      // under the asset prefix (sfx/…, music/…) and a flat file.
+      final nested = Directory(
+        '${temp.path}/1c0b5e2a-3d4f-4b5a-9c8d-0a1b2c3d4e5f',
+      )..createSync(recursive: true);
+      Directory('${nested.path}/sfx').createSync(recursive: true);
+      File('${nested.path}/sfx/coin.wav').writeAsBytesSync([1]);
+      final flat = Directory(
+        '${temp.path}/9f8e7d6c-5b4a-4938-8271-112233445566',
+      )..createSync(recursive: true);
+      File('${flat.path}/engine_loop.wav').writeAsBytesSync([1]);
+
+      // The neighbors that must survive: the share sheet's folder
+      // (AppDelegate prunes its own), a UUID-named folder holding no
+      // wav, the pinned live cache folder — with wavs in it, proving
+      // sparing is by name, not by content — a non-UUID folder with
+      // wavs, and a loose file.
+      final cards = Directory('${temp.path}/score_cards')
+        ..createSync(recursive: true);
+      File('${cards.path}/cab-hustle-score-1.png').writeAsBytesSync([1]);
+      final uuidNoWav = Directory(
+        '${temp.path}/abcdef01-2345-4789-8abc-def012345678',
+      )..createSync(recursive: true);
+      File('${uuidNoWav.path}/note.txt').writeAsStringSync('not audio');
+      final live = Directory('${temp.path}/${AudioService.audioCacheId}')
+        ..createSync(recursive: true);
+      Directory('${live.path}/music').createSync(recursive: true);
+      File('${live.path}/music/shift_loop.wav').writeAsBytesSync([1]);
+      final named = Directory('${temp.path}/some_other_folder')
+        ..createSync(recursive: true);
+      File('${named.path}/x.wav').writeAsBytesSync([1]);
+      final loose = File('${temp.path}/loose.wav')..writeAsBytesSync([1]);
+
+      await AudioService.sweepAbandonedAudioCaches(temp);
+
+      expect(nested.existsSync(), isFalse,
+          reason: 'a minted folder with prefix-nested wavs is the exact '
+              'backlog the issue names');
+      expect(flat.existsSync(), isFalse,
+          reason: 'a minted folder with a flat wav too');
+      expect(cards.existsSync(), isTrue,
+          reason: 'the share sheet prunes score_cards itself');
+      expect(uuidNoWav.existsSync(), isTrue,
+          reason: 'UUID-named but holding no audio — not this service\'s '
+              'to judge');
+      expect(live.existsSync(), isTrue,
+          reason: 'the pinned folder is this launch\'s cache, wavs and all');
+      expect(named.existsSync(), isTrue,
+          reason: 'a non-UUID folder is never a minted cache, wavs or not');
+      expect(loose.existsSync(), isTrue,
+          reason: 'the sweep walks folders only, never loose files');
+    });
+
+    test('the sweep tolerates a missing temp directory', () async {
+      // Completing at all is the assertion — the class convention: a
+      // sweep that cannot run costs some disk, never a launch.
+      await AudioService.sweepAbandonedAudioCaches(
+        Directory('${Directory.systemTemp.path}/sweep_198_not_here'),
+      );
+    });
   });
 }
