@@ -19,7 +19,10 @@ import '../../services/game_state_service.dart';
 /// [GameStateService.maxRecordedRuns] shifts, and totals over that window
 /// froze at 200 and then fell as old shifts aged out. The medians, the
 /// run-length bands and the bank-or-push counts below them still describe
-/// those recent shifts.
+/// those recent shifts — and, past 200 shifts, each of those sections
+/// carries a [_ScopeCaption] saying so (issue #192), because a screen
+/// where "Shifts ended" says 340 while everything under it still sums to
+/// 200 disagrees with itself unless the window is named on screen.
 class StatsScreen extends StatelessWidget {
   const StatsScreen({super.key});
 
@@ -174,6 +177,7 @@ class _StatsList extends StatelessWidget {
                 _formatMedian(stats.medianDistanceMetres, distance: true)),
             _statRow('Median duration',
                 _formatMedian(stats.medianDurationSeconds, duration: true)),
+            _ScopeCaption(stats: stats),
           ],
         ),
         const SizedBox(height: 24),
@@ -186,13 +190,18 @@ class _StatsList extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
-                'How far each ended shift drove, in bands.',
+                // "Recent", not "each ended shift" (issue #192): the
+                // bands cover the history window, which past 200 shifts
+                // is no longer every shift — [_ScopeCaption] below says
+                // exactly which ones.
+                'How far recent shifts drove, in bands.',
                 style: TextStyle(
                   fontSize: 12,
                   color: Colors.white.withValues(alpha: 0.6),
                 ),
               ),
             ),
+            _ScopeCaption(stats: stats),
           ],
         ),
         const SizedBox(height: 24),
@@ -216,7 +225,11 @@ class _StatsList extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '${(stats.bankedShare * 100).round()}% of shifts end in a bank',
+                    // "Recent shifts" for the same reason as the
+                    // run-lengths footer above (issue #192): the share
+                    // is over the window, and once shifts age out that
+                    // is a different crowd from "shifts" at large.
+                    '${(stats.bankedShare * 100).round()}% of recent shifts end in a bank',
                     key: const Key('stats_banked_share'),
                     style: const TextStyle(
                       fontSize: 13,
@@ -227,6 +240,7 @@ class _StatsList extends StatelessWidget {
                 ],
               ),
             ),
+            _ScopeCaption(stats: stats),
           ],
         ),
         const SizedBox(height: 24),
@@ -242,6 +256,7 @@ class _StatsList extends StatelessWidget {
                   ? 'No lives lost yet'
                   : RunStats.formatDistance(stats.medianLifeLossDistanceMetres!),
             ),
+            _ScopeCaption(stats: stats),
           ],
         ),
         ],
@@ -350,6 +365,45 @@ class _Card extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: children,
+      ),
+    );
+  }
+}
+
+/// The window-scope footer under each of the four window-scoped sections
+/// — typical shift, run lengths, bank-or-push, crashes (issue #192).
+///
+/// Past [GameStateService.maxRecordedRuns] shifts the Totals card counts
+/// a lifetime while these four still count the history window, so
+/// "Shifts ended" visibly outruns Banked + Wrecked and the run-length
+/// bands. The caption names the window each section actually covers,
+/// ending the silent disagreement. It appears only once a shift has
+/// aged out ([RunStats.shiftsEnded] pulls ahead of [RunStats.runCount]):
+/// until then the window *is* the whole history, every number on the
+/// screen already agrees, and a caption would be noise.
+///
+/// Renders nothing when not scoped — callers add it unconditionally and
+/// let it decide.
+class _ScopeCaption extends StatelessWidget {
+  const _ScopeCaption({required this.stats});
+
+  final RunStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    if (stats.shiftsEnded <= stats.runCount) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text(
+        // runCount, not a hardcoded 200: the caption states the window's
+        // own size, so it stays true whatever maxRecordedRuns is.
+        'Covers only your last ${stats.runCount} shifts.',
+        style: TextStyle(
+          fontSize: 12,
+          color: Colors.white.withValues(alpha: 0.6),
+        ),
       ),
     );
   }

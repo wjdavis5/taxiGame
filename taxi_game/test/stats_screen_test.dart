@@ -148,7 +148,8 @@ void main() {
       );
       expect(
         tester.widget<Text>(find.byKey(const Key('stats_banked_share'))),
-        isA<Text>().having((t) => t.data, 'data', '50% of shifts end in a bank'),
+        isA<Text>()
+            .having((t) => t.data, 'data', '50% of recent shifts end in a bank'),
       );
     });
 
@@ -195,6 +196,54 @@ void main() {
           reason: '65 s × 201 shifts, as a clock');
       expect(find.text('80.4 km'), findsOneWidget,
           reason: '400 m × 201 shifts');
+    });
+
+    testWidgets(
+        'the window-scoped sections name their window once shifts age out '
+        '(issue #192)',
+        (tester) async {
+      // The issue's own complaint: "Shifts ended" shows 201 while Banked
+      // + Wrecked and the run-length bands still sum to 200, and nothing
+      // on screen says those sections cover only the recent shifts. The
+      // fix is a caption on each of the four window-scoped sections.
+      for (var i = 1; i <= GameStateService.maxRecordedRuns + 1; i++) {
+        await recordRun(score: i);
+      }
+
+      await tester.pumpWidget(wrap(const StatsScreen()));
+      await tester.pump();
+
+      expect(
+        find.text(
+            'Covers only your last ${GameStateService.maxRecordedRuns} shifts.'),
+        findsNWidgets(4),
+        reason: 'one caption per window-scoped section: typical shift, '
+            'run lengths, bank or push, crashes',
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const Key('stats_banked_share'))),
+        isA<Text>().having((t) => t.data, 'data',
+            '100% of recent shifts end in a bank'),
+        reason: 'the share claims recent shifts, not shifts at large',
+      );
+      expect(find.text('How far recent shifts drove, in bands.'),
+          findsOneWidget,
+          reason: 'the bands footer claims recent shifts too');
+    });
+
+    testWidgets(
+        'no window caption while the history holds every shift ever ended',
+        (tester) async {
+      // Below the trim point the window *is* the whole history — every
+      // number on the screen already agrees, so the caption stays out of
+      // sight rather than calling a difference that does not exist.
+      await recordRun();
+      await recordRun(banked: false);
+
+      await tester.pumpWidget(wrap(const StatsScreen()));
+      await tester.pump();
+
+      expect(find.textContaining('Covers only'), findsNothing);
     });
   });
 
