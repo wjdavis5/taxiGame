@@ -113,6 +113,60 @@ void main() {
           reason: 'a whitespace-only file must fail the lane too');
     });
 
+    test('the app\'s first version skips the write instead of losing the '
+        'submit (issue #204)', () {
+      // Apple offers no What's New field on an app's first version, so
+      // the PATCH was refused there, the lane aborted before deliver,
+      // and the submit step's continue-on-error kept the run green with
+      // the submission silently lost — the mirror image of #199's
+      // silent drop. The guard counts the app's version records and
+      // skips the write when this is the only one, which is a skip with
+      // a log, never a raise: failing the lane is exactly the behavior
+      // that lost the 1.0.0 resubmission.
+      final laneDef = fastfile.substring(fastfile.indexOf('def set_whats_new'));
+      final notesChecksAt = laneDef.indexOf('notes.empty?');
+      final ensureAt =
+          laneDef.indexOf('app.ensure_version!(version, platform: platform)');
+      final guardAt = laneDef.indexOf(
+          'get_app_store_versions(filter: { platform: platform }, limit: 2)');
+      final patchAt = laneDef.indexOf('whatsNew: notes');
+
+      expect(guardAt, greaterThan(-1),
+          reason: 'the first-version guard must exist');
+      expect(notesChecksAt, greaterThan(-1));
+      expect(ensureAt, greaterThan(-1));
+      expect(patchAt, greaterThan(-1));
+      // The file contract stays first and unchanged; the count sits
+      // after ensure_version! (a not-yet-created first version then
+      // counts one and is skipped, a created second counts two and the
+      // write proceeds) and before the whatsNew PATCH it guards.
+      expect(notesChecksAt, lessThan(guardAt),
+          reason: 'the missing/empty file checks stay first');
+      expect(ensureAt, lessThan(guardAt),
+          reason: 'counting before ensure_version! would see one record '
+              'for a fresh second version and wrongly skip it');
+      expect(guardAt, lessThan(patchAt),
+          reason: 'the guard must stand between ensure_version! and the '
+              'write it guards');
+
+      // A skip, not a raise: between the count and the return there is
+      // a UI.important saying why, and no UI.user_error! failing the
+      // lane the submit still needs to run.
+      final returnAt = laneDef.indexOf('\n    return', guardAt);
+      expect(returnAt, greaterThan(-1), reason: 'the guard must return');
+      final guardBlock = laneDef.substring(guardAt, returnAt);
+      expect(guardBlock, contains('UI.important'),
+          reason: 'the skip must say why it skipped');
+      expect(guardBlock.contains('UI.user_error!'), isFalse,
+          reason: 'a first version must not fail the lane — that is the '
+              'silent drop being fixed');
+
+      // The humans' docs carry the exemption too, or the next release
+      // of a first version reads the skip as a bug.
+      expect(claude, contains('issue #204'));
+      expect(skill, contains('issue #204'));
+    });
+
     test('the skip_metadata carve-out names the one write it makes', () {
       // The lane's containment comment ("never overwrites the listing")
       // must not swallow the What's New write: the comment now names the

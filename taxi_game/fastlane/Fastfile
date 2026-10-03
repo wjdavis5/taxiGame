@@ -211,6 +211,18 @@ end
 # which carries `continue-on-error` — the TestFlight build the run
 # already uploaded is never stranded by it. The empty-file half is
 # caught red by the workflow's gate step, before the macOS build.
+#
+# The app's first version is the exception (issue #204): Apple offers
+# no What's New field there — there is nothing earlier to compare
+# against — so the unconditional PATCH was refused outright, the lane
+# aborted before deliver, and the submit step's `continue-on-error`
+# kept the run green: a 1.0.0 resubmission silently lost its review.
+# The write is skipped there, with a log saying why. The count of the
+# app's version records runs after `ensure_version!` — a not-yet-created
+# first version then counts one and is skipped, while a created second
+# version counts two and the write proceeds — and `limit: 2` is what
+# makes "one record" mean "the only record" (a second would ride the
+# same page) without paging a long version history.
 def set_whats_new(version)
   notes_path = File.expand_path("whats_new.txt", __dir__)
   unless File.exist?(notes_path)
@@ -232,6 +244,20 @@ def set_whats_new(version)
 
   platform = Spaceship::ConnectAPI::Platform::IOS
   app.ensure_version!(version, platform: platform)
+
+  # First version: Apple offers no field to write onto (issue #204), so
+  # skip the write rather than fail the submit over a PATCH that cannot
+  # succeed. Counted after `ensure_version!`, per the header comment.
+  versions = app.get_app_store_versions(filter: { platform: platform }, limit: 2)
+  if versions.length == 1
+    UI.important(
+      "#{version} is the app's only App Store version — Apple offers " \
+      "no What's New field on a first version, so whats_new.txt is " \
+      "left unwritten and the submit proceeds without release notes."
+    )
+    return
+  end
+
   editable = app.get_edit_app_store_version(platform: platform)
   UI.user_error!("No editable App Store version for #{version}.") if editable.nil?
 

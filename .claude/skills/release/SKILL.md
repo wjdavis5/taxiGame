@@ -159,8 +159,10 @@ For a real release, two files are the release:
 - Write the release notes in `taxi_game/fastlane/whats_new.txt` — plain,
   player-facing prose, committed with the bump. Apple requires What's New
   text on every version after the first (issue #199); the submit lane writes
-  this file onto the version, and the release gate fails the run red before
-  the build if it is missing or empty.
+  this file onto the version — except on the app's first version, where
+  Apple offers no such field and the lane skips the write (issue #204) — and
+  the release gate fails the run red before the build if it is missing or
+  empty.
 
 Then:
 
