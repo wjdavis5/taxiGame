@@ -28,6 +28,12 @@ platform :ios do
     # (issue #111) — set it on the version record before the submit.
     set_manual_release(version)
 
+    # Apple requires What's New text on every version after the first
+    # (issue #199) — and the metadata upload that would carry it through
+    # deliver is skipped below. Write it from the repo's own file before
+    # the submit.
+    set_whats_new(version)
+
     deliver(
       api_key: api_key,
       app_identifier: APP_IDENTIFIER,
@@ -43,7 +49,11 @@ platform :ios do
       automatic_release: false,
 
       # Listing copy and screenshots are maintained in App Store Connect. This
-      # lane submits what is already there and never overwrites it.
+      # lane submits what is already there and never overwrites it — the one
+      # write it makes is the What's New, from fastlane/whats_new.txt via
+      # `set_whats_new` above: per-release notes belong to the release commit
+      # (issue #199), while description, keywords, and screenshots stay
+      # ASC-maintained.
       skip_metadata: true,
       skip_screenshots: true,
       skip_binary_upload: true,
@@ -173,5 +183,70 @@ def set_manual_release(version)
   UI.success(
     "Release type for #{version} is MANUAL — the approved build ships " \
     "only when a human releases it in App Store Connect.",
+  )
+end
+
+# Writes the version's What's New from fastlane/whats_new.txt (issue #199).
+#
+# Apple requires release notes on every version after the first, and
+# 1.0.0 spent the exemption: a new version created with no What's New
+# text is refused at submission, the submit step carries
+# `continue-on-error` (#94's interim mitigation), and the run stayed
+# green with the submission silently lost — notes that existed nowhere.
+# The file is the release commit's own record of what changed, the same
+# direction as #89/#93/#102/#119: release steps read the repo, not a
+# human's memory of a browser session.
+#
+# The write rides the same primitives as `set_manual_release` — the
+# Spaceship token `app_store_connect_api_key` has already left in place,
+# deliver's `ensure_version!` find-or-create, and a PATCH before the
+# submit — because deliver's metadata upload is the one path that would
+# carry whatsNew and `skip_metadata` skips it (the same reason the
+# release type needed its own write, #111). whatsNew lives on the
+# version's primary-locale `appStoreVersionLocalizations` record, not
+# the version record itself; a version without that locale fails loudly
+# rather than guessing which language the notes belong to.
+#
+# An ASC-side failure here surfaces inside the workflow's submit step,
+# which carries `continue-on-error` — the TestFlight build the run
+# already uploaded is never stranded by it. The empty-file half is
+# caught red by the workflow's gate step, before the macOS build.
+def set_whats_new(version)
+  notes_path = File.expand_path("whats_new.txt", __dir__)
+  unless File.exist?(notes_path)
+    UI.user_error!(
+      "Missing #{notes_path} — Apple requires What's New text on every " \
+      "version after the first (issue #199)."
+    )
+  end
+  notes = File.read(notes_path).strip
+  if notes.empty?
+    UI.user_error!(
+      "#{notes_path} is empty — Apple requires What's New text on every " \
+      "version after the first (issue #199)."
+    )
+  end
+
+  app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+  UI.user_error!("No App Store Connect app found for #{APP_IDENTIFIER}.") if app.nil?
+
+  platform = Spaceship::ConnectAPI::Platform::IOS
+  app.ensure_version!(version, platform: platform)
+  editable = app.get_edit_app_store_version(platform: platform)
+  UI.user_error!("No editable App Store version for #{version}.") if editable.nil?
+
+  localizations = editable.get_app_store_version_localizations
+  target = localizations.find { |loc| loc.locale == app.primary_locale }
+  if target.nil?
+    UI.user_error!(
+      "Version #{version} has no localization for the app's primary " \
+      "locale (#{app.primary_locale}); found " \
+      "#{localizations.map(&:locale).join(', ')}."
+    )
+  end
+  target.update(attributes: { whatsNew: notes })
+  UI.success(
+    "What's New for #{version} written from whats_new.txt " \
+    "(#{target.locale})."
   )
 end

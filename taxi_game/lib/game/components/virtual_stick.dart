@@ -31,8 +31,10 @@ class StickInput {
 /// ([containsLocalPoint]) claims the whole canvas — letterbox bands
 /// included (issue #148) — so every drag on the game reaches
 /// [onDragStart], which then applies its own gates (live game, lower
-/// half, one touch at a time). Events drive everything — no position
-/// polling — exactly like the tap input it replaces.
+/// half, one owner at a time — a second lower-half landing waits and
+/// inherits the stick at the owner's lift, issue #200). Events drive
+/// everything — no position polling — exactly like the tap input it
+/// replaces.
 class VirtualStick extends PositionComponent
     with DragCallbacks, HasGameReference<TaxiGame> {
   // --- Sensitivity constants — the playtest retuning knobs (issue #29) ---
@@ -58,6 +60,16 @@ class VirtualStick extends PositionComponent
 
   int? _activePointerId;
 
+  /// The thumb waiting to inherit the stick (issue #200): the last
+  /// lower-half landing while an owner already holds it, with that
+  /// thumb's current canvas position — tracked by summed deltas in
+  /// [onDragUpdate] exactly like the owner's offset, so the handover's
+  /// fresh origin is where the waiting thumb rests, not where it first
+  /// landed. One slot: a later eligible landing replaces an earlier
+  /// one, and a thumb that lifts before the owner does empties it.
+  int? _pendingPointerId;
+  Vector2? _pendingPosition;
+
   /// Touch origin and current thumb offset, in canvas coordinates — the
   /// space the thumb physically moves in. Canvas positions are always
   /// valid; local ones go NaN when a drag leaves a component's bounds.
@@ -72,6 +84,16 @@ class VirtualStick extends PositionComponent
 
   /// True while a thumb owns the stick.
   bool get isActive => _activePointerId != null;
+
+  /// True while the ring has geometry to draw — a live origin and
+  /// offset. Kept through the released state's fade-out (issue #202) so
+  /// [render] has something to paint while the opacity drains, and
+  /// dropped by [update] once it has; the geometry exists exactly as
+  /// long as the ring could draw. For tests pinning the fade-out: the
+  /// bug's state was an opacity faithfully fading over geometry that
+  /// [release] had already thrown away.
+  @visibleForTesting
+  bool get hasGeometry => _origin != null && _knobOffset != null;
 
   /// The axes this stick is feeding the taxi right now.
   StickInput get input => _input;
@@ -151,26 +173,50 @@ class VirtualStick extends PositionComponent
     // pressed again. Every other not-live state — a terminal ending, an
     // overlay before the run — still refuses the claim.
     if (!game.isGameActive && !game.isCrashStall) return;
-    // One stick at a time — a second thumb changes nothing until the
-    // first is lifted.
-    if (isActive) return;
     // Relative stick, lower half: the origin is wherever the thumb
-    // landed, but only when it landed in thumb reach.
+    // landed, but only when it landed in thumb reach. Hoisted above the
+    // one-thumb gate (issue #200): the lower half is also the waiting
+    // room's admission test, so it has to run for a second thumb too.
     final local = game.camera.viewport.globalToLocal(event.canvasPosition);
-    if (local.y > game.camera.viewport.virtualSize.y / 2) {
-      _activePointerId = event.pointerId;
-      _origin = event.canvasPosition.clone();
-      _knobOffset = Vector2.zero();
-      _apply(StickInput.zero);
-      // A thumb that lands here has found the stick — the first real
-      // input the control hint (issue #37) was waiting for, a tap on the
-      // hint included, since the hint sits inside this same region.
-      game.onStickEngaged();
+    if (local.y <= game.camera.viewport.virtualSize.y / 2) return;
+    // The waiting room (issue #200): a second thumb used to be dropped
+    // right here, and once the owner lifted, that thumb's every update
+    // failed the pointer guard in [onDragUpdate] — the cab coasts dead
+    // until the thumb lifts and lands a third time. Now the landing is
+    // remembered with its position, and the owner's lift hands the
+    // stick straight to it. Only a lower-half landing in a claimable
+    // state reaches this far — the gates above queue nothing — and one
+    // waiting thumb is all a handover needs; while it waits, it changes
+    // nothing the old rule did not already promise.
+    if (isActive) {
+      _pendingPointerId = event.pointerId;
+      _pendingPosition = event.canvasPosition.clone();
+      return;
     }
+    _activePointerId = event.pointerId;
+    _origin = event.canvasPosition.clone();
+    _knobOffset = Vector2.zero();
+    _apply(StickInput.zero);
+    // A thumb that lands here has found the stick — the first real
+    // input the control hint (issue #37) was waiting for, a tap on the
+    // hint included, since the hint sits inside this same region.
+    game.onStickEngaged();
   }
 
   @override
   void onDragUpdate(DragUpdateEvent event) {
+    // The waiting thumb tracks too (issue #200): the handover's fresh
+    // origin must be where that thumb rests when the owner lifts, not
+    // where it landed — a still thumb emits no further updates, so an
+    // untracked wait would hand the next owner a stale landing point.
+    // Summed deltas, the owner's own issue #41 arithmetic. Tracking
+    // only: a second thumb changes nothing while the first holds — the
+    // handover, not the glide, is what feeds.
+    if (event.pointerId == _pendingPointerId &&
+        _pendingPosition != null) {
+      _pendingPosition!.add(event.canvasDelta);
+      return;
+    }
     if (event.pointerId != _activePointerId) return;
     // Track the thumb by summing deltas, never by reading
     // canvasEndPosition (issue #41): Flutter's drag dispatcher reports
@@ -199,8 +245,33 @@ class VirtualStick extends PositionComponent
   @override
   void onDragEnd(DragEndEvent event) {
     super.onDragEnd(event);
+    // The waiting thumb leaves before the owner does: its claim goes
+    // with it, so the owner's later lift cannot hand the stick to a
+    // pointer that is no longer on the screen (issue #200).
+    if (event.pointerId == _pendingPointerId) {
+      _pendingPointerId = null;
+      _pendingPosition = null;
+      return;
+    }
     if (event.pointerId != _activePointerId) return;
+    // The handover, captured before release() empties the waiting room
+    // below (issue #200): the lift is the one path that may pass the
+    // stick on. A terminal ending releases through
+    // [TaxiGame._freezePlayer] instead of here, and a waiting thumb
+    // must not inherit a dead run.
+    final nextPointer = _pendingPointerId;
+    final nextPosition = _pendingPosition;
     release();
+    if (nextPointer != null && nextPosition != null) {
+      // The new owner's claim, exactly a fresh landing's: its resting
+      // position as the origin and a zero offset — dead centre, so
+      // nothing feeds until the thumb glides — with the ring never
+      // leaving the screen the way a release-and-re-press would.
+      _activePointerId = nextPointer;
+      _origin = nextPosition.clone();
+      _knobOffset = Vector2.zero();
+      _apply(StickInput.zero);
+    }
   }
 
   /// Ends the touch and zeroes the inputs it was feeding. Also called by
@@ -209,8 +280,20 @@ class VirtualStick extends PositionComponent
   /// instead so the held thumb survives it (issue #91).
   void release() {
     _activePointerId = null;
-    _origin = null;
-    _knobOffset = null;
+    // The geometry deliberately outlives the touch (issue #202): the
+    // fade-out still has to draw the ring and knob where the thumb
+    // left them, so nulling here — as this used to — left render()
+    // nothing to paint from the instant the thumb lifted, and the
+    // 125 ms fade computed an opacity nothing consumed. Every reader
+    // of the geometry is pointer-guarded ([onDragUpdate] and [resume]
+    // both bail without an owning pointer, which release just cleared)
+    // and a fresh claim overwrites it at drag start; [update] drops it
+    // once the fade has fully emptied. The waiting room empties with
+    // the owner (issue #200): terminal endings release through here,
+    // and a waiting thumb must not inherit a dead run — nor may a
+    // later lift resurrect a pointer that stopped waiting.
+    _pendingPointerId = null;
+    _pendingPosition = null;
     _apply(StickInput.zero);
   }
 
@@ -254,6 +337,19 @@ class VirtualStick extends PositionComponent
     opacity = opacity < target
         ? math.min(target, opacity + step)
         : math.max(target, opacity - step);
+    // The end of the released fade: no thumb owns the stick and the
+    // opacity has fully drained, so the geometry release() kept for the
+    // fade has nothing left to draw — drop it here, where the fade
+    // itself ends, rather than the moment the thumb lifted. The two
+    // lifetimes stay in lockstep: [render] needs both a non-zero
+    // opacity and the geometry, and this is the one frame where the
+    // last need expires. A stick whose updates stop before then (the
+    // paused ticker) keeps its frozen opacity too — the ring is drawn
+    // at exactly the brightness it stalled at, never more.
+    if (!isActive && opacity <= 0) {
+      _origin = null;
+      _knobOffset = null;
+    }
   }
 
   @override

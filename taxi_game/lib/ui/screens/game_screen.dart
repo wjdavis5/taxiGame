@@ -347,13 +347,23 @@ class LevelCompleteOverlay extends StatelessWidget {
             // reward, so the line reads the settled payout — falling back
             // to the level's authored reward before any completion has
             // settled one.
-            Text(
-              game.lastBankedScore != null
-                  ? 'Banked: +${game.lastBankedScore} Coins'
-                  : '+${game.lastCompletionPayout ?? game.currentLevel.coinReward} Coins',
-              style: const TextStyle(
-                fontSize: 24,
-                color: Colors.yellow,
+            // The payout rides the scale-down box (issue #201), the
+            // summary panel's own payout idiom (#187) one screen over:
+            // 'Banked: +125 Coins' at 24 px is wider than the ~200 px
+            // column a 320 pt phone leaves this panel, and the bare
+            // Text wrapped the payout into two lines. One widget covers
+            // both branches, so one box carries them — whichever line
+            // the settled level earned, it stays one line.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                game.lastBankedScore != null
+                    ? 'Banked: +${game.lastBankedScore} Coins'
+                    : '+${game.lastCompletionPayout ?? game.currentLevel.coinReward} Coins',
+                style: const TextStyle(
+                  fontSize: 24,
+                  color: Colors.yellow,
+                ),
               ),
             ),
             // The run's fare-chain score (issue #12): the number a replay

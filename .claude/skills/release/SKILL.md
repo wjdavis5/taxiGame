@@ -97,7 +97,8 @@ ruby .claude/skills/release/scripts/asc.rb status
 The `asc.rb status` output is authoritative — read it rather than assuming.
 It reports every build and its processing state, the editable version and its
 state, whether a build is attached, whether a submission exists, and whether
-the listing has description, keywords, support URL, and screenshots.
+the listing has description, keywords, support URL, What's New, and
+screenshots.
 
 ### 2. Check the blockers
 
@@ -109,8 +110,12 @@ Stop and tell the user if any of these hold. Do not push through them.
   version is blocking.
 - **Working tree is dirty, or the branch is not `main`.** Releases come from
   `main`; anything else is a mistake.
-- **The listing is missing description, keywords, support URL, or
-  screenshots.** `asc.rb status` prints `*** EMPTY ***` for missing fields.
+- **The listing is missing description, keywords, support URL, What's New,
+  or screenshots.** `asc.rb status` prints `*** EMPTY ***` for missing
+  fields. An editable version's What's New is normally still empty until the
+  submit lane writes it from `fastlane/whats_new.txt` — an empty one here is
+  only a blocker if that file is also missing or empty (the release gate
+  fails the run red on that, issue #199).
 - **Screenshots do not match what the build will look like.** If UI changed
   since the screenshots were captured, they must be recaptured — a reviewer
   comparing a screenshot to the app is a real rejection path. See CLAUDE.md
@@ -147,8 +152,17 @@ in seconds instead of minutes.
 For a TestFlight-only release, skip the version edit and push whatever commits
 are pending.
 
-For a real release, edit only the marketing version in `taxi_game/pubspec.yaml`
-(`version: 1.0.1+1` — leave the `+1`, CI overrides it), then:
+For a real release, two files are the release:
+
+- Edit only the marketing version in `taxi_game/pubspec.yaml`
+  (`version: 1.0.1+1` — leave the `+1`, CI overrides it).
+- Write the release notes in `taxi_game/fastlane/whats_new.txt` — plain,
+  player-facing prose, committed with the bump. Apple requires What's New
+  text on every version after the first (issue #199); the submit lane writes
+  this file onto the version, and the release gate fails the run red before
+  the build if it is missing or empty.
+
+Then:
 
 ```bash
 git commit -am "release: 1.0.1"

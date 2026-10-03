@@ -222,8 +222,14 @@ that a release is intended — it is what makes the state check find no
 record yet.
 
 ```bash
-# Ship 1.0.1 to review: edit pubspec.yaml, then push.
+# Ship 1.0.1 to review: edit pubspec.yaml, write the release notes, then push.
 #   version: 1.0.1+1        <- the +build part is ignored; CI sets its own
+#   taxi_game/fastlane/whats_new.txt <- What's New (issue #199): Apple
+#                                       requires it on every version after
+#                                       the first; the submit lane writes it
+#                                       onto the version, and the gate fails
+#                                       red before the build if it is
+#                                       missing or empty
 git commit -am "release: 1.0.1" && git push
 ```
 

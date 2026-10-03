@@ -1,9 +1,12 @@
 import 'dart:async' show unawaited;
+import 'dart:io' show Directory, File;
 
 import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, debugPrint;
 import 'package:flutter/widgets.dart';
+import 'package:path_provider/path_provider.dart'
+    show getTemporaryDirectory;
 import 'package:provider/provider.dart';
 
 /// Audio playback for the game (issue #4), on top of `flame_audio`.
@@ -40,6 +43,27 @@ class AudioService {
   /// The engine rumble loop, driven by [setEngineRunning] and
   /// [setEngineIntensity].
   static const String engineLoop = 'sfx/engine_loop.wav';
+
+  /// The fixed folder name for the audio asset cache in the system temp
+  /// directory (issue #198).
+  ///
+  /// audioplayers' `AudioCache` mints a random UUID as its `cacheId` at
+  /// construction and copies every asset it loads into
+  /// `<tmp>/<cacheId>/<file>` — one fresh ~1 MB folder of wavs on every
+  /// launch, deleted by nothing: the app's storage use grew by the whole
+  /// audio bundle each start. [initialize] pins the shared cache's id to
+  /// this constant before anything loads, so every launch overwrites the
+  /// one folder instead of minting a new one. The name deliberately
+  /// cannot match the UUID shape [sweepAbandonedAudioCaches] hunts, so
+  /// the sweep can never take the live folder.
+  @visibleForTesting
+  static const String audioCacheId = 'cab_hustle_audio_cache';
+
+  /// The folder name shape audioplayers' per-construction `cacheId`
+  /// mints (a UUID v4). Kept beside the sweep it guards.
+  static final RegExp _uuidCacheFolderName = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+  );
 
   /// Per-sound default volumes — one-shots mixed by ear: the crash and the
   /// jingles carry, the click and the coin tuck under them.
@@ -177,6 +201,15 @@ class AudioService {
   /// sound cache. Safe to call twice; safe when no plugin exists (tests) —
   /// everything below swallows its failures.
   Future<void> initialize() async {
+    // Pin the asset cache's folder name before anything loads (issue
+    // #198). Every write into the cache reads `cacheId` at copy time —
+    // the warm below, the voice and engine players (each assigned this
+    // same AudioCache instance), and the BGM (wired to it by
+    // flame_audio) — so one assignment here makes every launch land in
+    // [audioCacheId]'s one folder instead of a fresh UUID-named one
+    // apiece. It has to be first: a load that races ahead of the pin
+    // mints the very folder this exists to prevent.
+    FlameAudio.audioCache.cacheId = audioCacheId;
     final sessionReady = _sessionReady = _applyIosAudioContext();
     await sessionReady;
     // The music never reads its position, so it must not poll for it: the
@@ -189,6 +222,48 @@ class AudioService {
       // The engine loop is warmed with the rest (issue #49): an unwarmed
       // first start also has to copy the asset into the cache.
       await FlameAudio.audioCache.loadAll([...soundFiles.values, engineLoop]);
+    } catch (_) {}
+    // Fire and forget: sweep the folders the launches before this fix
+    // minted (issue #198). Under flutter test path_provider has no
+    // plugin, so this throws and is swallowed — exactly the convention
+    // of every platform call above.
+    unawaited(() async {
+      try {
+        await sweepAbandonedAudioCaches(await getTemporaryDirectory());
+      } catch (_) {}
+    }());
+  }
+
+  /// Deletes the audio-cache folders earlier launches minted (issue
+  /// #198): every *immediate* subdirectory of [tempDir] whose name is
+  /// UUID-shaped — audioplayers' per-construction `cacheId` — and that
+  /// holds at least one `.wav` anywhere inside it (AudioCache nests by
+  /// its prefix, `sfx/…` and `music/…`, so the search is recursive while
+  /// the folder walk is not). Everything else in the temp directory is
+  /// not this service's to touch: the share sheet's `score_cards`
+  /// folder (pruned by its own code, AppDelegate.swift), the pinned
+  /// [audioCacheId] folder this launch is about to write into — its
+  /// name cannot match the UUID shape — and any loose file. Every
+  /// failure is swallowed, per the class convention: a sweep that
+  /// cannot run costs some disk, never a launch.
+  @visibleForTesting
+  static Future<void> sweepAbandonedAudioCaches(Directory tempDir) async {
+    try {
+      if (!await tempDir.exists()) return;
+      await for (final entry in tempDir.list()) {
+        if (entry is! Directory) continue;
+        // A Directory's uri ends in '/', so its path segments end in an
+        // empty one — the folder's name is the last *named* segment.
+        final name = entry.uri.pathSegments.lastWhere((s) => s.isNotEmpty);
+        if (!_uuidCacheFolderName.hasMatch(name)) continue;
+        try {
+          final holdsWav = entry
+              .listSync(recursive: true)
+              .whereType<File>()
+              .any((file) => file.path.endsWith('.wav'));
+          if (holdsWav) await entry.delete(recursive: true);
+        } catch (_) {}
+      }
     } catch (_) {}
   }
 

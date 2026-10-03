@@ -259,6 +259,25 @@ jobs:
             fi
           fi
 
+          # What's New is required on every version after the first (issue
+          # #199): Apple refuses the submission without it, the submit step
+          # carries continue-on-error (#94's interim mitigation), and the
+          # run used to stay green with the submission silently lost. Fail
+          # red here instead — before the ten-minute macOS build — and only
+          # when a submission will actually be attempted: TestFlight-only
+          # runs need no release notes.
+          if [ "$submit" = "true" ]; then
+            notes="$PROJECT_PATH/fastlane/whats_new.txt"
+            if [ ! -f "$notes" ]; then
+              echo "::error::$notes is missing — Apple requires What's New text on every version after the first (issue #199). Write the release notes and push."
+              exit 1
+            fi
+            if [ -z "$(tr -d '[:space:]' < "$notes")" ]; then
+              echo "::error::$notes is empty — Apple requires What's New text on every version after the first (issue #199)."
+              exit 1
+            fi
+          fi
+
           echo "submit=$submit" >> "$GITHUB_OUTPUT"
           echo "upload=$upload" >> "$GITHUB_OUTPUT"
 
@@ -465,7 +484,9 @@ jobs:
           set -euo pipefail
           # Waits for Apple to finish processing the build, then attaches it to
           # the version and submits. Listing metadata and screenshots are managed
-          # in App Store Connect, not here.
+          # in App Store Connect, not here; the What's New is the one write —
+          # fastlane/whats_new.txt, set onto the version by the lane before the
+          # submit (issue #199).
           fastlane ios submit
 
       - name: Remove the signing keychain

@@ -355,16 +355,26 @@ class MainMenuScreen extends StatelessWidget {
           },
         ),
         const SizedBox(height: 10),
-        Text(
-          result == null
-              ? '$dayKey \u00b7 ONE SHIFT, '
-                  'SAME FOR EVERYONE'
-              : '${result.score} PTS \u00b7 DONE FOR TODAY',
-          key: const ValueKey('daily_status'),
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
+        // The status line rides the scale-down box (issue #201), the
+        // menu title's own #187 idiom a few widgets up: the unplayed
+        // branch — '$dayKey · ONE SHIFT, SAME FOR EVERYONE' — is more
+        // type than the menu's padded column holds on a 320 pt phone,
+        // and the bare Text wrapped it under the button. The key stays
+        // on the Text itself: finders key on it, and the box around it
+        // is transparent to them.
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            result == null
+                ? '$dayKey \u00b7 ONE SHIFT, '
+                    'SAME FOR EVERYONE'
+                : '${result.score} PTS \u00b7 DONE FOR TODAY',
+            key: const ValueKey('daily_status'),
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
           ),
         ),
         if (result == null)

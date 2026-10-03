@@ -662,7 +662,8 @@ void main() {
     });
   });
 
-  group('small phones keep the summary one line everywhere (issue #187)', () {
+  group('small phones keep the summary one line everywhere (issues #187, #201)',
+      () {
     testWidgets('every headline, pill, and button label stays a single '
         'unwrapped line at every iPhone width', (tester) async {
       // On a 320 pt phone the panel's content column runs 200 px (40 px
@@ -670,12 +671,24 @@ void main() {
       // of 'Forfeited: 90 coins', a ~292 px NEW PERSONAL BEST pill, and a
       // 300 px DRIVE AGAIN button — before the fix, the titles wrapped
       // into two flush-left lines and the pill's rigid Row overflowed its
-      // yellow stripe with a flex exception. The completion panel's #159
+      // yellow stripe with a flex exception. #201 added the ghost
+      // button's label to the same column: 'RACE YOUR GHOST' wrapped
+      // inside its own button while DRIVE AGAIN, one button up, had
+      // already learned the scale-down box. The completion panel's #159
       // sweep pattern, pinned the same way: one line of ink, laid out
       // under the scale-down box's unbounded width. Ahem advances a
       // square per glyph — roughly twice Roboto — so the checks are
       // strictly conservative (the #156 garage width-sweep reasoning).
       addTearDown(tester.view.reset);
+      // The race offer needs the day's stored ghost (issue #20), so the
+      // daily panel below carries the button this sweep is pinning.
+      await gameState.recordDailyGhostRun(
+        dateKey: DailyShift.todayKey,
+        score: 500,
+        banked: true,
+        vehicleId: 'taxi_yellow',
+        samples: const [200, 0, 200, -100, 200, -200],
+      );
       final banked = endlessGame();
       final wrecked = endlessGame();
       final daily = TaxiGame(
@@ -700,8 +713,11 @@ void main() {
           ]),
           (wrecked, wreckedSummary,
               ['SHIFT OVER', 'Forfeited: 90 coins']),
-          (daily, bankedSummary,
-              ['ENDLESS SHIFT', "TODAY'S DAILY IS IN"]),
+          (daily, bankedSummary, [
+            'ENDLESS SHIFT',
+            "TODAY'S DAILY IS IN",
+            'RACE YOUR GHOST',
+          ]),
         ];
         for (final (game, summary, oneLineTexts) in panels) {
           await showPanel(tester, game, summary);
