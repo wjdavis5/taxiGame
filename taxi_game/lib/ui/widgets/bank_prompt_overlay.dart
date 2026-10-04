@@ -309,6 +309,17 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                               ),
                             ),
                             const SizedBox(height: 10),
+                            // The two choices split the panel's width,
+                            // and on a 320 pt phone each half is less
+                            // type than even a plain 'BANK 42' needs —
+                            // a four-digit stake only widens it. Both
+                            // labels ride the scale-down box (issue
+                            // #208, the menu title's #187 idiom): one
+                            // line of ink, shrunk to fit the half each
+                            // button gets. The outer panel-wide
+                            // FittedBox above cannot help here — it pins
+                            // the panel at full street width and scales
+                            // the whole card, wrap and all.
                             Row(
                               children: [
                                 Expanded(
@@ -319,13 +330,16 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                                           Colors.amber.shade700,
                                       foregroundColor: Colors.black,
                                     ),
-                                    child: Text(
-                                      'BANK ${chain.score}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontFeatures: [
-                                          FontFeature.tabularFigures()
-                                        ],
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(
+                                        'BANK ${chain.score}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontFeatures: [
+                                            FontFeature.tabularFigures()
+                                          ],
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -339,13 +353,16 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                                       side: const BorderSide(
                                           color: Colors.white54),
                                     ),
-                                    child: Text(
-                                      'PUSH ON \u00d7$nextMultiplier',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontFeatures: [
-                                          FontFeature.tabularFigures()
-                                        ],
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(
+                                        'PUSH ON \u00d7$nextMultiplier',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontFeatures: [
+                                            FontFeature.tabularFigures()
+                                          ],
+                                        ),
                                       ),
                                     ),
                                   ),

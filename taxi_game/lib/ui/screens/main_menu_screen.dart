@@ -452,11 +452,21 @@ class _MenuButton extends StatelessWidget {
         onPressed();
       },
       icon: Icon(icon, size: primary ? 34 : 32),
-      label: Text(
-        label,
-        style: TextStyle(
-          fontSize: primary ? 26 : 22,
-          fontWeight: FontWeight.bold,
+      // Every menu label rides the scale-down box (issue #208, the
+      // title's #187 idiom one screen up): on a 320 pt iPhone the
+      // button's padding and icon leave ~190 px of label slot, and the
+      // widest labels — START DRIVING, TODAY'S RESULT — wrapped into
+      // two flush-left lines there. One line of ink, shrunk to whatever
+      // fits; text finders key on the Text inside, so nothing that
+      // looks the label up notices the box.
+      label: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: primary ? 26 : 22,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
       style: ElevatedButton.styleFrom(

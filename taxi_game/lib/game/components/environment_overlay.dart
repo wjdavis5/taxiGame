@@ -39,6 +39,19 @@ class EnvironmentOverlay extends PositionComponent
   /// Radius of the always-visible pool around the taxi.
   static const double ambientRadius = 130.0;
 
+  /// Leftward drift per px of fall — the rain's slant. One number feeds
+  /// the streak's motion, the axis it is painted along, and how far
+  /// upwind (right) spawning reaches, so the three can never disagree
+  /// again. Issue #209 found them split three ways: the motion drifted
+  /// −0.12 while the draw leaned +0.12 — every streak slanting against
+  /// its own travel — and spawning covered only the viewport's width,
+  /// so the drift dragged the whole field left of the columns it
+  /// vacated and the screen's bottom-right never saw a drop.
+  static const double rainDrift = 0.12;
+
+  /// How many streaks the field keeps in flight.
+  static const int rainStreakCount = 28;
+
   /// The one shader every cut shades with: a radial falloff from 95%
   /// erase at the centre to untouched at the rim, built over the unit
   /// circle so [_cutLight] can stretch it to each oval's shape. Cached
@@ -53,8 +66,12 @@ class EnvironmentOverlay extends PositionComponent
       ],
     ).createShader(const Rect.fromLTWH(-1, -1, 2, 2));
 
-  final math.Random _random = math.Random();
-  late final List<_RainStreak> _streaks;
+  /// Reseedable, not final: [reseedRainForTest] swaps it so a test's
+  /// rain is reproducible (the game itself never reseeds).
+  math.Random _random = math.Random();
+
+  /// Reassigned wholesale by [reseedRainForTest], hence not `final`.
+  late List<_RainStreak> _streaks;
   late final Vector2 _screenSize;
 
   final Paint _layerPaint = Paint();
@@ -70,7 +87,8 @@ class EnvironmentOverlay extends PositionComponent
     // laid out in that space regardless of the physical canvas.
     _screenSize = game.camera.viewport.virtualSize.clone();
 
-    _streaks = List.generate(28, (_) => _spawnStreak(initial: true));
+    _streaks =
+        List.generate(rainStreakCount, (_) => _spawnStreak(initial: true));
   }
 
   @override
@@ -79,13 +97,17 @@ class EnvironmentOverlay extends PositionComponent
 
     if (rainIntensity <= 0) return;
 
-    // Rain falls fast and slants back with the taxi's motion; streaks
-    // recycle off the bottom back above the top.
+    // Rain falls fast and slants back with the taxi's motion: down and
+    // to the left, along the shared [rainDrift] slope the painter draws
+    // too. Streaks recycle once they have left the glass — off the
+    // bottom they exit, or off the left edge the drift carries them
+    // onto — so a streak blown off the side frees its slot immediately
+    // instead of falling the rest of the way unseen.
     for (var i = 0; i < _streaks.length; i++) {
       final s = _streaks[i];
       s.y += s.speed * dt;
-      s.x -= s.speed * 0.12 * dt;
-      if (s.y - s.length > _screenSize.y) {
+      s.x -= s.speed * rainDrift * dt;
+      if (s.y - s.length > _screenSize.y || s.x < -8) {
         _streaks[i] = _spawnStreak();
       }
     }
@@ -93,7 +115,15 @@ class EnvironmentOverlay extends PositionComponent
 
   _RainStreak _spawnStreak({bool initial = false}) {
     return _RainStreak(
-      x: 8 + _random.nextDouble() * (_screenSize.x - 16),
+      // The spawn range reaches upwind (right) past the viewport by the
+      // drift a streak accrues falling from the top of the spawn band
+      // to the bottom of the glass. Without that head start every
+      // streak arrives at the lower rows already left of the columns it
+      // vacated up top, and the screen's bottom-right goes rainless
+      // (issue #209).
+      x: 8 +
+          _random.nextDouble() *
+              (_screenSize.x - 16 + rainDrift * (_screenSize.y + 90)),
       y: initial
           ? _random.nextDouble() * _screenSize.y
           : -_random.nextDouble() * 90,
@@ -215,15 +245,34 @@ class EnvironmentOverlay extends PositionComponent
     canvas.restore();
   }
 
+  /// The streak segments [_renderRain] paints, top end first, in
+  /// viewport coordinates. Test seam (issue #209): the draw used to lean
+  /// each streak one way (+drift) while the motion drifted the other
+  /// (−drift); this exposes exactly the geometry the painter reads so a
+  /// test can pin the painted axis to the travel axis.
+  @visibleForTesting
+  List<(Offset, Offset)> get rainSegments => [
+        for (final s in _streaks) (s.topEnd, s.bottomEnd),
+      ];
+
+  /// Re-seeds the rain and respawns the whole field from the new
+  /// stream, making a test's rain exactly reproducible. A statistical
+  /// sweep cannot afford the assertion the coverage test wants: the
+  /// upwind corner of the bottom band is crossed only a handful of
+  /// times per ten seconds, so an unseeded field leaves a bin dry often
+  /// enough to flake (issue #209).
+  @visibleForTesting
+  void reseedRainForTest(int seed) {
+    _random = math.Random(seed);
+    _streaks = List.generate(
+        rainStreakCount, (_) => _spawnStreak(initial: true));
+  }
+
   void _renderRain(Canvas canvas) {
     for (final s in _streaks) {
       _streakPaint.color =
           const Color(0xFFCFE4FF).withValues(alpha: s.alpha * rainIntensity);
-      canvas.drawLine(
-        Offset(s.x, s.y - s.length),
-        Offset(s.x + s.length * 0.12, s.y),
-        _streakPaint,
-      );
+      canvas.drawLine(s.topEnd, s.bottomEnd, _streakPaint);
     }
   }
 }
@@ -242,4 +291,16 @@ class _RainStreak {
   final double length;
   final double speed;
   final double alpha;
+
+  /// The streak's trailing end — the (x, y) the update moves, one
+  /// length above the lead along the slanted axis.
+  Offset get topEnd => Offset(x, y - length);
+
+  /// The streak's leading end: down-screen and one length's drift to
+  /// the LEFT. That is the same (−[EnvironmentOverlay.rainDrift], +1)
+  /// slope the update falls along, so the painted streak leans with
+  /// its travel instead of against it (issue #209 had the draw
+  /// mirrored, leaning right while drifting left).
+  Offset get bottomEnd =>
+      Offset(x - length * EnvironmentOverlay.rainDrift, y);
 }

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -391,6 +392,58 @@ void main() {
               'not yet the wallet\'s');
       expect(find.byKey(const ValueKey('bank_prompt_bar')), findsOneWidget,
           reason: 'the window shows itself running out');
+    });
+
+    testWidgets('both choices stay one line on a 320 pt phone, plain fare '
+        'or four digits at stake (issue #208)', (tester) async {
+      // The issue's surface: the oldest iPhones still on iOS 15, where
+      // the panel's 272 px of street splits into ~117 px button halves —
+      // less type than even a plain 'BANK 42' needs at the default
+      // 14 px, so both labels wrapped into two-line buttons. The menu
+      // title's #187 idiom now: one line of ink under the scale-down
+      // box's unbounded width.
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final fare0 = EndlessCourse(seed: 42).fare(0);
+      final game = await armedGame(tester, fare0);
+      await showPrompt(tester, game);
+
+      // The choice buttons set no fontSize of their own, so Material's
+      // default label size (14) is what lays out — asserted as the
+      // literal because style!.fontSize! would null-check on a style
+      // that does not carry one. Ahem's square glyph makes it ~98 px
+      // for 'BANK 42', wider than the half-button slot even before the
+      // stake grows a digit.
+      void expectSingleLine(Finder finder, String name) {
+        expect(finder, findsOneWidget);
+        final paragraph = tester.renderObject<RenderParagraph>(finder);
+        const fontSize = 14.0;
+        expect(
+          paragraph.size.height,
+          lessThan(fontSize * 1.5),
+          reason: '$name must be a single line — two Ahem lines measure '
+              '~${(fontSize * 2).round()}',
+        );
+        expect(
+          paragraph.constraints.maxWidth,
+          equals(double.infinity),
+          reason: '$name must lay out under the FittedBox\'s unbounded '
+              'width to be wrap-proof',
+        );
+      }
+
+      expectSingleLine(find.text('BANK ${fare0.reward}'), 'the BANK label');
+      expectSingleLine(find.text('PUSH ON \u00d73'), 'the PUSH ON label');
+
+      // The four-digit stake the issue names: from 1,000 points on the
+      // BANK label is wider still, and it must stay one line too. The
+      // overlay polls the game every 100 ms, so one poll tick repaints
+      // the new price.
+      game.fareChain.score = 1000;
+      await tester.pump(const Duration(milliseconds: 150));
+      expectSingleLine(find.text('BANK 1000'), 'the four-digit BANK label');
     });
 
     testWidgets('renders nothing while no choice is open', (tester) async {

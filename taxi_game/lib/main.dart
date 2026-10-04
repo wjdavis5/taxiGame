@@ -61,7 +61,17 @@ void main() async {
   Diagnostics.instance.log('[save] loaded level='
       '${gameStateService.currentLevel}');
 
-  final audioService = AudioService();
+  // The save's Sound flag reaches the service at construction (issue
+  // #207) — the haptics seed's pattern below. Until it was seeded here,
+  // the flag only landed inside the un-awaited start-up chain's
+  // applySettings, so a menu tap in the first moments after launch —
+  // while that chain was still winding through platform calls — found
+  // the flag's `true` default and clicked with Sound turned off. Safe
+  // before initialize: setSoundEnabled only flips the flag and syncs the
+  // engine loop, and with no engine player and no engine want (nothing
+  // is on the road yet) that sync makes no platform call at all.
+  final audioService = AudioService()
+    ..setSoundEnabled(gameStateService.soundEnabled);
   // Candidate A of issue #40 + launch hygiene: never block the first
   // frame on audio I/O. Every await here is fenced inside AudioService,
   // but a platform call that HANGS (rather than throws) on a real device
@@ -70,8 +80,11 @@ void main() async {
   // frames later, imperceptibly.
   unawaited(audioService.initialize().then((_) async {
     Diagnostics.instance.log('[audio] initialized');
-    // The save's sound and music settings govern playback from the first
-    // frame (issue #4); the listener below keeps it that way live.
+    // Sound already governs from the first frame — the seed at the
+    // service's construction above (issue #207); its half of this call
+    // early-returns on the value the seed set. What starts here is
+    // music: applySettings gates the track on the save's flag (issue
+    // #4), and the listener below keeps both live.
     await audioService.applySettings(
       soundEnabled: gameStateService.soundEnabled,
       musicEnabled: gameStateService.musicEnabled,

@@ -481,6 +481,129 @@ void main() {
     });
   });
 
+  group('the rain leans with its travel and covers the glass (issue #209)',
+      () {
+    /// Rasterises only the overlay's bottom 8 rows — the same recorder
+    /// trick as the light pool tests above, translated so the band
+    /// lands at row 0. The coverage test ORs 600 frames into a mask;
+    /// reading a full 400x800 image each frame would churn ~1.2 MB a
+    /// throw for a band the streaks cross at their leading ends.
+    Future<ui.Image> rasteriseBottomBand(EnvironmentOverlay overlay) async {
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder)..translate(0, -792);
+      overlay.render(canvas);
+      return recorder.endRecording().toImage(400, 8);
+    }
+
+    test('every 8-px column of the bottom band catches rain', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final overlay =
+          game.camera.viewport.children.whereType<EnvironmentOverlay>().first;
+      // Rain and nothing else on the glass. Set directly — the run's own
+      // environment would overwrite it on the next game update, and the
+      // renderer, not the driver, is what this test judges.
+      overlay.darkness = 0;
+      overlay.fogIntensity = 0;
+      overlay.rainIntensity = 1;
+      // The field is reseeded so the whole sweep is one pinned,
+      // reproducible run: streaks drift left as they fall, which makes
+      // the bottom band's upwind (right) end the thinnest coverage in
+      // the field — an unseeded ten-second sweep leaves a bin dry often
+      // enough to flake, and hourly CI would notice.
+      overlay.reseedRainForTest(8);
+
+      // Ten seconds of rain at 60 fps, OR-ing painted alpha into a
+      // per-8-px-column mask of the band.
+      final covered = List.filled(50, false);
+      for (var frame = 0; frame < 600; frame++) {
+        overlay.update(1 / 60);
+        final image = await rasteriseBottomBand(overlay);
+        final bytes =
+            await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+        final data = bytes!.buffer.asUint8List();
+        for (var y = 0; y < 8; y++) {
+          for (var x = 0; x < 400; x++) {
+            if (data[(y * 400 + x) * 4 + 3] > 0) covered[x >> 3] = true;
+          }
+        }
+      }
+
+      // Pre-#209 the spawn range covered only the viewport's width, so
+      // the leftward drift emptied the screen's bottom-right for good —
+      // on this seed every column right of x=288 stayed dry for the
+      // full sweep. Spawn now reaches upwind of the drift, so no column
+      // can go ten seconds without a drop.
+      final dry = [
+        for (var b = 0; b < covered.length; b++)
+          if (!covered[b]) b * 8
+      ];
+      expect(dry, isEmpty,
+          reason: 'every 8-px column of the bottom band must catch rain — '
+              'columns at $dry never saw a streak');
+    });
+
+    test('each streak is painted along the axis it travels down', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final overlay =
+          game.camera.viewport.children.whereType<EnvironmentOverlay>().first;
+      overlay.darkness = 0;
+      overlay.fogIntensity = 0;
+      overlay.rainIntensity = 1;
+      overlay.reseedRainForTest(8);
+
+      final before = overlay.rainSegments;
+      overlay.update(1 / 60);
+      final after = overlay.rainSegments;
+      expect(after.length, before.length,
+          reason: 'the field keeps its size; recycling swaps in place');
+
+      var compared = 0;
+      for (var i = 0; i < before.length; i++) {
+        final (topBefore, bottomBefore) = before[i];
+        final (topAfter, bottomAfter) = after[i];
+
+        // One frame of fall translates both ends by the same vector; a
+        // streak recycled during the frame jumps to a fresh spawn
+        // instead and its two ends disagree — those are not comparable.
+        final travel = topAfter - topBefore;
+        final bottomTravel = bottomAfter - bottomBefore;
+        if ((travel.dx - bottomTravel.dx).abs() > 1e-6 ||
+            (travel.dy - bottomTravel.dy).abs() > 1e-6) {
+          continue;
+        }
+        compared++;
+
+        expect(travel.dy, greaterThan(0), reason: 'streak $i falls');
+
+        // The slant leans the way the streak moves: left. Issue #209
+        // drew every streak mirrored — drifting left, leaning right.
+        expect(travel.dx, lessThan(0),
+            reason: 'streak $i: the fall must drift left');
+        expect(bottomBefore.dx - topBefore.dx, lessThan(0),
+            reason: 'streak $i: the painted streak must lean left');
+
+        // Parallel and pointing with the travel: the painted axis's
+        // cross product with the frame's displacement is zero and their
+        // dot is positive — the streak lies along its own velocity.
+        final axis = bottomBefore - topBefore;
+        final cross = axis.dx * travel.dy - axis.dy * travel.dx;
+        expect(cross.abs(), lessThan(1e-6),
+            reason: 'streak $i: painted axis (${axis.dx}, ${axis.dy}) is '
+                'not parallel to travel (${travel.dx}, ${travel.dy})');
+        expect(axis.dx * travel.dx + axis.dy * travel.dy, greaterThan(0),
+            reason: 'streak $i: the painted axis must point down-fall');
+      }
+
+      expect(compared, greaterThan(20),
+          reason: 'the pin must span the field, not just the handful of '
+              'streaks that happened to survive the frame un-recycled');
+    });
+  });
+
   group('level mode keeps the classic street', () {
     test('no environment, dry grip, bright sky', () async {
       final game = TaxiGame(
