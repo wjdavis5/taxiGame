@@ -611,6 +611,41 @@ void main() {
       await audio.dispose();
     });
 
+    test('the seeded sound flag governs the launch window: a muted menu '
+        'tap before the un-awaited start-up lands stays silent (issue #207)',
+        () async {
+      // The bug's window: main() starts audio without awaiting it, and
+      // the save's settings reached the service only inside that chain's
+      // applySettings — so a menu tap in the first moments after launch
+      // found the sound flag's `true` default and clicked with Sound
+      // turned off. main() now seeds the flag at construction (the
+      // haptics pattern); this test replays exactly that shape with the
+      // hold above keeping initialize() parked mid-flight. It lives in
+      // this group — after the music group — deliberately: dispose()
+      // tears down the global FlameAudio.bgm player, and the #178 tests
+      // read that player's state, so any initialize()+dispose() test
+      // must run after them.
+      final hold = fake.global.hold = Completer<void>();
+
+      final audio = AudioService()..setSoundEnabled(false);
+      final initializing = audio.initialize();
+
+      // The menu-tap window: sound is off, the start-up chain is still
+      // held mid-flight, and the tap must not even reach for a player.
+      // attemptedPlays registers before any player is waited on, so an
+      // unseeded flag shows up here immediately — the click the issue
+      // heard.
+      audio.playButtonSound();
+      await untilQuiet();
+      expect(audio.attemptedPlays, isEmpty,
+          reason: 'a muted game must stay muted through launch: the '
+              'seed, not the start-up chain, owns the first frame');
+
+      hold.complete();
+      await initializing;
+      await audio.dispose();
+    });
+
     test('off iOS the session is left entirely alone', () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
       final audio = AudioService();

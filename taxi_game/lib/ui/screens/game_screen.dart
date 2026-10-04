@@ -257,12 +257,24 @@ class _GameScreenState extends State<GameScreen> {
                 style: const TextStyle(color: Colors.white),
               ),
             ),
-            // The daily's one attempt survives an abandoned run, and the
-            // player quitting mid-daily deserves to know that.
+            // The daily's one attempt survives an abandoned run — but
+            // only an abandoned one (issue #206). BANK & QUIT above
+            // settles the shift, and a settled daily records its result
+            // for the day: the attempt is spent. With a score at risk
+            // the note must say both halves, because the old blanket
+            // line read as describing the button it sat under; scoreless
+            // there is no bank on offer and quitting is the only exit,
+            // so the plain reassurance stands. The branch loses the
+            // widget's `const`, and the at-risk line centres across its
+            // two wrapped lines in the narrow panel.
             if (game.isDailyShift)
-              const Text(
-                "Today's daily attempt is saved.",
-                style: TextStyle(fontSize: 12, color: Colors.white70),
+              Text(
+                atRisk > 0
+                    ? "Quitting keeps today's daily attempt. "
+                        'Banking ends it.'
+                    : "Today's daily attempt is saved.",
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, color: Colors.white70),
               ),
           ],
         ),

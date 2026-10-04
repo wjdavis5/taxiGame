@@ -385,21 +385,43 @@ void main() {
     });
   });
 
-  testWidgets('the title and daily status stay one line at every iPhone '
-      'width (issues #187, #201)', (tester) async {
+  testWidgets('the title, daily status and button labels stay one line at '
+      'every iPhone width (issues #187, #201, #208)', (tester) async {
     // 'CAB HUSTLE' at 48 px is ~480 px of bold type, and the 280 px left
     // on a 320 pt iPhone wrapped the menu's headline into two flush-left
     // lines. #201 caught the daily block's status line doing the same:
     // the unplayed branch — '$dayKey · ONE SHIFT, SAME FOR EVERYONE' —
     // wrapped under the button, and it rides the title's scale-down box
-    // now. The completion panel's #159 sweep pattern: one line of ink,
-    // laid out under the scale-down box's unbounded width. Ahem advances
-    // a square per glyph — roughly twice Roboto — so the checks are
-    // strictly conservative (the #156 garage width-sweep reasoning).
+    // now. #208 caught the buttons themselves: the menu's widest labels
+    // — START DRIVING, ENDLESS SHIFT, DAILY SHIFT, and once the day is
+    // spent TODAY'S RESULT — wrapped too, and _MenuButton now puts every
+    // one of them in the same box. The completion panel's #159 sweep
+    // pattern: one line of ink, laid out under the scale-down box's
+    // unbounded width. Ahem advances a square per glyph — roughly twice
+    // Roboto — so the checks are strictly conservative (the #156 garage
+    // width-sweep reasoning).
     addTearDown(tester.view.reset);
     final storageService = StorageService();
     await storageService.init();
     final gameStateService = GameStateService(storageService);
+
+    void expectSingleLine(Finder finder, String name, double width) {
+      expect(finder, findsOneWidget);
+      final paragraph = tester.renderObject<RenderParagraph>(finder);
+      final fontSize = tester.widget<Text>(finder).style!.fontSize!;
+      expect(
+        paragraph.size.height,
+        lessThan(fontSize * 1.5),
+        reason: '$name must be a single line on a ${width.round()} pt '
+            'screen — two Ahem lines measure ~${(fontSize * 2).round()}',
+      );
+      expect(
+        paragraph.constraints.maxWidth,
+        equals(double.infinity),
+        reason: '$name must lay out under the FittedBox\'s unbounded '
+            'width to be wrap-proof',
+      );
+    }
 
     for (final width in [320.0, 375.0, 390.0, 393.0]) {
       tester.view.physicalSize = Size(width, 1600);
@@ -414,24 +436,33 @@ void main() {
         // and the key is what production and the other tests find it by.
         ('the daily status line',
             find.byKey(const ValueKey('daily_status'))),
+        // #208: a fresh save shows the three widest button labels —
+        // the on-ramp headline and both mode labels.
+        ('START DRIVING', find.text('START DRIVING')),
+        ('ENDLESS SHIFT', find.text('ENDLESS SHIFT')),
+        ('DAILY SHIFT', find.text('DAILY SHIFT')),
       ];
       for (final (name, finder) in labels) {
-        expect(finder, findsOneWidget);
-        final paragraph = tester.renderObject<RenderParagraph>(finder);
-        final fontSize = tester.widget<Text>(finder).style!.fontSize!;
-        expect(
-          paragraph.size.height,
-          lessThan(fontSize * 1.5),
-          reason: '$name must be a single line on a ${width.round()} pt '
-              'screen — two Ahem lines measure ~${(fontSize * 2).round()}',
-        );
-        expect(
-          paragraph.constraints.maxWidth,
-          equals(double.infinity),
-          reason: '$name must lay out under the FittedBox\'s unbounded '
-              'width to be wrap-proof',
-        );
+        expectSingleLine(finder, name, width);
       }
+    }
+
+    // The spent day (the #113 group's pumpPlayedDay setup) swaps DAILY
+    // SHIFT for the widest menu label of all, TODAY'S RESULT — the
+    // headline #208 names. Same sweep, one more label.
+    await gameStateService.recordDailyResult(DailyResult(
+      dateKey: DailyShift.todayKey,
+      score: 340,
+      banked: true,
+      completedAtMs: DateTime.now().millisecondsSinceEpoch,
+    ));
+    for (final width in [320.0, 375.0, 390.0, 393.0]) {
+      tester.view.physicalSize = Size(width, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expectSingleLine(find.text("TODAY'S RESULT"), "TODAY'S RESULT", width);
     }
   });
 }
