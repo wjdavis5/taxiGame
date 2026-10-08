@@ -34,6 +34,14 @@ platform :ios do
     # the submit.
     set_whats_new(version)
 
+    # Every submission also carries the app's differentiation statement
+    # for App Review (issue #211): Apple rejected 1.0.0 (1068) under
+    # Guideline 4.3(a) (Design - Spam) after a review that had no notes
+    # to read. The notes ride onto the version's review detail before
+    # the submit; the workflow gate refuses a submission without the
+    # file, so the two halves cannot drift apart.
+    set_review_notes(version)
+
     deliver(
       api_key: api_key,
       app_identifier: APP_IDENTIFIER,
@@ -274,5 +282,81 @@ def set_whats_new(version)
   UI.success(
     "What's New for #{version} written from whats_new.txt " \
     "(#{target.locale})."
+  )
+end
+
+# Writes the version's App Review notes from fastlane/review_notes.txt
+# (issue #211).
+#
+# Apple rejected 1.0.0 (1068) under Guideline 4.3(a) (Design - Spam) —
+# "the app shares a similar binary, metadata, and/or concept as apps
+# submitted to the App Store by other developers" — after a submission
+# that never told the reviewer what is original about this game. The
+# reviewer gets one window to form that opinion; the notes are where the
+# repo states it (code, art, and audio provenance plus the unique
+# systems) before the reviewer decides this is another look-alike taxi
+# game. The full response package is docs/app-review/2026-10-08-4.3a-response.md.
+#
+# The write rides the same primitives as `set_manual_release` and
+# `set_whats_new`: the Spaceship token `app_store_connect_api_key` has
+# already left in place, deliver's `ensure_version!` find-or-create, and
+# a write before the submit. What's New lives on the version's
+# localizations; the review notes live on the version's
+# appStoreReviewDetails record (`notes`), which deliver's submit path
+# does not write under `skip_metadata` — the same reason the release
+# type and What's New needed their own writes.
+#
+# A version whose review detail record cannot be read (none exists, or
+# the fetch answers 404) gets one created holding just the notes: every
+# version of this app has carried one since its first submission, so
+# this heals the edge rather than stranding a submission without its
+# notes. Any other fetch failure (auth, outage) fails identically on the
+# create and surfaces — swallowing it here would only hide it for one
+# call. Contact fields are App Store Connect's to carry and are
+# deliberately not guessed. The empty-file half is caught red by the
+# workflow gate before the build, before this code runs.
+def set_review_notes(version)
+  notes_path = File.expand_path("review_notes.txt", __dir__)
+  unless File.exist?(notes_path)
+    UI.user_error!(
+      "Missing #{notes_path} — every submission must carry the app's " \
+      "review notes for App Review (issue #211)."
+    )
+  end
+  notes = File.read(notes_path).strip
+  if notes.empty?
+    UI.user_error!(
+      "#{notes_path} is empty — every submission must carry the app's " \
+      "review notes for App Review (issue #211)."
+    )
+  end
+
+  app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+  UI.user_error!("No App Store Connect app found for #{APP_IDENTIFIER}.") if app.nil?
+
+  platform = Spaceship::ConnectAPI::Platform::IOS
+  app.ensure_version!(version, platform: platform)
+
+  editable = app.get_edit_app_store_version(platform: platform)
+  UI.user_error!("No editable App Store version for #{version}.") if editable.nil?
+
+  begin
+    detail = editable.fetch_app_store_review_detail
+  rescue StandardError => e
+    UI.important(
+      "No App Review detail readable for #{version} " \
+      "(#{e.class}); creating one with the notes."
+    )
+    detail = nil
+  end
+
+  if detail.nil?
+    editable.create_app_store_review_detail(attributes: { notes: notes })
+  else
+    detail.update(attributes: { notes: notes })
+  end
+  UI.success(
+    "Review notes for #{version} written from review_notes.txt " \
+    "(#{notes.length} chars)."
   )
 end
