@@ -164,6 +164,14 @@ For a real release, two files are the release:
   the release gate fails the run red before the build if it is missing or
   empty.
 
+`taxi_game/fastlane/review_notes.txt` is not edited every release, but no
+submission may go out without it: the submit lane writes it onto the
+version's App Review Information (the 4.3(a) guard, issue #211 — Apple
+rejected 1.0.0/1068 as spam after a review with no notes to read), and the
+release gate fails the run red before the build when a submission would go
+out without it. If what makes the game unique changes, update the notes in
+the release commit.
+
 Then:
 
 ```bash
@@ -280,6 +288,10 @@ Tell the user, concretely:
   not submit and cannot, until someone resolves the rejection or removes
   the submission in App Store Connect — then the next push submits by
   itself.
+- **A submission run fails red with "review_notes.txt is missing/empty"** —
+  the 4.3(a) guard (issue #211): every App Store submission must carry the
+  app's differentiation notes for App Review. Restore or rewrite
+  `taxi_game/fastlane/review_notes.txt` and push; the next run submits.
 - **The state query itself fails** (`ruby tools/asc_version_state.rb` exits
   non-zero) — the run fails loudly instead of guessing TestFlight-only.
   Read the log: an HTTP code means an App Store Connect outage (a re-run

@@ -1,0 +1,25 @@
+Cab Hustle is an independently developed arcade game, written from scratch
+in Dart for Flutter and the Flame engine. Everything in the app is original
+to this project: the code, the top-down sprite art drawn for this game, and
+the audio (CC0-licensed packs listed in the app's bundled license
+inventory, plus sounds synthesized in this repository). It is built on no
+third-party app template and shares no assets or code with any other app.
+
+It shares a genre - one-thumb driving - with other games, so here is what
+makes it its own game, visible from the first session:
+
+- Daily Shift: one course per day, the same for every player, with a ghost
+  of your best attempt to race; the once-a-day attempt and its result are
+  saved on-device.
+- Endless Shift: a run with three-strike lives that only ends when a third
+  crash forfeits whatever is unbanked; at every dropoff you bank the fare
+  chain or push on for more.
+- A near-miss economy: shaving past traffic pays, so precision driving -
+  not distance - is what scores.
+- Vehicles differ on real handling axes (top speed, acceleration,
+  steering, body size), unlocked through a garage progression, with
+  records, lifetime stats, and achievements.
+
+There is no account, no network traffic, no ads, no in-app purchases, and
+no tracking; all progress lives on the device. We are glad to answer
+anything else App Review needs.

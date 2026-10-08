@@ -23,6 +23,13 @@ name: iOS Release
 #     logged the version as unchanged and shipped TestFlight only forever
 #     (issue #89).
 #
+# Every submission also carries the app's differentiation notes for App
+# Review — taxi_game/fastlane/review_notes.txt, written onto the version by
+# the lane (issue #211). Apple rejected 1.0.0 (1068) under Guideline 4.3(a)
+# (Design - Spam) after a review that had no notes to read; a run that would
+# submit now fails red before the build when the file is missing or empty,
+# and the notes travel with every future submission.
+#
 # Required repository secrets (Settings -> Secrets and variables -> Actions):
 #   ASC_KEY_ID                  App Store Connect API key ID
 #   ASC_ISSUER_ID               App Store Connect API issuer ID
@@ -278,6 +285,25 @@ jobs:
             fi
           fi
 
+          # Every submission also carries the app's review notes for App
+          # Review (issue #211): Apple rejected 1.0.0 (1068) under Guideline
+          # 4.3(a) (Design - Spam) after a review that had no notes to read,
+          # so a run that would submit now fails red here — before the macOS
+          # build — when fastlane/review_notes.txt is missing or empty. The
+          # lane writes the file onto the version's App Review Information
+          # (set_review_notes); TestFlight-only runs need no review notes.
+          if [ "$submit" = "true" ]; then
+            review_notes="$PROJECT_PATH/fastlane/review_notes.txt"
+            if [ ! -f "$review_notes" ]; then
+              echo "::error::fastlane/review_notes.txt is missing — no App Store submission may go out without the app's review notes for App Review (issue #211, the 4.3(a) guard). Write the file and push."
+              exit 1
+            fi
+            if [ -z "$(tr -d '[:space:]' < "$review_notes")" ]; then
+              echo "::error::fastlane/review_notes.txt is empty — no App Store submission may go out without the app's review notes for App Review (issue #211, the 4.3(a) guard). Write the file and push."
+              exit 1
+            fi
+          fi
+
           echo "submit=$submit" >> "$GITHUB_OUTPUT"
           echo "upload=$upload" >> "$GITHUB_OUTPUT"
 
@@ -484,9 +510,10 @@ jobs:
           set -euo pipefail
           # Waits for Apple to finish processing the build, then attaches it to
           # the version and submits. Listing metadata and screenshots are managed
-          # in App Store Connect, not here; the What's New is the one write —
-          # fastlane/whats_new.txt, set onto the version by the lane before the
-          # submit (issue #199).
+          # in App Store Connect, not here; the two writes are the What's New —
+          # fastlane/whats_new.txt, issue #199 — and the App Review notes —
+          # fastlane/review_notes.txt, issue #211, the 4.3(a) guard — both set
+          # onto the version by the lane before the submit.
           fastlane ios submit
 
       - name: Remove the signing keychain
