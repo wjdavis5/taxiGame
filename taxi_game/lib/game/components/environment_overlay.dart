@@ -79,6 +79,18 @@ class EnvironmentOverlay extends PositionComponent
     ..strokeWidth = 1.6
     ..strokeCap = StrokeCap.round;
 
+  /// The viewport card every layer paints over (issue #255): the virtual
+  /// size is fixed (400x800), so the rect and its conversions are built
+  /// once instead of per layer per frame.
+  late final Rect _screenRect = Offset.zero & _screenSize.toSize();
+
+  /// The overlay paints, cached as fields (issue #255) and re-tinted by
+  /// writing [Paint.color] per frame with the same value the per-frame
+  /// constructor used to carry: a property write, never an allocation.
+  final Paint _fogPaint = Paint()..style = PaintingStyle.fill;
+  final Paint _darkPaint = Paint()..style = PaintingStyle.fill;
+  final Paint _glowPaint = Paint()..blendMode = BlendMode.plus;
+
   @override
   void onLoad() {
     super.onLoad();
@@ -135,8 +147,19 @@ class EnvironmentOverlay extends PositionComponent
 
   @override
   void render(Canvas canvas) {
-    if (fogIntensity > 0) _renderFog(canvas);
-    if (darkness > 0) _renderDarkness(canvas);
+    // The taxi's screen position is projected once for whichever of fog
+    // and darkness is active (issue #255); they used to read it again
+    // each. The two layers cannot be merged into one saveLayer: the
+    // darkness pass punches its headlight hole with `dstOut`, which in a
+    // shared layer would also erase the fog tint beneath it (the two
+    // layers' cut ovals overlap around the cab), and its additive glow
+    // would add inside the layer instead of onto the composited fog.
+    // Keeping two layers keeps the composite byte-for-byte; the paints
+    // they paint with are now cached fields.
+    final player =
+        fogIntensity > 0 || darkness > 0 ? _playerScreenPos() : null;
+    if (fogIntensity > 0) _renderFog(canvas, player!);
+    if (darkness > 0) _renderDarkness(canvas, player!);
     if (rainIntensity > 0) _renderRain(canvas);
   }
 
@@ -155,22 +178,13 @@ class EnvironmentOverlay extends PositionComponent
     );
   }
 
-  void _renderDarkness(Canvas canvas) {
-    final player = _playerScreenPos();
-
-    canvas.saveLayer(
-      Offset.zero & _screenSize.toSize(),
-      _layerPaint,
-    );
+  void _renderDarkness(Canvas canvas, Offset player) {
+    canvas.saveLayer(_screenRect, _layerPaint);
 
     // Night tint over everything the viewport shows.
-    canvas.drawRect(
-      Offset.zero & _screenSize.toSize(),
-      Paint()
-        ..color = const Color(0xFF050A18)
-            .withValues(alpha: 0.62 * darkness)
-        ..style = PaintingStyle.fill,
-    );
+    _darkPaint.color = const Color(0xFF050A18)
+        .withValues(alpha: 0.62 * darkness);
+    canvas.drawRect(_screenRect, _darkPaint);
 
     // Punch the headlight throw back out: a long soft ellipse ahead of
     // the taxi plus an ambient pool around it.
@@ -185,13 +199,12 @@ class EnvironmentOverlay extends PositionComponent
 
     // A warm additive glow so the light reads as light, not just as
     // visible road.
+    _glowPaint.color = const Color(0xFFFFE9B0)
+        .withValues(alpha: 0.10 * darkness);
     canvas.drawCircle(
       Offset(player.dx, player.dy - headlightReach * 0.45),
       60,
-      Paint()
-        ..color = const Color(0xFFFFE9B0)
-            .withValues(alpha: 0.10 * darkness)
-        ..blendMode = BlendMode.plus,
+      _glowPaint,
     );
 
     canvas.restore();
@@ -220,20 +233,11 @@ class EnvironmentOverlay extends PositionComponent
     canvas.restore();
   }
 
-  void _renderFog(Canvas canvas) {
-    final player = _playerScreenPos();
-
-    canvas.saveLayer(
-      Offset.zero & _screenSize.toSize(),
-      _layerPaint,
-    );
-    canvas.drawRect(
-      Offset.zero & _screenSize.toSize(),
-      Paint()
-        ..color = const Color(0xFFB8BEC6).withValues(alpha: 0.55 *
-            fogIntensity)
-        ..style = PaintingStyle.fill,
-    );
+  void _renderFog(Canvas canvas, Offset player) {
+    canvas.saveLayer(_screenRect, _layerPaint);
+    _fogPaint.color = const Color(0xFFB8BEC6)
+        .withValues(alpha: 0.55 * fogIntensity);
+    canvas.drawRect(_screenRect, _fogPaint);
 
     // The air around the cab is clearer — a soft bubble of sight.
     _cutLight(canvas, player, const Size.square(ambientRadius * 1.15));
