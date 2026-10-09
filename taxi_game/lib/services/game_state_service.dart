@@ -8,6 +8,7 @@ import '../models/personal_bests.dart';
 import '../models/run_record.dart';
 import '../models/run_stats.dart';
 import '../models/save_data.dart';
+import 'diagnostics.dart';
 import 'storage_service.dart';
 
 /// Manages global game state and notifies listeners of changes
@@ -515,10 +516,28 @@ class GameStateService extends ChangeNotifier {
   /// used to be fire-and-forget, all issued at once, so a kill (or one
   /// failed remove) inside the flush window left the default save beside
   /// the old run history, daily results, and ghost — exactly the
-  /// inconsistency the corrupt-load path of #218 removed. Awaiting the
-  /// clears before the save means every point the process can die
-  /// between leaves records and save describing the same wipe.
+  /// inconsistency the corrupt-load path of #218 removed. Ordering alone
+  /// was still not enough: a clear whose both attempts failed was
+  /// swallowed, and the reset wrote the fresh save anyway, recreating the
+  /// same split state. The clears therefore run first and report their
+  /// outcome ([StorageService]'s clear methods answer whether the remove
+  /// landed); a terminal failure abandons the reset around the old,
+  /// coherent save instead of writing a fresh one beside dead records.
   Future<void> resetProgress() async {
+    // The wipe reaches storage first, in order, and gates everything
+    // below: the first clear that reports failure stops the reset before
+    // any state changes, leaving the remaining records untouched rather
+    // than half-wiped.
+    if (!await _storageService.clearRunHistory() ||
+        !await _storageService.clearDailyHistory() ||
+        !await _storageService.clearDailyGhost()) {
+      Diagnostics.instance.logError(
+        'reset',
+        StateError('reset abandoned: a records clear did not land'),
+        StackTrace.current,
+      );
+      return;
+    }
     // Settings are preference, not progress (issue #83): the whole
     // Settings block — the three toggles and both volumes — rides over
     // to the fresh save, not just the booleans a bug report names. A
@@ -550,11 +569,8 @@ class GameStateService extends ChangeNotifier {
     // with the save that earned it.
     _pendingAchievementUnlocks.clear();
     notifyListeners();
-    // The wipe reaches storage first, in order, and only then does the
-    // fresh save land (issue #232).
-    await _storageService.clearRunHistory();
-    await _storageService.clearDailyHistory();
-    await _storageService.clearDailyGhost();
+    // The wipe has fully landed; only now does the fresh save follow
+    // (issue #232).
     await save();
   }
 }

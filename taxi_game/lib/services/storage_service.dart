@@ -50,7 +50,10 @@ class StorageService {
   Future<void> get pendingWrites => _writeTail;
 
   /// Runs one persistence operation, retrying once on failure and landing
-  /// a terminal failure in the diagnostics tail (issue #230).
+  /// a terminal failure in the diagnostics tail (issue #230). Returns
+  /// whether the operation reached the platform — `false` after both
+  /// attempts fail — so a caller that must react to a failed wipe (the
+  /// reset, issue #232) can; ordinary savers ignore the answer.
   ///
   /// The mutators on [GameStateService] are fire-and-forget — they redraw
   /// first and save after — so before this guard a refused or throwing
@@ -63,14 +66,14 @@ class StorageService {
   /// The operation is appended to [_writeTail] and only starts when the
   /// previous one — attempts, retry, and all — has settled, so operations
   /// land in issue order no matter how slow a retry is.
-  Future<void> _write(String what, Future<bool> Function() write) {
+  Future<bool> _write(String what, Future<bool> Function() write) {
     final operation = _writeTail.then((_) => _attemptWrite(what, write));
     _writeTail = operation.then<void>((_) {}, onError: (_) {});
     return operation;
   }
 
   /// The one attempt-then-retry body of [_write].
-  Future<void> _attemptWrite(
+  Future<bool> _attemptWrite(
     String what,
     Future<bool> Function() write,
   ) async {
@@ -78,7 +81,7 @@ class StorageService {
     StackTrace? stack;
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
-        if (await write()) return;
+        if (await write()) return true;
         // `false` is the platform refusing the write — the same failure
         // class as a throw, and worth the same one retry.
         error = StateError('"$what" write was refused');
@@ -88,6 +91,7 @@ class StorageService {
       }
     }
     Diagnostics.instance.logError('storage', error!, stack);
+    return false;
   }
 
   /// Save game data
@@ -141,10 +145,11 @@ class StorageService {
     }
   }
 
-  /// Wipe the ended-shift history.
-  Future<void> clearRunHistory() async {
-    await _write('run history', () => _prefs.remove(runHistoryKey));
-  }
+  /// Wipe the ended-shift history. Returns whether the remove landed
+  /// (issue #232): the reset refuses to write its fresh save beside a
+  /// history it could not clear.
+  Future<bool> clearRunHistory() =>
+      _write('run history', () => _prefs.remove(runHistoryKey));
 
   /// Persist the completed Daily Shift history (issue #19), oldest first.
   Future<void> saveDailyHistory(List<DailyResult> results) async {
@@ -173,10 +178,10 @@ class StorageService {
     }
   }
 
-  /// Wipe the completed Daily Shift history.
-  Future<void> clearDailyHistory() async {
-    await _write('daily history', () => _prefs.remove(dailyHistoryKey));
-  }
+  /// Wipe the completed Daily Shift history. Returns whether the remove
+  /// landed, like [clearRunHistory] (issue #232).
+  Future<bool> clearDailyHistory() =>
+      _write('daily history', () => _prefs.remove(dailyHistoryKey));
 
   /// Persist the Daily Shift ghost trace (issue #20) — the single stored
   /// trace, whichever day it belongs to.
@@ -201,10 +206,10 @@ class StorageService {
     }
   }
 
-  /// Wipe the Daily Shift ghost trace.
-  Future<void> clearDailyGhost() async {
-    await _write('daily ghost', () => _prefs.remove(dailyGhostKey));
-  }
+  /// Wipe the Daily Shift ghost trace. Returns whether the remove landed,
+  /// like [clearRunHistory] (issue #232).
+  Future<bool> clearDailyGhost() =>
+      _write('daily ghost', () => _prefs.remove(dailyGhostKey));
 
   /// Clear all saved data
   Future<void> clearData() async {

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/models/ghost_trace.dart';
 import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/models/save_data.dart';
+import 'package:taxi_game/services/diagnostics.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
@@ -171,6 +172,49 @@ void main() {
       final storedSave = await fakeStorage.loadSaveData();
       expect(storedSave!.totalCoins, 0);
       expect(storedSave.currentLevel, 1);
+    });
+
+    test('a clear that cannot land abandons the reset (issue #232)', () async {
+      // Throwing the clears alone is not enough: the terminal failure was
+      // swallowed, so the reset still wrote the fresh save beside the
+      // records it could not remove — a default save next to the old
+      // history, the exact split state #218 removed for a corrupt save.
+      // A clear that reports failure must stop the reset before memory
+      // changes and before the fresh save lands.
+      final store = installFailingPrefsStore();
+      final fakeStorage = StorageService();
+      await fakeStorage.init();
+      final service = GameStateService(fakeStorage);
+      await service.loadSaveData();
+      service.addCoins(30);
+      await service.save();
+      final saveWritesBefore = store.writtenKeys
+          .where((k) => k == 'flutter.${StorageService.saveDataKey}')
+          .length;
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      // Every remove attempt is refused — both attempts of the first
+      // clear, and of any clear that follows.
+      store.throwOnRemoves = 6;
+
+      await service.resetProgress();
+
+      expect(Diagnostics.instance.export(), contains('[error:reset]'),
+          reason: 'an abandoned reset is recorded, not silent');
+      // The old save survives on disk...
+      final stored = await fakeStorage.loadSaveData();
+      expect(stored!.totalCoins, 30);
+      // ... no fresh save was written over it...
+      expect(
+        store.writtenKeys
+            .where((k) => k == 'flutter.${StorageService.saveDataKey}')
+            .length,
+        saveWritesBefore,
+        reason: 'the fresh save must not land when a clear failed',
+      );
+      // ... and memory still holds the old save, coherent with disk.
+      expect(service.totalCoins, 30);
     });
   });
 
