@@ -5,6 +5,8 @@ import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
+import 'helpers/fake_prefs_store.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -61,6 +63,37 @@ void main() {
     expect(gameStateService.unlockVehicle('sport_taxi', 50), isFalse);
     expect(gameStateService.totalCoins, 0);
     expect(gameStateService.unlockedVehicles, isNot(contains('sport_taxi')));
+  });
+
+  test('the spend and the unlock ride a single save (issue #230)', () async {
+    // The old path saved the spend inside spendCoins and the unlock after
+    // it: two flushes, either of which the OS could complete alone. One
+    // save carries both sides now. Cars 2 and 4 are unlocked first so the
+    // measured purchase earns no achievement — the cars_2/cars_4 awards
+    // carry their own save and would muddy the count.
+    final store = installFailingPrefsStore();
+    final storage = StorageService();
+    await storage.init();
+    final service = GameStateService(storage);
+    await service.loadSaveData();
+
+    service.addCoins(100000);
+    for (final id in ['compact_red', 'sedan_blue', 'minivan_gray']) {
+      expect(service.unlockVehicle(id, VehicleCatalog.byId(id)!.price),
+          isTrue);
+    }
+    store.writtenKeys.clear();
+
+    expect(
+      service.unlockVehicle('suv_green', VehicleCatalog.byId('suv_green')!.price),
+      isTrue,
+    );
+    expect(
+      store.writtenKeys
+          .where((k) => k == 'flutter.${StorageService.saveDataKey}'),
+      hasLength(1),
+      reason: 'the spend and unlock are one transaction, so one save',
+    );
   });
 
   test('unlocked and selected vehicles survive a reload', () async {

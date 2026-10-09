@@ -4,6 +4,7 @@ import '../models/daily_result.dart';
 import '../models/ghost_trace.dart';
 import '../models/run_record.dart';
 import '../models/save_data.dart';
+import 'diagnostics.dart';
 
 /// Handles persistent storage of game data
 class StorageService {
@@ -30,10 +31,40 @@ class StorageService {
     _prefs = await SharedPreferences.getInstance();
   }
 
+  /// Runs one persistence operation, retrying once on failure and landing
+  /// a terminal failure in the diagnostics tail (issue #230).
+  ///
+  /// The mutators on [GameStateService] are fire-and-forget — they redraw
+  /// first and save after — so before this guard a refused or throwing
+  /// write left only an unhandled-error line, or nothing at all when the
+  /// platform answered `false`: the player kept coins, purchases, and PBs
+  /// that were not on disk. A retry covers the flaky-transient case; the
+  /// log covers the rest, and not throwing keeps a storage failure from
+  /// riding a UI callback out as an uncaught async error.
+  Future<void> _write(String what, Future<bool> Function() write) async {
+    Object? error;
+    StackTrace? stack;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (await write()) return;
+        // `false` is the platform refusing the write — the same failure
+        // class as a throw, and worth the same one retry.
+        error = StateError('"$what" write was refused');
+      } catch (e, s) {
+        error = e;
+        stack = s;
+      }
+    }
+    Diagnostics.instance.logError('storage', error!, stack);
+  }
+
   /// Save game data
   Future<void> saveSaveData(SaveData data) async {
     final jsonString = jsonEncode(data.toJson());
-    await _prefs.setString(saveDataKey, jsonString);
+    await _write(
+      'save data',
+      () => _prefs.setString(saveDataKey, jsonString),
+    );
   }
 
   /// Load game data
@@ -55,7 +86,10 @@ class StorageService {
   Future<void> saveRunHistory(List<RunRecord> runs) async {
     final jsonString =
         jsonEncode(runs.map((record) => record.toJson()).toList());
-    await _prefs.setString(runHistoryKey, jsonString);
+    await _write(
+      'run history',
+      () => _prefs.setString(runHistoryKey, jsonString),
+    );
   }
 
   /// Load the ended-shift history, oldest first. Null when none was ever
@@ -77,14 +111,17 @@ class StorageService {
 
   /// Wipe the ended-shift history.
   Future<void> clearRunHistory() async {
-    await _prefs.remove(runHistoryKey);
+    await _write('run history', () => _prefs.remove(runHistoryKey));
   }
 
   /// Persist the completed Daily Shift history (issue #19), oldest first.
   Future<void> saveDailyHistory(List<DailyResult> results) async {
     final jsonString =
         jsonEncode(results.map((result) => result.toJson()).toList());
-    await _prefs.setString(dailyHistoryKey, jsonString);
+    await _write(
+      'daily history',
+      () => _prefs.setString(dailyHistoryKey, jsonString),
+    );
   }
 
   /// Load the completed Daily Shift history, oldest first. Null when none
@@ -106,13 +143,16 @@ class StorageService {
 
   /// Wipe the completed Daily Shift history.
   Future<void> clearDailyHistory() async {
-    await _prefs.remove(dailyHistoryKey);
+    await _write('daily history', () => _prefs.remove(dailyHistoryKey));
   }
 
   /// Persist the Daily Shift ghost trace (issue #20) — the single stored
   /// trace, whichever day it belongs to.
   Future<void> saveDailyGhost(GhostTrace trace) async {
-    await _prefs.setString(dailyGhostKey, jsonEncode(trace.toJson()));
+    await _write(
+      'daily ghost',
+      () => _prefs.setString(dailyGhostKey, jsonEncode(trace.toJson())),
+    );
   }
 
   /// Load the Daily Shift ghost trace, or null when none was ever
@@ -131,12 +171,12 @@ class StorageService {
 
   /// Wipe the Daily Shift ghost trace.
   Future<void> clearDailyGhost() async {
-    await _prefs.remove(dailyGhostKey);
+    await _write('daily ghost', () => _prefs.remove(dailyGhostKey));
   }
 
   /// Clear all saved data
   Future<void> clearData() async {
-    await _prefs.remove(saveDataKey);
+    await _write('save data', () => _prefs.remove(saveDataKey));
   }
 
   /// Check if save data exists

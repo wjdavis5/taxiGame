@@ -421,17 +421,21 @@ class GameStateService extends ChangeNotifier {
     // — charged the same car twice, permanently. A repeat call now costs
     // nothing and reports true, the purchase it repeats.
     if (_saveData.unlockedVehicles.contains(vehicleId)) return true;
-    if (spendCoins(cost)) {
-      _saveData.unlockedVehicles.add(vehicleId);
-      notifyListeners();
-      save();
-      // The garage is a gameplay event too (issue #21): cars-collected
-      // achievements are evaluated the moment the fleet grows, so the
-      // purchase that earned one can announce it.
-      _evaluateAchievements();
-      return true;
-    }
-    return false;
+    if (_saveData.totalCoins < cost) return false;
+    // The spend and the unlock are one transaction (issue #230): the old
+    // path saved the spend through [spendCoins] and then the unlock in a
+    // second save, so a kill between the two flushed writes could land
+    // the charge without the car. Mutate both, then save once.
+    _saveData.totalCoins -= cost;
+    _saveData.unlockedVehicles.add(vehicleId);
+    notifyListeners();
+    // The garage is a gameplay event too (issue #21): cars-collected
+    // achievements are evaluated the moment the fleet grows, so the
+    // purchase that earned one can announce it — and the award (if any)
+    // rides this save rather than a second one.
+    _evaluateAchievements();
+    save();
+    return true;
   }
   
   /// Select a vehicle
