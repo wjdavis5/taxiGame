@@ -39,8 +39,6 @@ Future<void> lockOrientation() {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await lockOrientation();
-
   // Telemetry begins before anything can go wrong: the previous
   // session's tail is on disk, and from here every debugPrint, framework
   // error, and uncaught exception lands in the ring buffer (and back on
@@ -52,12 +50,50 @@ void main() async {
       'mode=${kReleaseMode ? 'release' : 'debug'} '
       'platform=${defaultTargetPlatform.name}');
 
-  // Initialize services
-  final storageService = StorageService();
-  await storageService.init();
+  await startApp();
+}
 
-  final gameStateService = GameStateService(storageService);
-  await gameStateService.loadSaveData();
+/// Boots the service graph and starts the app.
+///
+/// Extracted from [main] so tests can exercise each startup failure
+/// (issue #231). Every await here used to be unguarded before `runApp`:
+/// a storage or orientation failure aborted `main()` before any UI was
+/// mounted, leaving the launch storyboard on screen forever — a softlock
+/// recoverable only by reinstall, with the error recorded in a ring the
+/// player could never reach.
+@visibleForTesting
+Future<void> startApp({
+  StorageService Function() storageFactory = StorageService.new,
+}) async {
+  // Orientation is presentation, not a reason to softlock: a refused
+  // lock is logged and startup carries on with the platform default.
+  try {
+    await lockOrientation();
+  } catch (error, stack) {
+    Diagnostics.instance.logError('orientation', error, stack);
+  }
+
+  // The save is the one thing the game cannot quietly pretend about: a
+  // defaults-only session would play on and throw the mismatched
+  // progress away without telling anyone. A storage failure gets the
+  // honest error surface instead, with a retry.
+  final StorageService storageService;
+  final GameStateService gameStateService;
+  try {
+    storageService = storageFactory();
+    await storageService.init();
+
+    gameStateService = GameStateService(storageService);
+    await gameStateService.loadSaveData();
+  } catch (error, stack) {
+    Diagnostics.instance.logError('startup', error, stack);
+    // The retry keeps the boot's own storage factory, so a test-injected
+    // store recovers the same way the production one would.
+    runApp(StartupFailureApp(
+      onRetry: () => startApp(storageFactory: storageFactory),
+    ));
+    return;
+  }
   Diagnostics.instance.log('[save] loaded level='
       '${gameStateService.currentLevel}');
 
@@ -153,6 +189,82 @@ class TaxiGameApp extends StatelessWidget {
       ),
       debugShowCheckedModeBanner: false,
       home: const MainMenuScreen(),
+    );
+  }
+}
+
+/// The launch surface for a boot that could not open its storage (issue
+/// #231): a real screen — with the retry that a transient failure
+/// deserves — instead of the frozen launch storyboard the old unguarded
+/// awaits left behind. The failure itself is already in the diagnostics
+/// tail for support.
+class StartupFailureApp extends StatefulWidget {
+  const StartupFailureApp({super.key, required this.onRetry});
+
+  /// Runs the boot again; on success it replaces this app with the game.
+  final Future<void> Function() onRetry;
+
+  @override
+  State<StartupFailureApp> createState() => _StartupFailureAppState();
+}
+
+class _StartupFailureAppState extends State<StartupFailureApp> {
+  bool _retrying = false;
+
+  Future<void> _retry() async {
+    if (_retrying) return;
+    setState(() => _retrying = true);
+    // A retry that succeeds replaces this app from the root; one that
+    // fails builds a fresh failure app. Either way this state is gone.
+    await widget.onRetry();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.yellow),
+      ),
+      home: Scaffold(
+        backgroundColor: const Color(0xFF1A1A1A),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.local_taxi, size: 64, color: Colors.amber),
+                const SizedBox(height: 20),
+                const Text(
+                  "Cab Hustle couldn't start",
+                  key: Key('startup_failure_title'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Your saved progress could not be opened. Try again — if '
+                  'this keeps happening, reinstall the app.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14, color: Colors.white70),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  key: const Key('startup_failure_retry'),
+                  onPressed: _retrying ? null : _retry,
+                  child: const Text('TRY AGAIN'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
