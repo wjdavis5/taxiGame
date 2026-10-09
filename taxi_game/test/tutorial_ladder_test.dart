@@ -654,6 +654,141 @@ void main() {
     });
   });
 
+  group('the completion path never reads the level probe (issue #229)', () {
+    /// A mounted-able game whose loader is [loader], with the overlay
+    /// stand-ins a headless game needs.
+    TaxiGame probeGame(GameStateService state, LevelLoaderService loader) =>
+        TaxiGame(levelLoader: loader, gameState: state)
+          ..overlays
+              .addEntry('levelComplete', (_, __) => const SizedBox.shrink())
+          ..overlays
+              .addEntry('levelFailed', (_, __) => const SizedBox.shrink())
+          ..overlays
+              .addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
+          ..overlays
+              .addEntry('shiftBanked', (_, __) => const SizedBox.shrink());
+
+    /// Answers every existence probe `false` — a manifest that lost the
+    /// level list — while the loads themselves work. The completion path
+    /// must not consult it: inside the ladder a declared rung is missing
+    /// only as a load failure, which surfaces.
+    TaxiGame deadProbeGame(GameStateService state) =>
+        probeGame(state, _DeadProbeLevelLoader());
+
+    /// Rides the graduation rung to completion: every fare boarded, the
+    /// mid-route bank choice resolved with PUSH ON.
+    Future<void> rideGraduationToCompletion(TaxiGame game) async {
+      final level = game.currentLevel;
+      for (final pickup in level.pickupPoints) {
+        game.player.position = Vector2(pickup.x, pickup.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+      for (var i = 0; i < level.dropoffPoints.length; i++) {
+        if (i == 1) game.pushOn();
+        final dropoff = level.dropoffPoints[i];
+        game.player.position = Vector2(dropoff.x, dropoff.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+    }
+
+    test('a dead probe cannot hide the next rung mid-ladder', () async {
+      final game = await mountGame(deadProbeGame(await gameStateAtLevel(1)));
+      expect(game.hasNextLevel, isTrue,
+          reason: 'rung 2 is declared by the ladder, not by a probe');
+
+      await tickAndSettle(game);
+      final level = game.currentLevel;
+      await rideTo(game, level.pickupPoints.first, level.dropoffPoints.first);
+
+      expect(game.overlays.isActive('levelComplete'), isTrue);
+      expect(game.gameState.currentLevel, 2);
+      expect(game.gameState.tutorialComplete, isFalse);
+      expect(game.isEndless, isFalse,
+          reason: 'an inner rung must never silently hand off to Endless');
+
+      // NEXT LEVEL advances through the real load, probe or no probe.
+      expect(await game.startNextLevel(), isTrue);
+      expect(game.currentLevelNumber, 2);
+      expect(game.isEndless, isFalse);
+    });
+
+    test('a declared next rung that cannot be read surfaces from the advance',
+        () async {
+      final game = await mountGame(
+        probeGame(await gameStateAtLevel(1), _RungOneOnlyLoader()),
+      );
+      await tickAndSettle(game);
+      final level = game.currentLevel;
+      await rideTo(game, level.pickupPoints.first, level.dropoffPoints.first);
+      expect(game.overlays.isActive('levelComplete'), isTrue);
+
+      // The load, not the probe, is the authority: rung 2 is declared,
+      // so its failure throws instead of dead-ending the button or
+      // starting a shift the save never earned.
+      await expectLater(
+        game.startNextLevel(),
+        throwsA(isA<LevelLoadException>()),
+      );
+      expect(game.isEndless, isFalse);
+    });
+
+    testWidgets('the final rung with a dead probe still reaches Endless',
+        (tester) async {
+      final game = (await tester.runAsync<TaxiGame>(() async {
+        final game = await mountGame(deadProbeGame(
+            await gameStateAtLevel(GameLevel.ladderLength)));
+        await tickAndSettle(game);
+        await rideGraduationToCompletion(game);
+        return game;
+      }))!;
+
+      expect(game.overlays.isActive('levelComplete'), isTrue);
+      expect(game.gameState.tutorialComplete, isTrue,
+          reason: 'the save owns completion; the probe cannot deny it');
+      expect(game.hasNextLevel, isFalse);
+      expect(game.isEndless, isFalse,
+          reason: 'still the ladder until the handoff button is tapped');
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: LevelCompleteOverlay(game: game))),
+      );
+      await tester.pump();
+      expect(find.text('TUTORIAL COMPLETE!'), findsOneWidget);
+      expect(find.text('START SHIFT'), findsOneWidget);
+
+      await tester.tap(find.text('START SHIFT'));
+      await tester.pump();
+      expect(game.isEndless, isTrue);
+    });
+
+    testWidgets('an inner rung with a dead probe never offers Endless',
+        (tester) async {
+      final game = (await tester.runAsync<TaxiGame>(() async {
+        final game = await mountGame(deadProbeGame(await gameStateAtLevel(1)));
+        await tickAndSettle(game);
+        final level = game.currentLevel;
+        await rideTo(game, level.pickupPoints.first, level.dropoffPoints.first);
+        return game;
+      }))!;
+
+      expect(game.overlays.isActive('levelComplete'), isTrue);
+      expect(game.gameState.tutorialComplete, isFalse);
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: LevelCompleteOverlay(game: game))),
+      );
+      await tester.pump();
+      expect(find.text('LEVEL COMPLETE!'), findsOneWidget);
+      expect(find.text('NEXT LEVEL'), findsOneWidget);
+      expect(find.text('START SHIFT'), findsNothing,
+          reason: 'a lying probe must not turn a mid-ladder rung into the '
+              'tutorial\'s end');
+      expect(game.isEndless, isFalse);
+    });
+  });
+
   group('levels keep their authored dropoffs (issue #28)', () {
     test('driving past a level dropoff never relocates it', () async {
       final game = await mountGame(ladderGame());
@@ -763,15 +898,22 @@ void main() {
   });
 
   group('the completion panel', () {
-    /// Loads [levelNumber] into a mounted game, inside [tester.runAsync]:
-    /// mounting loads real sprite assets, and real IO can only complete
-    /// in the test binding's real-async window (the pattern
-    /// `bank_or_push_test.dart` uses). Everything after is synchronous —
-    /// the panel reads only fields, so no ticks are needed.
+    /// Loads [levelNumber] into a mounted game whose save sits at that
+    /// rung and has just completed it — the only state the panel is ever
+    /// up in. The save transition is the real one ([GameStateService
+    /// .completeLevel], the call the rung's finish makes), so the level-10
+    /// panel reads a genuinely finished save and the handoff branch
+    /// follows it (issue #229), inside [tester.runAsync]: mounting loads
+    /// real sprite assets, and real IO can only complete in the test
+    /// binding's real-async window (the pattern `bank_or_push_test.dart`
+    /// uses). Everything after is synchronous — the panel reads only
+    /// fields, so no ticks are needed.
     Future<TaxiGame> panelGame(WidgetTester tester, int levelNumber) async {
       return (await tester.runAsync<TaxiGame>(() async {
-        final game = await mountGame(ladderGame());
+        final state = await gameStateAtLevel(levelNumber);
+        final game = await mountGame(ladderGame(state));
         await game.loadLevel(levelNumber);
+        state.completeLevel(levelNumber, 0);
         return game;
       }))!;
     }
@@ -988,4 +1130,30 @@ void main() {
       }
     });
   });
+}
+
+/// Every existence probe answers `false` — a manifest failure — while the
+/// loads keep working (issue #229): the completion path must decide from
+/// the ladder and the save, never from this.
+class _DeadProbeLevelLoader extends LevelLoaderService {
+  @override
+  Future<bool> levelExists(int levelNumber) async => false;
+}
+
+/// A dead probe plus a load failure for every rung but the first, so an
+/// inner rung completes and its declared successor then fails to hand
+/// over (issue #229).
+class _RungOneOnlyLoader extends LevelLoaderService {
+  @override
+  Future<bool> levelExists(int levelNumber) async => false;
+
+  @override
+  Future<GameLevel> loadLevel(int levelNumber) async {
+    if (levelNumber == 1) return super.loadLevel(levelNumber);
+    throw LevelLoadException(
+      levelNumber,
+      'assets/levels/level_$levelNumber',
+      StateError('unreadable'),
+    );
+  }
 }

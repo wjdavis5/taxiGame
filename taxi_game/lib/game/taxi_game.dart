@@ -361,9 +361,12 @@ class TaxiGame extends FlameGame
   String? currentLevelName;
 
   /// Whether a level follows the one on screen (issue #16). Set at every
-  /// [loadLevel]; false past the last rung of the tutorial ladder, which
-  /// is how the completion panel knows to offer the Endless handoff
-  /// instead of a NEXT LEVEL button that dead-ends.
+  /// [loadLevel] from the ladder itself — [GameLevel.ladderLength] — never
+  /// from an asset probe (issue #229): the ladder declares its rungs, and
+  /// a probe that wrongly reports one missing must not pass a mid-ladder
+  /// rung off as the ladder's end. False at the last rung, which is how
+  /// the completion panel knows to offer the Endless handoff instead of a
+  /// NEXT LEVEL button that dead-ends.
   bool hasNextLevel = false;
 
   /// How far into an endless run the taxi has driven, in px. Zero in
@@ -791,8 +794,12 @@ class TaxiGame extends FlameGame
 
     // Whether another rung follows this one (issue #16): the completion
     // panel reads it to offer NEXT LEVEL, or — past the last rung — the
-    // handoff to Endless.
-    hasNextLevel = await levelLoader.levelExists(levelNumber + 1);
+    // handoff to Endless. This is ladder arithmetic, never an asset probe
+    // (issue #229): the probe used to answer "missing" for a declared
+    // rung and the panel silently offered Endless mid-ladder. A rung the
+    // bundle declares but cannot hand over surfaces from its own load
+    // (LevelLoadException) instead.
+    hasNextLevel = levelNumber < GameLevel.ladderLength;
 
     fareChain.reset();
     _dismissBankPrompt();
@@ -1438,9 +1445,15 @@ class TaxiGame extends FlameGame
   /// Advances to the next level. Returns false past the last rung of the
   /// tutorial ladder (issue #16) — there, the completion panel offers the
   /// Endless handoff via [startFirstShift] instead.
+  ///
+  /// The ladder's length decides what "next" exists, never an asset probe
+  /// (issue #229): a dead probe used to make this answer a silent `false`,
+  /// so NEXT LEVEL dead-ended. The load below is the authoritative read,
+  /// and a rung the bundle declares but cannot hand over throws
+  /// [LevelLoadException] from it — surfaced, not swallowed.
   Future<bool> startNextLevel() async {
     final next = currentLevelNumber + 1;
-    if (!await levelLoader.levelExists(next)) {
+    if (next > GameLevel.ladderLength) {
       return false;
     }
     overlays.remove('levelComplete');
