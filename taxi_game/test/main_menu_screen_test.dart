@@ -7,10 +7,14 @@ import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
+import 'package:taxi_game/services/haptics_service.dart';
+import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
+import 'package:taxi_game/ui/screens/game_screen.dart';
 import 'package:taxi_game/ui/screens/main_menu_screen.dart';
 import 'package:taxi_game/ui/screens/records_screen.dart';
 import 'helpers/calendar_days.dart';
+import 'helpers/fake_audio_platform.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -464,5 +468,53 @@ void main() {
 
       expectSingleLine(find.text("TODAY'S RESULT"), "TODAY'S RESULT", width);
     }
+  });
+
+  group('the push transition is re-entry safe (issue #220)', () {
+    testWidgets('a second tap during the push stacks no second shift',
+        (tester) async {
+      // The menu stays hit-testable through the push transition, so two
+      // taps on a mode button both reached its callback — two pushes,
+      // two live games, and a pop that lands in a shift nobody started.
+      // The second invocation must be refused while the menu's route is
+      // no longer current.
+      installFakeAudioPlatform();
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<GameStateService>.value(
+                value: gameStateService),
+            Provider<AudioService>.value(value: AudioService()),
+            Provider<HapticsService>.value(value: HapticsService()),
+            Provider<LevelLoaderService>.value(value: LevelLoaderService()),
+            Provider<StorageService>.value(value: storageService),
+          ],
+          child: const MaterialApp(home: MainMenuScreen()),
+        ),
+      );
+      await tester.pump();
+
+      final endless = find.byKey(const ValueKey('endless_button'));
+      final onPressed = tester.widget<ElevatedButton>(endless).onPressed!;
+      onPressed();
+      onPressed();
+
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(
+        find.byType(GameScreen, skipOffstage: false),
+        findsOneWidget,
+        reason: 'one push, one live shift — a stacked second game keeps '
+            'simulating behind the visible one',
+      );
+    });
   });
 }
