@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/models/save_data.dart';
+import 'package:taxi_game/services/diagnostics.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
@@ -180,6 +181,39 @@ void main() {
     expect(reloaded.soundEnabled, isFalse);
     expect(reloaded.musicEnabled, isFalse);
     expect(reloaded.vibrationEnabled, isFalse);
+  });
+
+  test('an abandoned reset reports it did not land (issue #244)', () async {
+    // The storage transaction cannot land: the fresh save's attempt and
+    // its one retry both fail, resetProgress keeps the old coherent
+    // state — and the caller must be able to tell the player so.
+    final store = installFailingPrefsStore();
+    final failingStorage = StorageService();
+    await failingStorage.init();
+    final service = GameStateService(failingStorage);
+    await service.loadSaveData();
+    service.addCoins(30);
+    // Settle the setup save before arming the failure, or its own retry
+    // would consume the two throws meant for the reset.
+    await failingStorage.pendingWrites;
+    store.throwOnWrites = 2;
+    Diagnostics.instance.resetForTest();
+    addTearDown(Diagnostics.instance.resetForTest);
+
+    expect(await service.resetProgress(), isFalse,
+        reason: 'the transaction did not land; the caller must be able to '
+            'tell');
+    expect(service.totalCoins, 30,
+        reason: 'the abandoned wipe leaves the old save in place');
+    expect(Diagnostics.instance.export(), contains('[error:reset]'));
+  });
+
+  test('a landed reset reports success (issue #244)', () async {
+    gameStateService.addCoins(30);
+    await storageService.pendingWrites;
+
+    expect(await gameStateService.resetProgress(), isTrue);
+    expect(gameStateService.totalCoins, 0);
   });
 
   group('endless personal best (issue #15)', () {

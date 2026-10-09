@@ -422,7 +422,20 @@ class SettingsScreen extends StatelessWidget {
     );
 
     if (confirmed ?? false) {
-      await gameState.resetProgress();
+      final reset = await gameState.resetProgress();
+      if (!context.mounted) return;
+      if (!reset) {
+        // The wipe's refusal says so (issue #244), the sibling of the
+        // diagnostics erase's wording (#233): the dialog promised an
+        // irreversible wipe, so a reset that did not land must not pass
+        // for one that did.
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not reset progress.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
     }
   }
 }

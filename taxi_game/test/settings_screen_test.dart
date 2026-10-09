@@ -209,6 +209,39 @@ void main() {
       expect(find.textContaining('0 coins'), findsOneWidget);
       expect(find.textContaining('75 coins'), findsNothing);
     });
+
+    testWidgets('a reset that did not land says so instead of implying '
+        'success (issue #244)', (tester) async {
+      // The abandoned wipe (#232's terminal storage failure): the dialog
+      // promised an irreversible wipe, and the old silent return left
+      // the player believing it happened. The settings screen must name
+      // the refusal, the diagnostics-erase wording's sibling (#233).
+      final store = installFailingPrefsStore();
+      storage = StorageService();
+      await storage.init();
+      gameState = GameStateService(storage);
+      await gameState.loadSaveData();
+      gameState.addCoins(200);
+      // Settle the setup save before arming the failure: its own retry
+      // must not consume the two throws meant for the reset.
+      await storage.pendingWrites;
+      store.throwOnWrites = 2;
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('reset_progress_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reset_confirm_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Could not reset progress.'), findsOneWidget,
+          reason: 'the refusal the old silence hid');
+      expect(find.textContaining('200 coins'), findsOneWidget,
+          reason: 'the abandoned wipe changed nothing to display');
+    });
   });
 
   group('vibration (issue #5)', () {
