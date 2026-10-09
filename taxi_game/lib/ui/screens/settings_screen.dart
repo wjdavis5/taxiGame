@@ -312,12 +312,7 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       trailing: const Icon(Icons.chevron_right,
                           color: Colors.white70),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const RecordsScreen(),
-                        ),
-                      ),
+                      onTap: () => _openScreen(context, const RecordsScreen()),
                     ),
                     // The on-device shift history (issue #17): the game's
                     // only tuning instrument, since nothing analytic ever
@@ -337,12 +332,7 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       trailing: const Icon(Icons.chevron_right,
                           color: Colors.white70),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const StatsScreen(),
-                        ),
-                      ),
+                      onTap: () => _openScreen(context, const StatsScreen()),
                     ),
                     ListTile(
                       key: const Key('settings_credits_tile'),
@@ -355,12 +345,7 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       trailing: const Icon(Icons.chevron_right,
                           color: Colors.white70),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const CreditsScreen(),
-                        ),
-                      ),
+                      onTap: () => _openScreen(context, const CreditsScreen()),
                     ),
                   ],
                 ),
@@ -369,6 +354,19 @@ class SettingsScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  /// Opens [screen] from this route, guarded like the menu's buttons
+  /// (issues #220, #240): the settings screen stays hit-testable through
+  /// the push transition, so a second tap in that window pushed a second
+  /// copy of the same screen and every Back re-showed the first copy's
+  /// title. Only the current route's tiles act.
+  void _openScreen(BuildContext context, Widget screen) {
+    if (ModalRoute.of(context)?.isCurrent != true) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(builder: (context) => screen),
     );
   }
 

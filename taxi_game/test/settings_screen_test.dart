@@ -492,5 +492,43 @@ void main() {
 
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('a second tile tap during its push stacks no second screen '
+        '(issue #240)', (tester) async {
+      // The settings screen stays hit-testable through the push
+      // transition, so two taps reached a tile's callback — two pushes,
+      // two stacked screens, and every Back showed the first copy's
+      // title again. The second invocation must be refused while the
+      // settings route is no longer current (#220's menu guard, applied
+      // to the About tiles). All three tiles carry it; one loop each.
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      for (final (tileKey, screenType) in [
+        (const ValueKey('settings_records_tile'), RecordsScreen),
+        (const ValueKey('settings_stats_tile'), StatsScreen),
+        (const ValueKey('settings_credits_tile'), CreditsScreen),
+      ]) {
+        // Tear the previous iteration's navigator down: a bare
+        // pumpWidget would reuse the same MaterialApp and keep the
+        // pushed screen on top.
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(wrap(const SettingsScreen()));
+        await tester.pump();
+
+        final tile = tester.widget<ListTile>(find.byKey(tileKey));
+        tile.onTap!();
+        tile.onTap!();
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byType(screenType, skipOffstage: false),
+          findsOneWidget,
+          reason: '$tileKey must push one screen, not two — a stacked '
+              'second copy keeps every Back on the first',
+        );
+      }
+    });
   });
 }
