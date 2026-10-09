@@ -149,7 +149,7 @@ void main() {
 
     test('resetProgress wipes the ghost', () async {
       await recordGhost(score: 321);
-      gameState.resetProgress();
+      await gameState.resetProgress();
       expect(gameState.todayGhost, isNull);
       expect(storage.loadDailyGhost(), isNull);
     });

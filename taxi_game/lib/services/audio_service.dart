@@ -4,10 +4,14 @@ import 'dart:io' show Directory, File;
 import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, debugPrint;
+import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart'
     show getTemporaryDirectory;
 import 'package:provider/provider.dart';
+
+import 'diagnostics.dart';
+import 'share_service.dart';
 
 /// Audio playback for the game (issue #4), on top of `flame_audio`.
 ///
@@ -132,6 +136,61 @@ class AudioService {
   /// re-applying the context on every play.
   Future<void>? _sessionReady;
 
+  /// Routes the native bridge's audio events (issue #236).
+  ///
+  /// iOS never tells Flutter that an AVAudioSession interruption began or
+  /// that the output route vanished, so the engine loop and the music
+  /// could stay silent — or keep blasting through a speaker after
+  /// headphones left — for the rest of a shift. `AppDelegate` observes
+  /// both notifications and forwards `systemAudioPaused`/
+  /// `systemAudioResumed` over the share channel; [initialize] registers
+  /// this as the channel's handler, so the app's one service owns the
+  /// reaction. Public for tests, which replay the native calls directly.
+  Future<Object?> handleSystemAudioCall(MethodCall call) async {
+    switch (call.method) {
+      case 'systemAudioPaused':
+        await handleSystemAudioPaused();
+      case 'systemAudioResumed':
+        await handleSystemAudioResumed();
+    }
+    return null;
+  }
+
+  /// The OS took the audio session away: an AVAudioSession interruption
+  /// began, or the output route vanished (headphones unplugged). The
+  /// native players may have been paused behind this service's back, so
+  /// pause through the normal path — it issues the platform pauses and
+  /// clears [_engineAudible] — and hold the suspended state, so the
+  /// per-frame sync cannot fight the OS for a session the app no longer
+  /// owns.
+  Future<void> handleSystemAudioPaused() async {
+    debugPrint('[audio] system paused');
+    await pauseAll();
+  }
+
+  /// The OS gave the session back: the interruption ended, or a route
+  /// returned. Resume only when the app is actually foreground — an
+  /// interruption can end while the app is backgrounded, and resuming
+  /// the music into the background is what [pauseAll] exists to stop.
+  Future<void> handleSystemAudioResumed() async {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) {
+      debugPrint('[audio] system resumed while $lifecycle; holding');
+      return;
+    }
+    debugPrint('[audio] system resumed');
+    await resumeAll();
+  }
+
+  /// True while a failed session claim still owes its one retry (issue
+  /// #234). Armed by the failure; spent by the next [playSound] or
+  /// [playMusic].
+  bool _sessionRetryArmed = false;
+
+  /// True once the one retry has been spent, success or failure — so a
+  /// session the OS keeps refusing is retried once, not once per play.
+  bool _sessionRetryAttempted = false;
+
   bool _soundEnabled = true;
   bool _musicEnabled = true;
 
@@ -197,7 +256,8 @@ class AudioService {
   final Map<String, int> attemptedPlays = <String, int>{};
 
   /// Initializes the BGM lifecycle handler (auto pause/resume around app
-  /// backgrounding), claims the iOS audio session (issue #39), and warms the
+  /// backgrounding), claims the iOS audio session (issue #39), listens for
+  /// the native bridge's system-audio events (issue #236), and warms the
   /// sound cache. Safe to call twice; safe when no plugin exists (tests) —
   /// everything below swallows its failures.
   Future<void> initialize() async {
@@ -210,6 +270,12 @@ class AudioService {
     // apiece. It has to be first: a load that races ahead of the pin
     // mints the very folder this exists to prevent.
     FlameAudio.audioCache.cacheId = audioCacheId;
+    // The native session events ride the share channel (issue #236):
+    // interrupting a call or unplugging headphones never reaches Flutter's
+    // lifecycle, so AppDelegate forwards both here. Registering in
+    // initialize keeps the app's one service the listener; a second
+    // initialize replaces the handler with the same object.
+    ShareService.channel.setMethodCallHandler(handleSystemAudioCall);
     final sessionReady = _sessionReady = _applyIosAudioContext();
     await sessionReady;
     // The music never reads its position, so it must not poll for it: the
@@ -269,15 +335,33 @@ class AudioService {
 
   /// Applies the ambient session (issue #39) on iOS before any player
   /// exists, replacing the plugin's launch-time `.playback` default. Off iOS
-  /// this is a no-op — Android mixes by default and gets no counterpart. A
-  /// failure is swallowed: a session that will not configure must never
-  /// crash or block startup.
+  /// this is a no-op — Android mixes by default and gets no counterpart.
+  ///
+  /// A failure is logged and arms the one retry the next [playSound] or
+  /// [playMusic] spends (issue #234): on iOS this is the only place the
+  /// ambient session is claimed, so a refusal left the plugin's
+  /// `.playback` default standing — the game interrupting other apps'
+  /// music and playing through the Ring/Silent switch — with no record
+  /// and no second chance. It must still never crash or block startup.
   Future<void> _applyIosAudioContext() async {
     final context = _platformContext;
     if (context == null) return;
     try {
       await AudioPlayer.global.setAudioContext(context);
-    } catch (_) {}
+    } catch (error, stack) {
+      Diagnostics.instance.logError('audio_session', error, stack);
+      if (!_sessionRetryAttempted) _sessionRetryArmed = true;
+    }
+  }
+
+  /// Spends the armed retry of a failed session claim (issue #234), if
+  /// there is one. New players wait on [_sessionReady], so the retry is
+  /// ordered ahead of any voice or loop this play is about to create.
+  void _retryIosAudioContextIfArmed() {
+    if (!_sessionRetryArmed) return;
+    _sessionRetryArmed = false;
+    _sessionRetryAttempted = true;
+    _sessionReady = _applyIosAudioContext();
   }
 
   /// True when music should currently be audible.
@@ -348,6 +432,8 @@ class AudioService {
     if (!_soundEnabled) return;
     final file = soundFiles[soundName];
     if (file == null) return;
+    // A refused session claim gets its one retry here (issue #234).
+    _retryIosAudioContextIfArmed();
     attemptedPlays.update(soundName, (n) => n + 1, ifAbsent: () => 1);
     final level = volume ?? _defaultVolumes[soundName] ?? 1.0;
     final voices = _voices.putIfAbsent(soundName, _Voices.new);
@@ -425,7 +511,15 @@ class AudioService {
   /// Starts the looping music track. Remembered even while music is disabled,
   /// so re-enabling music resumes the same track.
   Future<void> playMusic() async {
+    // A refused session claim gets its one retry here (issue #234) — and
+    // the retry is part of the start: the one-shot players wait for
+    // [_sessionReady] before they reach the platform, and the music must
+    // wait the same way. Without the wait `bgm.play` began while the
+    // retry was still claiming the ambient session, so the track started
+    // under the plugin's launch-time `.playback` default.
+    _retryIosAudioContextIfArmed();
     _musicWanted = true;
+    await _sessionReady;
     if (!isMusicWanted) return;
     try {
       await FlameAudio.bgm.play(musicTrack, volume: 0.8);

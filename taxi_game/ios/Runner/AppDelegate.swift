@@ -1,3 +1,4 @@
+import AVFoundation
 import Flutter
 import UIKit
 
@@ -35,6 +36,92 @@ import UIKit
         result(FlutterMethodNotImplemented)
       }
     }
+
+    observeSystemAudio(through: channel)
+  }
+
+  /// The observer tokens [observeSystemAudio] installed. Re-installation
+  /// removes these first (issue #236): each block retains the channel it
+  /// was registered with, so repeated implicit-engine initialization
+  /// would otherwise accumulate observers that keep old channels — and
+  /// their whole plugin registries — alive, and fire duplicate events.
+  private var systemAudioObservers: [NSObjectProtocol] = []
+
+  /// Issue #236 — system audio can leave through a door Flutter never
+  /// opens. AVAudioSession interruptions (a call, Siri, another app
+  /// claiming audio) and output-route changes (headphones unplugged or
+  /// plugged in) reach only native code, so the engine loop and the music
+  /// went stale: silent for the rest of a shift, or still blasting through
+  /// the speaker after headphones left. Forward both to AudioService as
+  /// `systemAudioPaused` / `systemAudioResumed` over the share channel;
+  /// Dart suspends on the first and restores the wants on the second.
+  /// Idempotent: a second call re-installs against the new channel
+  /// instead of stacking a second pair of observers.
+  private func observeSystemAudio(through channel: FlutterMethodChannel) {
+    let center = NotificationCenter.default
+    for observer in systemAudioObservers {
+      center.removeObserver(observer)
+    }
+    systemAudioObservers.removeAll()
+
+    systemAudioObservers.append(center.addObserver(
+      forName: AVAudioSession.interruptionNotification,
+      object: nil,
+      queue: .main
+    ) { note in
+      guard
+        let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+        let type = AVAudioSession.InterruptionType(rawValue: raw)
+      else { return }
+      switch type {
+      case .began:
+        channel.invokeMethod("systemAudioPaused", arguments: nil)
+      case .ended:
+        // Whatever the reason, the session must be active again before
+        // playback can land on it. Resume only when the system says the
+        // interruption is over for us (shouldResume); otherwise the game
+        // stays suspended and the next lifecycle resume revives it.
+        let optionsRaw =
+          note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+        let options = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
+        guard options.contains(.shouldResume) else { return }
+        // Activation must really succeed before Dart is told the session
+        // resumed (issue #236): a swallowed failure here would restart
+        // playback onto a session the OS still owns, and the game would
+        // think it is audible. On failure stay quiet — the same held
+        // state as shouldResume == false.
+        do {
+          try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+          return
+        }
+        channel.invokeMethod("systemAudioResumed", arguments: nil)
+      @unknown default:
+        break
+      }
+    })
+
+    systemAudioObservers.append(center.addObserver(
+      forName: AVAudioSession.routeChangeNotification,
+      object: nil,
+      queue: .main
+    ) { note in
+      guard
+        let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+        let reason = AVAudioSession.RouteChangeReason(rawValue: raw)
+      else { return }
+      switch reason {
+      case .oldDeviceUnavailable:
+        // Headphones left. Pausing is the platform convention for a
+        // "becoming noisy" route and stops the speaker-blast the issue
+        // names; a replug resumes.
+        channel.invokeMethod("systemAudioPaused", arguments: nil)
+      case .newDeviceAvailable:
+        channel.invokeMethod("systemAudioResumed", arguments: nil)
+      default:
+        break
+      }
+    })
   }
 
   /// The root view controller of the foreground scene's key window. Under

@@ -8,6 +8,7 @@ import '../models/personal_bests.dart';
 import '../models/run_record.dart';
 import '../models/run_stats.dart';
 import '../models/save_data.dart';
+import 'diagnostics.dart';
 import 'storage_service.dart';
 
 /// Manages global game state and notifies listeners of changes
@@ -421,17 +422,21 @@ class GameStateService extends ChangeNotifier {
     // — charged the same car twice, permanently. A repeat call now costs
     // nothing and reports true, the purchase it repeats.
     if (_saveData.unlockedVehicles.contains(vehicleId)) return true;
-    if (spendCoins(cost)) {
-      _saveData.unlockedVehicles.add(vehicleId);
-      notifyListeners();
-      save();
-      // The garage is a gameplay event too (issue #21): cars-collected
-      // achievements are evaluated the moment the fleet grows, so the
-      // purchase that earned one can announce it.
-      _evaluateAchievements();
-      return true;
-    }
-    return false;
+    if (_saveData.totalCoins < cost) return false;
+    // The spend and the unlock are one transaction (issue #230): the old
+    // path saved the spend through [spendCoins] and then the unlock in a
+    // second save, so a kill between the two flushed writes could land
+    // the charge without the car. Mutate both, then save once.
+    _saveData.totalCoins -= cost;
+    _saveData.unlockedVehicles.add(vehicleId);
+    notifyListeners();
+    // The garage is a gameplay event too (issue #21): cars-collected
+    // achievements are evaluated the moment the fleet grows, so the
+    // purchase that earned one can announce it — and the award (if any)
+    // rides this save rather than a second one.
+    _evaluateAchievements();
+    save();
+    return true;
   }
   
   /// Select a vehicle
@@ -506,7 +511,20 @@ class GameStateService extends ChangeNotifier {
   }
 
   /// Reset all progress (for testing)
-  void resetProgress() {
+  ///
+  /// The wipe is one storage transaction (issue #232): the three record
+  /// keys and the fresh save move together inside a single queue entry
+  /// that nothing else can slip into, and every step is retried before
+  /// the transaction rolls the earlier removes back. The old shape
+  /// awaited three separate clears, which left the reset half-applied in
+  /// two ways: a run-history clear that landed stayed landed when a later
+  /// clear failed (no rollback), and a fresh save whose both attempts
+  /// failed was never inspected, so the reset returned with fresh memory
+  /// and deleted records beside the old durable save. Memory swaps only
+  /// after the transaction reports success; a terminal failure leaves the
+  /// old, coherent save in place — and the abandoned reset is logged, not
+  /// applied.
+  Future<void> resetProgress() async {
     // Settings are preference, not progress (issue #83): the whole
     // Settings block — the three toggles and both volumes — rides over
     // to the fresh save, not just the booleans a bug report names. A
@@ -514,33 +532,40 @@ class GameStateService extends ChangeNotifier {
     // vibration back on under a player who had turned them off, and the
     // notifyListeners below would then hand `true` to the composition
     // root's audio listener — starting the menu music mid-dialog-
-    // dismissal. Captured before the swap, applied via the cascade
+    // dismissal. Built before the transaction; applied via the cascade
     // because `createDefault` takes no settings override.
-    final keptSettings = _saveData.settings;
-    // The fresh save also un-dismisses the stick-control hint (issue
-    // #37): a wiped save is a first-time player again, and the next
-    // game start teaches the stick once more — the same convention as
-    // the run history below.
-    _saveData = SaveData.createDefault()..settings = keptSettings;
+    final freshSave = SaveData.createDefault()..settings = _saveData.settings;
+    // The transaction writes the fresh save itself (issue #232): a
+    // separate save() after it would be the second entry the reservation
+    // exists to prevent.
+    if (!await _storageService.resetAll(freshSave)) {
+      Diagnostics.instance.logError(
+        'reset',
+        StateError('reset abandoned: the storage transaction did not land'),
+        StackTrace.current,
+      );
+      return;
+    }
+    // The wipe has fully landed; only now do memory and the fresh save
+    // swap together. The fresh save also un-dismisses the stick-control
+    // hint (issue #37): a wiped save is a first-time player again, and
+    // the next game start teaches the stick once more.
+    _saveData = freshSave;
     // The shift history is progress too (issue #17): a reset wipes it with
     // everything else, so the stats screen never shows numbers from a run
     // of a save that no longer exists.
     _runHistory.clear();
-    _storageService.clearRunHistory();
     // The daily history is the same kind of progress (issue #19): a reset
     // wipes it, and today's course becomes playable again.
     _dailyHistory.clear();
-    _storageService.clearDailyHistory();
     // The ghost is progress too (issue #20): a reset takes the stored
     // best run with everything else.
     _dailyGhost = null;
-    _storageService.clearDailyGhost();
     // The records and achievements are progress like everything else
     // (issue #21): the fresh save has empty records and an empty
     // achievements map, and any unlock still queued to be announced dies
     // with the save that earned it.
     _pendingAchievementUnlocks.clear();
     notifyListeners();
-    save();
   }
 }

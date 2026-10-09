@@ -306,7 +306,14 @@ class LevelCompleteOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final handoff = !game.hasNextLevel;
+    // The completion's exit is the ladder and the save (issue #229),
+    // never an asset probe: the ladder says whether a rung follows, and
+    // the save says whether the tutorial was actually finished. A probe
+    // answering "missing" for a declared inner rung used to be read as
+    // "tutorial complete" right here and handed the player an Endless
+    // shift mid-ladder; if the rung really cannot load, the NEXT LEVEL
+    // load fails loudly instead of a silent swap.
+    final handoff = !game.hasNextLevel && game.gameState.tutorialComplete;
 
     return Center(
       child: Container(

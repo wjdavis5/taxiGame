@@ -5,6 +5,8 @@ import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
+import 'helpers/fake_prefs_store.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -63,11 +65,50 @@ void main() {
     expect(gameStateService.unlockedVehicles, isNot(contains('sport_taxi')));
   });
 
+  test('the spend and the unlock ride a single save (issue #230)', () async {
+    // The old path saved the spend inside spendCoins and the unlock after
+    // it: two flushes, either of which the OS could complete alone. One
+    // save carries both sides now. Cars 2 and 4 are unlocked first so the
+    // measured purchase earns no achievement — the cars_2/cars_4 awards
+    // carry their own save and would muddy the count.
+    final store = installFailingPrefsStore();
+    final storage = StorageService();
+    await storage.init();
+    final service = GameStateService(storage);
+    await service.loadSaveData();
+
+    service.addCoins(100000);
+    for (final id in ['compact_red', 'sedan_blue', 'minivan_gray']) {
+      expect(service.unlockVehicle(id, VehicleCatalog.byId(id)!.price),
+          isTrue);
+    }
+    // The serialized queue (issue #230) lands the setup's saves in order,
+    // asynchronously; settle it before the measured purchase so the
+    // count below measures one purchase, not a mid-queue snapshot.
+    await storage.pendingWrites;
+    store.writtenKeys.clear();
+
+    expect(
+      service.unlockVehicle('suv_green', VehicleCatalog.byId('suv_green')!.price),
+      isTrue,
+    );
+    await storage.pendingWrites;
+    expect(
+      store.writtenKeys
+          .where((k) => k == 'flutter.${StorageService.saveDataKey}'),
+      hasLength(1),
+      reason: 'the spend and unlock are one transaction, so one save',
+    );
+  });
+
   test('unlocked and selected vehicles survive a reload', () async {
     final sedanPrice = VehicleCatalog.byId('sedan_blue')!.price;
     gameStateService.addCoins(sedanPrice);
     expect(gameStateService.unlockVehicle('sedan_blue', sedanPrice), isTrue);
     gameStateService.selectVehicle('sedan_blue');
+    // The saves are queued in order (issue #230); the reload must read
+    // the settled state, not a snapshot from mid-queue.
+    await storageService.pendingWrites;
 
     // Simulate an app restart: a brand-new service stack reading the same
     // on-device store.
@@ -117,7 +158,7 @@ void main() {
     gameStateService.toggleMusic();
     gameStateService.toggleVibration();
 
-    gameStateService.resetProgress();
+    await gameStateService.resetProgress();
 
     // The progress itself is gone...
     expect(gameStateService.currentLevel, 1);

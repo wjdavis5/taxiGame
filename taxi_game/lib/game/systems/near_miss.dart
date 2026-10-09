@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flame/components.dart';
 import 'package:flutter/services.dart';
 
@@ -101,8 +103,15 @@ class CloseCallFeedback {
 
   /// Fires the click when [soundEnabled].
   static void play({required bool soundEnabled}) {
-    if (soundEnabled) {
-      SystemSound.play(SystemSoundType.click);
-    }
+    if (!soundEnabled) return;
+    // The haptics convention (HapticsService._fire): every platform fire
+    // is wrapped so a rejected call can never escape as an unhandled
+    // async error (issue #235) — the click is dressing, losing it costs
+    // nothing but the click.
+    unawaited(() async {
+      try {
+        await SystemSound.play(SystemSoundType.click);
+      } catch (_) {}
+    }());
   }
 }

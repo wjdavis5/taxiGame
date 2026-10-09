@@ -144,12 +144,21 @@ class Diagnostics {
   }
 
   /// Wipes buffer and storage — the settings screen's clear button.
-  Future<void> clear() async {
+  ///
+  /// Returns whether the persisted tail was really removed (issue #233).
+  /// The press used to claim "Diagnostics cleared." even when the remove
+  /// failed: the tail stayed on disk, the next launch restored it, and
+  /// SHARE DIAGNOSTICS handed the player the log they believed deleted.
+  /// A failure is reported, never logged — a log line written after the
+  /// wipe would flush a fresh tail back into the key just emptied.
+  Future<bool> clear() async {
     _lines.clear();
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_prefsKey);
-    } catch (_) {}
+      return await prefs.remove(_prefsKey);
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Restores the global handlers and empties the buffer — test hygiene,

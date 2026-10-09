@@ -1,5 +1,6 @@
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/burst_particles.dart';
@@ -424,8 +425,56 @@ void main() {
 
       expect(game.fareChain.nearMisses, 0);
       expect(game.lives.remaining, LivesTracker.maxLives,
-          reason: 'the contact was a scrape — the disqualification is the '
+          reason: 'the contact was a scrape - the disqualification is the '
               'near-miss rule working, not a crash ending the run');
+    });
+  });
+
+  group('CloseCallFeedback.play (issue #235)', () {
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    /// Installs a platform channel whose `SystemSound.play` rejects, and
+    /// returns a counter of the attempts that reached it.
+    int Function() rejectingSystemSound() {
+      var attempts = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'SystemSound.play') {
+          attempts++;
+          throw PlatformException(code: 'click_refused');
+        }
+        return null;
+      });
+      return () => attempts;
+    }
+
+    test('a rejected system click never escapes as an unhandled error',
+        () async {
+      // Every other platform fire follows the HapticsService._fire shape;
+      // this was the one unguarded call in gameplay code, so a rejected
+      // click rode out as an unhandled async error (issue #235). The test
+      // zone would fail this test on such an error.
+      final attempts = rejectingSystemSound();
+
+      CloseCallFeedback.play(soundEnabled: true);
+      // Real event-loop turns: enough for the unawaited platform future
+      // to reject.
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(attempts(), 1, reason: 'the click was still attempted');
+    });
+
+    test('sound off never reaches the platform', () async {
+      final attempts = rejectingSystemSound();
+
+      CloseCallFeedback.play(soundEnabled: false);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(attempts(), 0);
     });
   });
 }

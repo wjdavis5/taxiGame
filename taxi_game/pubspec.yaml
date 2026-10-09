@@ -43,6 +43,11 @@ dev_dependencies:
   # platform instead of touching method channels (issue #4).
   audioplayers_platform_interface: ^7.1.1
 
+  # Test-only: lets the storage tests install a prefs store whose writes
+  # fail on demand (issue #230) — the seam for proving retries, logging,
+  # and reset ordering without a device.
+  shared_preferences_platform_interface: ^2.4.1
+
 flutter:
   uses-material-design: true
   

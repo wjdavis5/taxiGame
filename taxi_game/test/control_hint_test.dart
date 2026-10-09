@@ -410,7 +410,7 @@ void main() {
       gameState.dismissControlHint();
       expect(gameState.controlHintDismissed, isTrue);
 
-      gameState.resetProgress();
+      await gameState.resetProgress();
       expect(gameState.controlHintDismissed, isFalse,
           reason: 'a wiped save is a first-time player again');
 
@@ -437,8 +437,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 16));
       expect(hintFinder, findsNothing);
 
-      // Wipe everything, same as the settings screen does.
-      gameState.resetProgress();
+      // Wipe everything, same as the settings screen does. The reset is
+      // awaited (issue #232): the cleared in-memory state and the fresh
+      // save only exist once it returns.
+      await gameState.resetProgress();
       await tester.pump();
       expect(gameState.controlHintDismissed, isFalse);
 

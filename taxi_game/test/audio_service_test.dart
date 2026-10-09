@@ -1,4 +1,4 @@
-import 'dart:async' show Completer;
+import 'dart:async' show Completer, unawaited;
 import 'dart:io' show Directory, File;
 
 import 'package:audioplayers_platform_interface/audioplayers_platform_interface.dart'
@@ -6,9 +6,12 @@ import 'package:audioplayers_platform_interface/audioplayers_platform_interface.
 import 'package:flame_audio/flame_audio.dart' show FlameAudio, PlayerState;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, debugDefaultTargetPlatformOverride;
-import 'package:flutter/services.dart' show AssetManifest, rootBundle;
+import 'package:flutter/services.dart'
+    show AssetManifest, MethodCall, StandardMethodCodec, rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/services/audio_service.dart';
+import 'package:taxi_game/services/diagnostics.dart';
+import 'package:taxi_game/services/share_service.dart';
 
 import 'helpers/fake_audio_platform.dart';
 
@@ -735,10 +738,102 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       fake.global.failSetGlobalAudioContext = true;
 
-      // Completing at all is the assertion: the failure is swallowed and
-      // the rest of startup (BGM init, cache warm) runs.
+      // Completing at all is the assertion: the failure is logged and the
+      // rest of startup (BGM init, cache warm) runs.
       await AudioService().initialize();
       expect(fake.global.contexts, isEmpty);
+    });
+
+    test('a failed session claim is logged and retried on the next play '
+        '(issue #234)', () async {
+      // On iOS this call is the only place the ambient session is claimed
+      // — per-player contexts are null there (issue #49) — so a refused
+      // activation must not leave the plugin's `.playback` default
+      // standing without a trace or a second chance.
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      fake.global.failSetGlobalAudioContext = true;
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      final audio = AudioService();
+      await audio.initialize();
+      expect(Diagnostics.instance.export(),
+          contains('[error:audio_session]'),
+          reason: 'the refusal is recorded, not swallowed');
+      expect(fake.global.contexts, isEmpty);
+
+      // The next play spends the one retry, and the session lands.
+      fake.global.failSetGlobalAudioContext = false;
+      audio.playCoinSound();
+      await until(() => fake.global.contexts.isNotEmpty);
+      expect(fake.global.contexts.single.iOS.category,
+          AVAudioSessionCategory.ambient);
+      await audio.dispose();
+    });
+
+    test('the session retry is spent once, not once per play (issue #234)',
+        () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      fake.global.failSetGlobalAudioContext = true;
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      final audio = AudioService();
+      await audio.initialize();
+      audio.playCoinSound();
+      await until(() => fake.global.attempts == 2);
+      await settle();
+
+      // The retry failed too: it is spent. Later plays must not hammer a
+      // session the OS keeps refusing.
+      audio.playCoinSound();
+      await audio.playMusic();
+      await settle();
+      expect(fake.global.attempts, 2,
+          reason: 'one initial attempt plus exactly one retry');
+      await audio.dispose();
+    });
+
+    test('the BGM start waits for the retry the next play spends (issue #234)',
+        () async {
+      // playMusic spent the armed session retry but did not wait for it:
+      // `bgm.play` began while the ambient session was still being
+      // claimed, under the plugin's launch-time `.playback` default. The
+      // one-shot players wait on `_sessionReady`; the music must too.
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      fake.global.failSetGlobalAudioContext = true;
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      final audio = AudioService();
+      await audio.initialize(); // the claim fails; the one retry is armed
+      expect(fake.global.contexts, isEmpty);
+
+      // The retry will succeed, but only when the test lets it: held, it
+      // keeps the claim in flight while playMusic runs.
+      fake.global.failSetGlobalAudioContext = false;
+      final hold = fake.global.hold = Completer<void>();
+      var finished = false;
+      final starting = audio.playMusic();
+      unawaited(starting.whenComplete(() => finished = true));
+      await until(() => fake.global.attempts == 2);
+      await settle();
+
+      // The claim is still in flight: the start must still be waiting on
+      // it, not running `bgm.play` under the plugin's launch-time
+      // `.playback` default behind the retry.
+      expect(finished, isFalse,
+          reason: 'the BGM start must wait for the session claim');
+
+      hold.complete();
+      await starting;
+
+      expect(fake.global.contexts, hasLength(1));
+      expect(fake.global.contexts.single.iOS.category,
+          AVAudioSessionCategory.ambient);
+      expect(finished, isTrue,
+          reason: 'the start completes once the session has landed');
+      await audio.dispose();
     });
   });
 
@@ -845,6 +940,64 @@ void main() {
       await AudioService.sweepAbandonedAudioCaches(
         Directory('${Directory.systemTemp.path}/sweep_198_not_here'),
       );
+    });
+  });
+
+  group('system audio events (issue #236)', () {
+    // The iOS audio session exists only in native code: AppDelegate
+    // observes AVAudioSession interruptions and route changes and sends
+    // systemAudioPaused/systemAudioResumed over the share channel. These
+    // tests replay both the handler and the channel route.
+    test('a system pause suspends the engine and music; a resume restores '
+        'the wants', () async {
+      final audio = AudioService();
+      await audio.playMusic();
+      audio.setEngineRunning(true);
+      await until(() => audio.isEngineLoopActive);
+
+      await audio.handleSystemAudioPaused();
+
+      expect(audio.isEngineLoopActive, isFalse,
+          reason: 'the OS owns the session; the loop must go quiet');
+      expect(audio.isMusicWanted, isFalse);
+
+      await audio.handleSystemAudioResumed();
+
+      expect(audio.isMusicWanted, isTrue);
+      // The engine comes back only through the game's per-frame want, the
+      // same re-entry backgrounding uses.
+      audio.setEngineRunning(true);
+      await until(() => audio.isEngineLoopActive);
+      await audio.dispose();
+    });
+
+    test('native messages ride the share channel to the service', () async {
+      final audio = AudioService();
+      await audio.initialize();
+      await audio.playMusic();
+      expect(audio.isMusicWanted, isTrue);
+
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const codec = StandardMethodCodec();
+
+      await messenger.handlePlatformMessage(
+        ShareService.channel.name,
+        codec.encodeMethodCall(const MethodCall('systemAudioPaused')),
+        null,
+      );
+      expect(audio.isMusicWanted, isFalse,
+          reason: 'the native pause event reached the running service');
+
+      await messenger.handlePlatformMessage(
+        ShareService.channel.name,
+        codec.encodeMethodCall(const MethodCall('systemAudioResumed')),
+        null,
+      );
+      expect(audio.isMusicWanted, isTrue,
+          reason: 'and so did the resume');
+
+      await audio.dispose();
     });
   });
 }

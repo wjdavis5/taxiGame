@@ -1,12 +1,18 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/systems/daily_shift.dart';
+import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/models/ghost_trace.dart';
 import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/models/save_data.dart';
+import 'package:taxi_game/services/diagnostics.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
+
+import 'helpers/fake_prefs_store.dart';
 
 /// The on-device shift history (issue #17): recorded shifts persist
 /// across an app restart, the window stays bounded, a reset wipes it, and
@@ -111,7 +117,7 @@ void main() {
       await gameState.recordEndlessRun(run(score: 120));
       gameState.addCoins(30);
 
-      gameState.resetProgress();
+      await gameState.resetProgress();
 
       expect(gameState.runHistory, isEmpty);
       expect(gameState.runStats.isEmpty, isTrue);
@@ -129,7 +135,7 @@ void main() {
       expect(gameState.runStats.shiftsEnded,
           GameStateService.maxRecordedRuns + 1);
 
-      gameState.resetProgress();
+      await gameState.resetProgress();
 
       expect(gameState.runStats.shiftsEnded, 0);
       expect(gameState.runStats.totalScore, 0);
@@ -137,6 +143,277 @@ void main() {
       final reloaded = await restarted();
       expect(reloaded.runStats.shiftsEnded, 0,
           reason: 'a fresh save carries a fresh totals block');
+    });
+
+    test('the awaited reset clears the store before the fresh save lands '
+        '(issue #232)', () async {
+      // The old reset fired three unawaited clears and the save at once:
+      // a kill (or one lost remove) could leave the fresh save beside the
+      // old history — the stats screen showing shifts a save that no
+      // longer exists never counted. The awaited contract is observable
+      // on the store: the clears land, then the one save.
+      final store = installFailingPrefsStore();
+      final fakeStorage = StorageService();
+      await fakeStorage.init();
+      final service = GameStateService(fakeStorage);
+      await service.loadSaveData();
+      await service.recordEndlessRun(run(score: 120));
+      // The first load of an absent save clears the record keys too
+      // (issue #218), so the reset is measured by the growth of the log.
+      final clearsBeforeReset = store.removedKeys.length;
+
+      await service.resetProgress();
+
+      expect(store.removedKeys.length, greaterThan(clearsBeforeReset),
+          reason: 'the wipe reached the store, not just the cache');
+      expect(store.removedKeys.last,
+          'flutter.${StorageService.dailyGhostKey}',
+          reason: 'the three clears run in order, ending with the ghost');
+      expect(store.writtenKeys.last,
+          'flutter.${StorageService.saveDataKey}',
+          reason: 'the fresh save is written after the clears');
+      final storedSave = await fakeStorage.loadSaveData();
+      expect(storedSave!.totalCoins, 0);
+      expect(storedSave.currentLevel, 1);
+    });
+
+    test('a clear that cannot land abandons the reset (issue #232)', () async {
+      // Throwing the clears alone is not enough: the terminal failure was
+      // swallowed, so the reset still wrote the fresh save beside the
+      // records it could not remove — a default save next to the old
+      // history, the exact split state #218 removed for a corrupt save.
+      // A clear that reports failure must stop the reset before memory
+      // changes and before the fresh save lands.
+      final store = installFailingPrefsStore();
+      final fakeStorage = StorageService();
+      await fakeStorage.init();
+      final service = GameStateService(fakeStorage);
+      await service.loadSaveData();
+      service.addCoins(30);
+      await service.save();
+      final saveWritesBefore = store.writtenKeys
+          .where((k) => k == 'flutter.${StorageService.saveDataKey}')
+          .length;
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      // Every remove attempt is refused — both attempts of the first
+      // clear, and of any clear that follows.
+      store.throwOnRemoves = 6;
+
+      await service.resetProgress();
+
+      expect(Diagnostics.instance.export(), contains('[error:reset]'),
+          reason: 'an abandoned reset is recorded, not silent');
+      // The old save survives on disk...
+      final stored = await fakeStorage.loadSaveData();
+      expect(stored!.totalCoins, 30);
+      // ... no fresh save was written over it...
+      expect(
+        store.writtenKeys
+            .where((k) => k == 'flutter.${StorageService.saveDataKey}')
+            .length,
+        saveWritesBefore,
+        reason: 'the fresh save must not land when a clear failed',
+      );
+      // ... and memory still holds the old save, coherent with disk.
+      expect(service.totalCoins, 30);
+    });
+
+    test('a later clear failure restores the removed run history '
+        '(issue #232)', () async {
+      // The first clear landed and the daily-history clear failed both
+      // attempts. The first-round fix returned false but left the run
+      // history deleted under the old save that still lists its runs — a
+      // reset that never happened, minus the history. The transaction
+      // puts back what an earlier step removed before it abandons.
+      final store = installFailingPrefsStore();
+      final fakeStorage = StorageService();
+      await fakeStorage.init();
+      final service = GameStateService(fakeStorage);
+      await service.loadSaveData();
+      service.addCoins(30);
+      await service.save();
+      await service.recordEndlessRun(run(score: 120));
+      await service.recordDailyResult(DailyResult(
+        dateKey: DailyShift.todayKey,
+        score: 340,
+        banked: true,
+        completedAtMs: 1780000000000,
+      ));
+      await service.recordDailyGhostRun(
+        dateKey: DailyShift.todayKey,
+        score: 340,
+        banked: true,
+        vehicleId: 'taxi_yellow',
+        samples: const [100, 0, 105, -20],
+      );
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+      final before = await store.getAll();
+      final runHistoryJson = before['flutter.${StorageService.runHistoryKey}'];
+      final dailyHistoryJson =
+          before['flutter.${StorageService.dailyHistoryKey}'];
+      final ghostJson = before['flutter.${StorageService.dailyGhostKey}'];
+      final saveJson = before['flutter.${StorageService.saveDataKey}'];
+      store.writtenKeys.clear();
+
+      // Park the transaction on its first clear so the failure can be
+      // armed once that clear has passed its checks: it lands, and both
+      // attempts of the daily-history clear then fail.
+      final hold = store.holdNextRemove = Completer<void>();
+      final resetting = service.resetProgress();
+      await store.removeHeld.future;
+      store.throwOnRemoves = 2;
+      hold.complete();
+      await resetting;
+
+      expect(Diagnostics.instance.export(), contains('[error:reset]'),
+          reason: 'an abandoned reset is recorded, not silent');
+      final after = await store.getAll();
+      expect(after['flutter.${StorageService.runHistoryKey}'], runHistoryJson,
+          reason: 'the rollback rewrote the run history the first clear '
+              'removed');
+      expect(after['flutter.${StorageService.dailyHistoryKey}'],
+          dailyHistoryJson,
+          reason: 'the failed remove left the daily history in the store');
+      expect(after['flutter.${StorageService.dailyGhostKey}'], ghostJson,
+          reason: 'the transaction never reached the ghost');
+      expect(after['flutter.${StorageService.saveDataKey}'], saveJson,
+          reason: 'no fresh save may land on an abandoned reset');
+      expect(
+        store.writtenKeys
+            .where((k) => k == 'flutter.${StorageService.saveDataKey}'),
+        isEmpty,
+        reason: 'the fresh save never reached the platform',
+      );
+      // Memory is untouched, coherent with the old save still on disk.
+      expect(service.totalCoins, 30);
+      expect(service.runHistory, hasLength(1));
+      expect(service.dailyHistory, hasLength(1));
+      expect(service.todayGhost, isNotNull);
+      // The readback through the service (issue #232): the legacy prefs
+      // cache mutates ahead of the platform call, so the failed
+      // daily-history remove evicted it from the cache while the store
+      // kept it. The rollback must have put the cache back with it.
+      expect((await fakeStorage.loadSaveData())!.totalCoins, 30,
+          reason: 'the save reads back old through the cache too');
+      expect(fakeStorage.loadRunHistory(), hasLength(1));
+      expect(fakeStorage.loadDailyHistory(), hasLength(1),
+          reason: 'the failed clear evicted the cache; the rollback '
+              'restored it with the store');
+      expect(fakeStorage.loadDailyGhost(), isNotNull);
+    });
+
+    test('a failed fresh save rolls all three records back (issue #232)',
+        () async {
+      // Every clear landed and the fresh save's two attempts both failed.
+      // The first-round fix never looked at that answer: the reset
+      // returned with fresh memory and deleted records beside the old
+      // durable save. The transaction restores the three records and
+      // abandons with memory untouched.
+      final store = installFailingPrefsStore();
+      final fakeStorage = StorageService();
+      await fakeStorage.init();
+      final service = GameStateService(fakeStorage);
+      await service.loadSaveData();
+      service.addCoins(30);
+      await service.save();
+      await service.recordEndlessRun(run(score: 120));
+      await service.recordDailyResult(DailyResult(
+        dateKey: DailyShift.todayKey,
+        score: 340,
+        banked: true,
+        completedAtMs: 1780000000000,
+      ));
+      await service.recordDailyGhostRun(
+        dateKey: DailyShift.todayKey,
+        score: 340,
+        banked: true,
+        vehicleId: 'taxi_yellow',
+        samples: const [100, 0, 105, -20],
+      );
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+      final before = await store.getAll();
+      final runHistoryJson = before['flutter.${StorageService.runHistoryKey}'];
+      final dailyHistoryJson =
+          before['flutter.${StorageService.dailyHistoryKey}'];
+      final ghostJson = before['flutter.${StorageService.dailyGhostKey}'];
+      final saveJson = before['flutter.${StorageService.saveDataKey}'];
+
+      // The fresh save's attempt and its one retry, both refused; the
+      // clears before it all landed.
+      store.throwOnWrites = 2;
+      await service.resetProgress();
+
+      expect(Diagnostics.instance.export(), contains('[error:reset]'),
+          reason: 'the abandoned reset is recorded, not silent');
+      final after = await store.getAll();
+      expect(after['flutter.${StorageService.runHistoryKey}'], runHistoryJson,
+          reason: 'the rollback rewrote the removed run history');
+      expect(after['flutter.${StorageService.dailyHistoryKey}'],
+          dailyHistoryJson,
+          reason: 'the rollback rewrote the removed daily history');
+      expect(after['flutter.${StorageService.dailyGhostKey}'], ghostJson,
+          reason: 'the rollback rewrote the removed ghost');
+      expect(after['flutter.${StorageService.saveDataKey}'], saveJson,
+          reason: 'the old save is the only one on disk');
+      expect(service.totalCoins, 30);
+      expect(service.runHistory, hasLength(1));
+      expect(service.dailyHistory, hasLength(1));
+      expect(service.todayGhost, isNotNull);
+      // The refused setString cached the fresh save (issue #232): the
+      // readback through the service must show the old save the rollback
+      // put back, not the cache's fresh copy.
+      expect((await fakeStorage.loadSaveData())!.totalCoins, 30,
+          reason: 'the rollback undid the refused setString\'s cache entry');
+      expect(fakeStorage.loadRunHistory(), hasLength(1));
+      expect(fakeStorage.loadDailyHistory(), hasLength(1));
+      expect(fakeStorage.loadDailyGhost(), isNotNull);
+    });
+
+    test('a write issued mid-reset waits for the whole transaction '
+        '(issue #232)', () async {
+      // The old reset awaited its three clears as separate queue entries,
+      // so a write issued behind the first clear could run between the
+      // clears. The transaction is one entry: nothing touches storage
+      // until every step — the fresh save included — has settled.
+      final store = installFailingPrefsStore();
+      final fakeStorage = StorageService();
+      await fakeStorage.init();
+      final service = GameStateService(fakeStorage);
+      await service.loadSaveData();
+      await service.recordEndlessRun(run(score: 120));
+      store.writtenKeys.clear();
+
+      // Park the transaction on its first clear.
+      final hold = store.holdNextRemove = Completer<void>();
+      final resetting = service.resetProgress();
+      await store.removeHeld.future;
+      expect(store.writtenKeys, isEmpty,
+          reason: 'the transaction is parked before its fresh save');
+
+      // A history write issued while the transaction is in flight.
+      final racing = fakeStorage.saveRunHistory(const <RunRecord>[]);
+      await Future<void>.delayed(Duration.zero);
+      expect(store.writtenKeys, isEmpty,
+          reason: 'the racing write may not touch the store until the '
+              'transaction settles');
+
+      hold.complete();
+      await resetting;
+      await racing;
+
+      expect(
+        store.writtenKeys
+            .where((k) => k == 'flutter.${StorageService.saveDataKey}'),
+        hasLength(1),
+        reason: 'the transaction wrote its one fresh save',
+      );
+      expect(store.writtenKeys.last, 'flutter.${StorageService.runHistoryKey}',
+          reason: 'the racing write ran only after the transaction — its '
+              'fresh save included — had settled');
     });
   });
 
