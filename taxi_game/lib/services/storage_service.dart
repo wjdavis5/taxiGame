@@ -273,56 +273,72 @@ class StorageService {
   ///
   /// Each step is its own attempt-retry ([_attemptWrite]) rather than a
   /// public queued call: a queued call from inside the holder would wait
-  /// on itself forever. The three record values are read before the
-  /// first remove, so a later step's terminal failure can put back what
-  /// earlier steps removed; those restores are best-effort, because a
-  /// store that loses a record and then fails to write it back is beyond
-  /// what any caller can repair (the double failure is logged like every
-  /// other terminal storage failure). Returns false when any step fails
-  /// terminally, leaving the caller to keep the old, coherent state.
+  /// on itself forever. Every key is snapshotted before the first step,
+  /// and a terminal failure puts back every key the failure path touched,
+  /// the failing step's own key included: the legacy prefs cache mutates
+  /// synchronously ahead of the platform call (a remove evicts the entry,
+  /// a refused setString still caches the value), so the in-process cache
+  /// needs the same rollback the store does. Restores are best-effort,
+  /// because a store that loses a key and then fails to write it back is
+  /// beyond what any caller can repair (logged like every other terminal
+  /// failure). Returns false when any step fails terminally, leaving the
+  /// caller to keep the old, coherent state.
   Future<bool> resetAll(SaveData freshSave) {
     final jsonString = jsonEncode(freshSave.toJson());
     return _enqueue(() async {
-      // Read all three before the first remove: the prefs cache drops a
-      // key the moment its remove is issued, so after that the value is
-      // beyond recovery.
+      // Snapshot all four keys before the first step: the prefs cache
+      // drops a key the moment its remove is issued, so after that the
+      // value is beyond recovery.
       final runHistory = _prefs.getString(runHistoryKey);
       final dailyHistory = _prefs.getString(dailyHistoryKey);
       final ghost = _prefs.getString(dailyGhostKey);
+      final save = _prefs.getString(saveDataKey);
 
       if (!await _attemptWrite(
           'run history', () => _prefs.remove(runHistoryKey))) {
-        return false; // Nothing left the store, so nothing needs putting back.
+        // The remove failed, but its cache eviction already happened;
+        // putting the snapshot back makes cache and store agree.
+        await _restoreKey('run history', runHistoryKey, runHistory);
+        return false;
       }
       if (!await _attemptWrite(
           'daily history', () => _prefs.remove(dailyHistoryKey))) {
-        await _restoreRecord('run history', runHistoryKey, runHistory);
+        await _restoreKey('daily history', dailyHistoryKey, dailyHistory);
+        await _restoreKey('run history', runHistoryKey, runHistory);
         return false;
       }
       if (!await _attemptWrite(
           'daily ghost', () => _prefs.remove(dailyGhostKey))) {
-        await _restoreRecord('run history', runHistoryKey, runHistory);
-        await _restoreRecord('daily history', dailyHistoryKey, dailyHistory);
+        await _restoreKey('daily ghost', dailyGhostKey, ghost);
+        await _restoreKey('daily history', dailyHistoryKey, dailyHistory);
+        await _restoreKey('run history', runHistoryKey, runHistory);
         return false;
       }
       if (!await _attemptWrite(
           'save data', () => _prefs.setString(saveDataKey, jsonString))) {
-        await _restoreRecord('run history', runHistoryKey, runHistory);
-        await _restoreRecord('daily history', dailyHistoryKey, dailyHistory);
-        await _restoreRecord('daily ghost', dailyGhostKey, ghost);
+        // The refused setString cached the fresh save regardless; the
+        // snapshot goes back so a readback cannot see the fresh copy.
+        await _restoreKey('save data', saveDataKey, save);
+        await _restoreKey('daily ghost', dailyGhostKey, ghost);
+        await _restoreKey('daily history', dailyHistoryKey, dailyHistory);
+        await _restoreKey('run history', runHistoryKey, runHistory);
         return false;
       }
       return true;
     });
   }
 
-  /// Puts back one record a failed reset step removed, best-effort: one
-  /// attempt-retry, a terminal failure logged like any other storage
-  /// failure. A record that was never stored needs no restore — a remove
-  /// cannot lose what was not there.
-  Future<void> _restoreRecord(String what, String key, String? value) async {
-    if (value == null) return;
-    await _attemptWrite('$what restore', () => _prefs.setString(key, value));
+  /// Puts one key back the way a failed reset step touched it, best-effort:
+  /// one attempt-retry, a terminal failure logged like any other storage
+  /// failure. A stored snapshot goes back through `setString`; a null one —
+  /// the key held nothing — is undone with a `remove`, so the cache matches
+  /// the store again either way.
+  Future<void> _restoreKey(String what, String key, String? value) async {
+    if (value != null) {
+      await _attemptWrite('$what restore', () => _prefs.setString(key, value));
+      return;
+    }
+    await _attemptWrite('$what restore', () => _prefs.remove(key));
   }
 
   /// Clear all saved data

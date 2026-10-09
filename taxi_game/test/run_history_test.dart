@@ -292,6 +292,17 @@ void main() {
       expect(service.runHistory, hasLength(1));
       expect(service.dailyHistory, hasLength(1));
       expect(service.todayGhost, isNotNull);
+      // The readback through the service (issue #232): the legacy prefs
+      // cache mutates ahead of the platform call, so the failed
+      // daily-history remove evicted it from the cache while the store
+      // kept it. The rollback must have put the cache back with it.
+      expect((await fakeStorage.loadSaveData())!.totalCoins, 30,
+          reason: 'the save reads back old through the cache too');
+      expect(fakeStorage.loadRunHistory(), hasLength(1));
+      expect(fakeStorage.loadDailyHistory(), hasLength(1),
+          reason: 'the failed clear evicted the cache; the rollback '
+              'restored it with the store');
+      expect(fakeStorage.loadDailyGhost(), isNotNull);
     });
 
     test('a failed fresh save rolls all three records back (issue #232)',
@@ -352,6 +363,14 @@ void main() {
       expect(service.runHistory, hasLength(1));
       expect(service.dailyHistory, hasLength(1));
       expect(service.todayGhost, isNotNull);
+      // The refused setString cached the fresh save (issue #232): the
+      // readback through the service must show the old save the rollback
+      // put back, not the cache's fresh copy.
+      expect((await fakeStorage.loadSaveData())!.totalCoins, 30,
+          reason: 'the rollback undid the refused setString\'s cache entry');
+      expect(fakeStorage.loadRunHistory(), hasLength(1));
+      expect(fakeStorage.loadDailyHistory(), hasLength(1));
+      expect(fakeStorage.loadDailyGhost(), isNotNull);
     });
 
     test('a write issued mid-reset waits for the whole transaction '
