@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
@@ -31,16 +33,30 @@ class FailingPrefsStore extends InMemorySharedPreferencesStore {
   /// Every [remove] key, in call order — failed attempts included.
   final List<String> removedKeys = <String>[];
 
+  /// When set, the next non-failing [setValue] parks on it before reaching
+  /// the store. The hold is single-use: once a call consumes it, later
+  /// writes land freely — the window a racing retry needs (issue #230).
+  Completer<void>? holdNextWrite;
+
+  /// Completes when a [setValue] reaches [holdNextWrite] and parks.
+  final Completer<void> writeHeld = Completer<void>();
+
   @override
-  Future<bool> setValue(String valueType, String key, Object value) {
+  Future<bool> setValue(String valueType, String key, Object value) async {
     writtenKeys.add(key);
     if (throwOnWrites > 0) {
       throwOnWrites--;
-      return Future<bool>.error(StateError('storage write failed'));
+      throw StateError('storage write failed');
     }
     if (refuseWrites > 0) {
       refuseWrites--;
-      return Future<bool>.value(false);
+      return false;
+    }
+    final hold = holdNextWrite;
+    if (hold != null) {
+      holdNextWrite = null;
+      if (!writeHeld.isCompleted) writeHeld.complete();
+      await hold.future;
     }
     return super.setValue(valueType, key, value);
   }

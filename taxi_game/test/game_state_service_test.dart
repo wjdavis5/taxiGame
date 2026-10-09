@@ -82,12 +82,17 @@ void main() {
       expect(service.unlockVehicle(id, VehicleCatalog.byId(id)!.price),
           isTrue);
     }
+    // The serialized queue (issue #230) lands the setup's saves in order,
+    // asynchronously; settle it before the measured purchase so the
+    // count below measures one purchase, not a mid-queue snapshot.
+    await storage.pendingWrites;
     store.writtenKeys.clear();
 
     expect(
       service.unlockVehicle('suv_green', VehicleCatalog.byId('suv_green')!.price),
       isTrue,
     );
+    await storage.pendingWrites;
     expect(
       store.writtenKeys
           .where((k) => k == 'flutter.${StorageService.saveDataKey}'),
@@ -101,6 +106,9 @@ void main() {
     gameStateService.addCoins(sedanPrice);
     expect(gameStateService.unlockVehicle('sedan_blue', sedanPrice), isTrue);
     gameStateService.selectVehicle('sedan_blue');
+    // The saves are queued in order (issue #230); the reload must read
+    // the settled state, not a snapshot from mid-queue.
+    await storageService.pendingWrites;
 
     // Simulate an app restart: a brand-new service stack reading the same
     // on-device store.

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/daily_result.dart';
 import '../models/ghost_trace.dart';
@@ -31,6 +32,23 @@ class StorageService {
     _prefs = await SharedPreferences.getInstance();
   }
 
+  /// The tail of the storage queue (issue #230): [_write] chains every
+  /// operation — retries included — behind the previous one's settlement.
+  /// Without it each operation ran independently, so an older save whose
+  /// first attempt failed could retry *after* a newer save had already
+  /// landed and overwrite the newer snapshot with the older one. The
+  /// queue only carries ordering, never failure: the stored chain
+  /// swallows errors so a failed operation still lets the next one run.
+  Future<void> _writeTail = Future<void>.value();
+
+  /// Settles when every queued and in-flight operation — the tail of
+  /// [_writeTail] — has finished. Test observability for the ordering
+  /// guarantee above: the fire-and-forget savers make no promise about
+  /// *when* a write lands, so a test that measures the platform traffic
+  /// or reloads after a burst of saves must wait for the queue.
+  @visibleForTesting
+  Future<void> get pendingWrites => _writeTail;
+
   /// Runs one persistence operation, retrying once on failure and landing
   /// a terminal failure in the diagnostics tail (issue #230).
   ///
@@ -41,7 +59,21 @@ class StorageService {
   /// that were not on disk. A retry covers the flaky-transient case; the
   /// log covers the rest, and not throwing keeps a storage failure from
   /// riding a UI callback out as an uncaught async error.
-  Future<void> _write(String what, Future<bool> Function() write) async {
+  ///
+  /// The operation is appended to [_writeTail] and only starts when the
+  /// previous one — attempts, retry, and all — has settled, so operations
+  /// land in issue order no matter how slow a retry is.
+  Future<void> _write(String what, Future<bool> Function() write) {
+    final operation = _writeTail.then((_) => _attemptWrite(what, write));
+    _writeTail = operation.then<void>((_) {}, onError: (_) {});
+    return operation;
+  }
+
+  /// The one attempt-then-retry body of [_write].
+  Future<void> _attemptWrite(
+    String what,
+    Future<bool> Function() write,
+  ) async {
     Object? error;
     StackTrace? stack;
     for (var attempt = 0; attempt < 2; attempt++) {

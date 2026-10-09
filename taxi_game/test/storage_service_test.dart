@@ -1,3 +1,6 @@
+import 'dart:async' show Completer;
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/models/run_record.dart';
@@ -101,6 +104,45 @@ void main() {
 
     expect(Diagnostics.instance.export(),
         contains('"run history" write was refused'));
+  });
+
+  test('a parked retry cannot land after a newer save (issue #230)', () async {
+    // Two saves in flight — a level completion and the level-advance save,
+    // say — and the older one's first attempt fails. Its retry is the
+    // hazard: issued independently, it could land after the newer save and
+    // resurrect the older snapshot. The store's hold parks the retry mid-
+    // flight so the race is deterministic: the newer save is issued while
+    // the retry sits, and whatever lands last owns the key.
+    final storage = await ready();
+    final older = SaveData.createDefault()..totalCoins = 111;
+    final newer = SaveData.createDefault()..totalCoins = 222;
+
+    store.throwOnWrites = 1;
+    final hold = store.holdNextWrite = Completer<void>();
+    final savingOlder = storage.saveSaveData(older);
+    await store.writeHeld.future;
+    expect(store.writtenKeys, hasLength(2),
+        reason: 'the older save\'s failed attempt and its parked retry');
+
+    // The newer save arrives while the retry is parked. It must wait for
+    // the older operation — retry included — to settle before it runs;
+    // an independent retry lets it race ahead and then lose to the old
+    // snapshot.
+    final savingNewer = storage.saveSaveData(newer);
+    await Future<void>.delayed(Duration.zero);
+    expect(store.writtenKeys, hasLength(2),
+        reason: 'the newer save waits its turn; it must not touch the '
+            'store while the older retry is still parked');
+
+    hold.complete();
+    await savingOlder;
+    await savingNewer;
+
+    final stored = jsonDecode(
+      (await store.getAll())[key(StorageService.saveDataKey)] as String,
+    ) as Map<String, dynamic>;
+    expect(SaveData.fromJson(stored).totalCoins, 222,
+        reason: 'the newest save is the one left on disk');
   });
 
   test('a clear that throws twice is logged and does not escape', () async {
