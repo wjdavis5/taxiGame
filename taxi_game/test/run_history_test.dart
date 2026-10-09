@@ -415,6 +415,97 @@ void main() {
           reason: 'the racing write ran only after the transaction — its '
               'fresh save included — had settled');
     });
+
+    test('a save issued mid-reset cannot resurrect the old save (issue '
+        '#246)', () async {
+      // The old shape kept `_saveData` on the doomed save while the
+      // reset transaction ran, so a mutator save in the window — a
+      // settings toggle, say — encoded the old save and queued behind
+      // the wipe: the next launch loaded the progress the player just
+      // erased. The save must snapshot the fresh save in the window and
+      // wait for the transaction, and the toggle must still land.
+      final store = installFailingPrefsStore();
+      final fakeStorage = StorageService();
+      await fakeStorage.init();
+      final service = GameStateService(fakeStorage);
+      await service.loadSaveData();
+      service.addCoins(30);
+      await service.save();
+      await service.recordEndlessRun(run(score: 120));
+      expect(service.soundEnabled, isTrue, reason: 'precondition: default on');
+      store.writtenKeys.clear();
+
+      // Park the transaction on its first clear, the #232 serialization
+      // test's recipe.
+      final hold = store.holdNextRemove = Completer<void>();
+      final resetting = service.resetProgress();
+      await store.removeHeld.future;
+      expect(store.writtenKeys, isEmpty,
+          reason: 'the transaction is parked before its fresh save');
+
+      // A settings toggle inside the window saves, as every mutator does.
+      service.toggleSound();
+      await Future<void>.delayed(Duration.zero);
+
+      hold.complete();
+      await resetting;
+      await fakeStorage.pendingWrites;
+
+      final stored = await fakeStorage.loadSaveData();
+      expect(stored!.totalCoins, 0,
+          reason: 'the fresh save, not the old one, is the last word on '
+              'disk');
+      expect(stored.currentLevel, 1);
+      expect(stored.settings.soundEnabled, isFalse,
+          reason: 'a toggle from inside the window is still persisted');
+      expect(store.writtenKeys.last, 'flutter.${StorageService.saveDataKey}',
+          reason: 'the deferred write still carries the fresh save');
+      final storedHistory = fakeStorage.loadRunHistory();
+      expect(storedHistory ?? const <RunRecord>[], isEmpty,
+          reason: 'the wiped history stays wiped');
+      // Memory agrees with the disk: the fresh save is the live one.
+      expect(service.totalCoins, 0);
+    });
+
+    test('a second reset inside the window is refused (issue #246)',
+        () async {
+      // Two overlapping resets were the one hole the defer gate could not
+      // cover: the second transaction queues behind the first, and a
+      // failed first reset then restores and flushes the old save after
+      // the second's fresh write — old progress last on disk. The reset
+      // is single-flight now; the second confirmation is a no-op.
+      final store = installFailingPrefsStore();
+      final fakeStorage = StorageService();
+      await fakeStorage.init();
+      final service = GameStateService(fakeStorage);
+      await service.loadSaveData();
+      service.addCoins(30);
+      await service.save();
+      store.removedKeys.clear();
+
+      // Park the first transaction on its first clear.
+      final hold = store.holdNextRemove = Completer<void>();
+      final first = service.resetProgress();
+      await store.removeHeld.future;
+
+      // A second confirmation lands while the first transaction runs. It
+      // must return at the single-flight guard rather than enqueue a
+      // second transaction; give it a turn before releasing the first.
+      final second = service.resetProgress();
+      await Future<void>.delayed(Duration.zero);
+
+      hold.complete();
+      await first;
+      await second;
+      await fakeStorage.pendingWrites;
+
+      expect(store.removedKeys, hasLength(3),
+          reason: 'only the first reset ran — its three record keys; a '
+              'second transaction would clear them again');
+      final stored = await fakeStorage.loadSaveData();
+      expect(stored!.totalCoins, 0,
+          reason: 'the fresh save is the last word on disk');
+    });
   });
 
   group('the lifetime totals (issue #183)', () {

@@ -79,12 +79,17 @@ class DailyScreen extends StatelessWidget {
               // open or an app resumed the next morning (issue #113):
               // each rebuilds when the calendar day does, so a new day
               // shows its own unplayed card and moves yesterday's
-              // result into the history below.
+              // result into the history below. The today card reads the
+              // same snapshot [dayKey] the history below filters by
+              // (issue #245), so a save-notification rebuild inside the
+              // midnight window cannot show the next day's empty card
+              // while the history still hides this day's result.
               DayKeyBuilder(
-                builder: (context, _) => Consumer<GameStateService>(
+                builder: (context, dayKey) => Consumer<GameStateService>(
                   builder: (context, gameState, _) => _TodayCard(
-                    result: gameState.todayDailyResult,
-                    ghost: gameState.todayGhost,
+                    dayKey: dayKey,
+                    result: gameState.dailyResultFor(dayKey),
+                    ghost: gameState.ghostFor(dayKey),
                   ),
                 ),
               ),
@@ -118,7 +123,8 @@ class DailyScreen extends StatelessWidget {
                         ..sort((a, b) => b.dateKey.compareTo(a.dateKey));
                       return past.isEmpty
                           ? _EmptyHistory(
-                              todayPlayed: gameState.todayDailyComplete,
+                              todayPlayed:
+                                  gameState.dailyResultFor(dayKey) != null,
                             )
                           : ListView.builder(
                               padding:
@@ -144,7 +150,13 @@ class DailyScreen extends StatelessWidget {
 /// replay lives: a later-in-the-day visit can race the best run without
 /// replaying the daily from the summary panel.
 class _TodayCard extends StatelessWidget {
-  const _TodayCard({required this.result, this.ghost});
+  const _TodayCard({required this.dayKey, required this.result, this.ghost});
+
+  /// The calendar day this card is a snapshot of (issue #113): its date
+  /// line, its result lookup, and the course its button starts all key
+  /// on this one day, so the card cannot disagree with itself across
+  /// midnight (issue #245).
+  final String dayKey;
 
   final DailyResult? result;
 
@@ -173,7 +185,7 @@ class _TodayCard extends StatelessWidget {
                 const Icon(Icons.event, color: Colors.yellow, size: 22),
                 const SizedBox(width: 8),
                 Text(
-                  DailyShift.todayKey,
+                  dayKey,
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -286,9 +298,11 @@ class _TodayCard extends StatelessWidget {
                     context,
                     MaterialPageRoute(
                       builder: (context) => GameScreen(
-                        endlessSeed:
-                            DailyShift.seedForDateKey(DailyShift.todayKey),
+                        endlessSeed: DailyShift.seedForDateKey(dayKey),
                         isDailyShift: true,
+                        // The same day the seed came from (issue #248):
+                        // the run pins this day, never a fresh clock read.
+                        dailyDateKey: dayKey,
                       ),
                     ),
                   );
@@ -335,6 +349,11 @@ class _TodayCard extends StatelessWidget {
                         endlessSeed:
                             DailyShift.seedForDateKey(result!.dateKey),
                         isGhostRace: true,
+                        // The race's day is the result's day — the day
+                        // the seed came from (issue #248) — so a clock
+                        // crossing cannot pin the next day to this
+                        // course's ghost.
+                        dailyDateKey: result!.dateKey,
                       ),
                     ),
                   );

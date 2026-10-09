@@ -97,8 +97,9 @@ class StatsScreen extends StatelessWidget {
   }
 }
 
-/// A fresh install, or the history was reset: nothing has ever ended, so
-/// there is nothing to show but the invitation to go make some data.
+/// A fresh install, or the history was reset: nothing has ever ended —
+/// the window is empty *and* the lifetime totals are zero (issue #249) —
+/// so there is nothing to show but the invitation to go make some data.
 class _EmptyState extends StatelessWidget {
   const _EmptyState();
 

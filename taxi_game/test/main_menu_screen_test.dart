@@ -1,9 +1,11 @@
+import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
+import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
@@ -386,6 +388,67 @@ void main() {
       await tester.pump(const Duration(minutes: 1));
 
       expectNewDayOffered();
+    });
+  });
+
+  group('the daily card and its button share one day (issue #245)', () {
+    testWidgets('a rebuild inside the midnight window starts the day the '
+        'card names', (tester) async {
+      // The card's status line is a snapshot of the day it was built
+      // for (#113), but its result and its button used to read the live
+      // clock: a save write in the ≤59 s after midnight rebuilt the
+      // card showing D's date while its button started D+1's course.
+      // Every part of the card now reads the one snapshot day.
+      installFakeAudioPlatform();
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<GameStateService>.value(
+                value: gameStateService),
+            Provider<AudioService>.value(value: AudioService()),
+            Provider<HapticsService>.value(value: HapticsService()),
+            Provider<LevelLoaderService>.value(value: LevelLoaderService()),
+            Provider<StorageService>.value(value: storageService),
+          ],
+          child: const MaterialApp(home: MainMenuScreen()),
+        ),
+      );
+      await tester.pump();
+
+      final dayD = DailyShift.todayKey;
+      expect(find.textContaining(dayD), findsOneWidget,
+          reason: 'precondition: the card names day D');
+
+      // Midnight passes; a save write rebuilds the card before the
+      // DayKeyBuilder's minute tick has flipped its snapshot.
+      DailyShift.clock = () => calendarDaysFromNow(1);
+      addTearDown(() => DailyShift.clock = DateTime.now);
+      gameStateService.addCoins(1);
+      await tester.pump();
+
+      expect(find.textContaining(dayD), findsOneWidget,
+          reason: 'the rebuilt card still names the day it was built for');
+
+      await tester.tap(find.byKey(const ValueKey('daily_button')));
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final game = tester
+          .widget<GameWidget<TaxiGame>>(find.byType(GameWidget<TaxiGame>))
+          .game!;
+      expect(game.endlessSeed, DailyShift.seedForDateKey(dayD),
+          reason: 'the tapped day is the day the card named — the label '
+              'cannot disagree with the course it starts');
+      expect(game.runDateKey, dayD,
+          reason: 'and the run pins the carried day (issue #248), not the '
+              'clock read at start');
     });
   });
 

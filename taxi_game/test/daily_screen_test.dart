@@ -410,6 +410,9 @@ void main() {
           reason: "this run is the day's one scoring attempt");
       expect(game.endlessSeed, DailyShift.seedForDateKey(DailyShift.todayKey),
           reason: 'the same date-derived course the menu button starts');
+      expect(game.runDateKey, DailyShift.todayKey,
+          reason: 'the run pins the day the screen seeded it from '
+              '(issue #248), carried through GameScreen');
       expect(game.isGameActive, isTrue,
           reason: 'the daily course is running, not just mounted');
     });
@@ -496,6 +499,37 @@ void main() {
       expect(find.byKey(const Key('daily_screen')), findsNothing,
           reason: 'the Daily screen must not be where MAIN MENU lands');
       expect(find.byType(GameScreen), findsNothing);
+    });
+  });
+
+  group('the today card holds its day until the rollover flips it '
+      '(issue #245)', () {
+    testWidgets('a save write inside the midnight window keeps the played '
+        'day\'s card and history coherent', (tester) async {
+      // The card reads the snapshot day (#113) but used to read the
+      // result live: a save write after midnight rebuilt it as D+1's
+      // empty card while the history — filtered by the D snapshot —
+      // still hid D's result. The day's result vanished from the whole
+      // screen for the rest of the window.
+      final dayD = DailyShift.todayKey;
+      await gameState.recordDailyResult(resultFor(dayD, score: 340));
+      await pumpScreen(tester);
+      expect(find.byKey(const Key('daily_today_score')), findsOneWidget,
+          reason: 'precondition: the card shows D\'s score');
+
+      // Midnight passes; a save write rebuilds the Consumers before the
+      // DayKeyBuilder's minute tick has flipped the snapshot.
+      DailyShift.clock = () => calendarDaysFromNow(1);
+      addTearDown(() => DailyShift.clock = DateTime.now);
+      gameState.addCoins(1);
+      await tester.pump();
+
+      expect(find.byKey(const Key('daily_today_score')), findsOneWidget,
+          reason: 'the card still shows the day it was built for');
+      expect(find.text('340'), findsOneWidget);
+      expect(find.byKey(const Key('daily_empty_history')), findsOneWidget,
+          reason: 'D\'s result has not been hidden from the history '
+              'filter without appearing in the card');
     });
   });
 

@@ -1,4 +1,5 @@
 import '../game/systems/run_summary.dart';
+import 'run_record.dart';
 
 /// The player's lifetime records (issue #21).
 ///
@@ -104,6 +105,45 @@ class PersonalBests {
       improved = true;
     }
     return improved;
+  }
+
+  /// The one-time migration seed (issue #247), in
+  /// [LifetimeRunTotals.seedFromWindow]'s shape (issue #183): a save
+  /// whose records block was written before — or lost its write after —
+  /// the history's bests stores a smaller number than the window still
+  /// shows, and the window is then the only record of the better shift.
+  /// Each maximum takes the larger of what is stored and what the window
+  /// holds, per field: `bestBankedScore` over the window's *banked*
+  /// records only (a wreck's forfeited score is not a record, exactly as
+  /// [applyRun] judges it), the other three over every record. Returns
+  /// true when any maximum moved, so the caller persists the seed before
+  /// the window can trim the record out from under it.
+  ///
+  /// `cleanBankedShifts` is deliberately not seeded here: it is a
+  /// lifetime counter, not a maximum, and has had its own migration
+  /// (issue #55) since before this block existed. Post-seed saves always
+  /// hold the larger number, so this no-ops from then on.
+  bool seedFromWindow(List<RunRecord> window) {
+    var seeded = false;
+    for (final record in window) {
+      if (record.banked && record.score > bestBankedScore) {
+        bestBankedScore = record.score;
+        seeded = true;
+      }
+      if (record.longestChain > longestChain) {
+        longestChain = record.longestChain;
+        seeded = true;
+      }
+      if (record.distancePx > furthestDistancePx) {
+        furthestDistancePx = record.distancePx;
+        seeded = true;
+      }
+      if (record.faresDelivered > mostFaresInOneShift) {
+        mostFaresInOneShift = record.faresDelivered;
+        seeded = true;
+      }
+    }
+    return seeded;
   }
 
   /// Load from JSON. Missing keys — saves written by an older build —

@@ -279,6 +279,12 @@ class GameStateService extends ChangeNotifier {
     // shift out from under it. Post-migration saves always hold the
     // larger number, so this no-ops from then on.
     var migratedTotals = false;
+    // The personal-best maxima seed the same way (issue #247): the four
+    // records are stored maxima too, and a save whose block predates (or
+    // missed the write of) a window best used to keep the older number
+    // while the history — and the menu's BEST line — still showed the
+    // better shift. Per-field max, folded into the one migration write.
+    var migratedPbs = false;
     if (data != null) {
       final windowCleanBanks = _runHistory
           .where((record) => record.banked && record.livesLost == 0)
@@ -288,6 +294,7 @@ class GameStateService extends ChangeNotifier {
         migratedCleanBanks = true;
       }
       migratedTotals = _saveData.lifetimeRunTotals.seedFromWindow(_runHistory);
+      migratedPbs = _saveData.personalBests.seedFromWindow(_runHistory);
       // The ghost trace loads with everything else (issue #20); a missing
       // or corrupt one just means no ghost to race, never a crash.
       _dailyGhost = _storageService.loadDailyGhost();
@@ -298,12 +305,41 @@ class GameStateService extends ChangeNotifier {
     // from a load; the records screen simply shows them earned.
     _evaluateAchievements(announce: false);
     notifyListeners();
-    if (migratedCleanBanks || migratedTotals) await save();
+    if (migratedCleanBanks || migratedTotals || migratedPbs) await save();
   }
+
+  /// True while [resetProgress]'s storage transaction is in flight
+  /// (issue #246): mutator saves issued in that window must not encode the
+  /// doomed old save and land behind the wipe.
+  bool _resetInFlight = false;
+
+  /// True once a [save] was requested inside the reset window; the reset
+  /// flushes it — once — after the transaction settles.
+  bool _saveRequestedDuringReset = false;
 
   /// Save current data to storage
   Future<void> save() async {
+    if (_resetInFlight) {
+      // A save issued while the reset transaction runs (issue #246) is
+      // deferred, not encoded: writing the current `_saveData` now would
+      // queue a snapshot behind the wipe — and before the fix that
+      // snapshot was the old save, resurrecting wiped progress on the
+      // next launch. The reset flushes one deferred save when it settles,
+      // so a settings toggle made mid-window still reaches the disk.
+      _saveRequestedDuringReset = true;
+      return;
+    }
     await _storageService.saveSaveData(_saveData);
+  }
+
+  /// Runs one deferred [save] if a write was requested while the reset
+  /// transaction was in flight; the reset calls this on both of its exits.
+  /// A false answer from [save]'s storage queue is ignored, like every
+  /// other mutator write: the durable state is the reset's own business.
+  Future<void> _flushDeferredSave() async {
+    if (!_saveRequestedDuringReset) return;
+    _saveRequestedDuringReset = false;
+    await save();
   }
   
   /// Add coins to player's total
@@ -520,11 +556,26 @@ class GameStateService extends ChangeNotifier {
   /// two ways: a run-history clear that landed stayed landed when a later
   /// clear failed (no rollback), and a fresh save whose both attempts
   /// failed was never inspected, so the reset returned with fresh memory
-  /// and deleted records beside the old durable save. Memory swaps only
-  /// after the transaction reports success; a terminal failure leaves the
-  /// old, coherent save in place — and the abandoned reset is logged, not
-  /// applied.
+  /// and deleted records beside the old durable save.
+  ///
+  /// Memory swaps to the fresh save before the transaction and back to
+  /// the old save on failure (issue #246): a save issued while the
+  /// transaction runs must never encode the doomed old save and land
+  /// behind the wipe, and mutator saves are deferred for the same reason
+  /// — the transaction's own fresh-save write stays the last word, with
+  /// one deferred flush after it so a settings toggle made mid-window
+  /// still reaches the disk. A terminal failure therefore leaves the old,
+  /// coherent save in memory and on disk, the abandoned reset logged,
+  /// not applied.
   Future<void> resetProgress() async {
+    // Single-flight (issue #246): a second reset confirmed while the first
+    // transaction still runs was the one overlap the defer gate could not
+    // cover — the second transaction queues behind the first, and a failed
+    // first reset then restores and flushes the old save after the
+    // second's fresh write, making the old progress the last word on disk.
+    // A reset of a save already being wiped has nothing left to do, so a
+    // second call is refused while one is in flight.
+    if (_resetInFlight) return;
     // Settings are preference, not progress (issue #83): the whole
     // Settings block — the three toggles and both volumes — rides over
     // to the fresh save, not just the booleans a bug report names. A
@@ -535,10 +586,34 @@ class GameStateService extends ChangeNotifier {
     // dismissal. Built before the transaction; applied via the cascade
     // because `createDefault` takes no settings override.
     final freshSave = SaveData.createDefault()..settings = _saveData.settings;
+    // Memory swaps to the fresh save *before* the transaction (issue
+    // #246): a mutator save issued while the transaction runs must encode
+    // the fresh save, never the one being wiped. Under the old shape the
+    // save called here in the window still pointed at the old data, so it
+    // queued behind the transaction and resurrected the wiped progress on
+    // the next launch. A failed transaction puts the old object back.
+    final previousSave = _saveData;
+    _saveData = freshSave;
     // The transaction writes the fresh save itself (issue #232): a
     // separate save() after it would be the second entry the reservation
-    // exists to prevent.
-    if (!await _storageService.resetAll(freshSave)) {
+    // exists to prevent. Saves issued mid-transaction are deferred by the
+    // gate in [save] so the reset's own write stays the last word; the
+    // deferred flush below runs after it.
+    _resetInFlight = true;
+    final landed = await _storageService.resetAll(freshSave);
+    _resetInFlight = false;
+    if (!landed) {
+      _saveData = previousSave;
+      // The restore is a state change the UI may already have painted over
+      // from the temporary fresh save (a mid-window toggle rebuilds the
+      // settings card): notify so the screens show the save that survived.
+      notifyListeners();
+      // A save deferred in the window is not lost with the abandoned
+      // reset: with the old save back in memory, flushing persists it —
+      // a mid-reset settings toggle included (the two saves share the
+      // same Settings object) — without writing the fresh save the
+      // rollback just undid.
+      await _flushDeferredSave();
       Diagnostics.instance.logError(
         'reset',
         StateError('reset abandoned: the storage transaction did not land'),
@@ -546,11 +621,10 @@ class GameStateService extends ChangeNotifier {
       );
       return;
     }
-    // The wipe has fully landed; only now do memory and the fresh save
-    // swap together. The fresh save also un-dismisses the stick-control
+    // The wipe has fully landed; only now do the records swap with the
+    // fresh save. The fresh save also un-dismisses the stick-control
     // hint (issue #37): a wiped save is a first-time player again, and
     // the next game start teaches the stick once more.
-    _saveData = freshSave;
     // The shift history is progress too (issue #17): a reset wipes it with
     // everything else, so the stats screen never shows numbers from a run
     // of a save that no longer exists.
@@ -567,5 +641,9 @@ class GameStateService extends ChangeNotifier {
     // with the save that earned it.
     _pendingAchievementUnlocks.clear();
     notifyListeners();
+    // Whatever save was requested inside the window rides last — after
+    // the transaction's own fresh-save write — and still carries fresh
+    // data, never the old save (issue #246).
+    await _flushDeferredSave();
   }
 }

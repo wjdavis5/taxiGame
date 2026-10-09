@@ -314,14 +314,23 @@ class MainMenuScreen extends StatelessWidget {
   /// Built under a [DayKeyBuilder] (issue #113): [dayKey] is the day the
   /// card is being laid out for, so a day that rolls over under a live
   /// menu rebuilds the card rather than leaving yesterday's DONE FOR
-  /// TODAY to hide the new course.
+  /// TODAY to hide the new course. Every part of the card — the result
+  /// it branches on, the date it names, and the course its button starts
+  /// — reads that one [dayKey] (issue #245), so the built day and the
+  /// tapped day cannot disagree inside the midnight window.
   Widget _buildDailyBlock(
     BuildContext context,
     GameStateService gameState,
     String dayKey, {
     required bool primary,
   }) {
-    final result = gameState.todayDailyResult;
+    // The card is a snapshot of the day it was built for (issue #113),
+    // and every part of it reads that one day (issue #245): the result
+    // it shows, the date it names, and the course its button starts. The
+    // old shape read `todayDailyResult` and `DailyShift.todayKey` live
+    // while the label rendered `dayKey`, so inside the midnight window a
+    // save-notification rebuild showed D's label over D+1's course.
+    final result = gameState.dailyResultFor(dayKey);
     return Column(
       children: [
         _MenuButton(
@@ -331,16 +340,17 @@ class MainMenuScreen extends StatelessWidget {
           primary: primary,
           onPressed: () {
             if (result == null) {
-              // The day's course: the seed derived from today's date
-              // (issue #19's shared course, riding issue #11's endless
-              // shift).
+              // The day's course: the seed derived from the day this
+              // card was built for (issue #19's shared course, riding
+              // issue #11's endless shift) — the same day the status
+              // line above names (issue #245).
               Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => GameScreen(
-                    endlessSeed:
-                        DailyShift.seedForDateKey(DailyShift.todayKey),
+                    endlessSeed: DailyShift.seedForDateKey(dayKey),
                     isDailyShift: true,
+                    dailyDateKey: dayKey,
                   ),
                 ),
               );

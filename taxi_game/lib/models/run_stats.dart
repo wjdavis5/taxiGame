@@ -157,9 +157,14 @@ class RunStats {
   /// tuning watches the mass migrate right as the curve eases.
   final List<RunLengthBucket> runLengthDistribution;
 
-  /// True when nothing has been recorded yet — the stats screen's empty
-  /// state.
-  bool get isEmpty => runCount == 0;
+  /// True when there is nothing at all to show — the stats screen's empty
+  /// state. The window is empty *and* the lifetime totals read zero
+  /// (issue #249): a corrupt or lost history recovers to an empty window
+  /// while the save keeps [shiftsEnded] and the rest of its lifetime
+  /// counters, and gating the screen on [runCount] alone hid those totals
+  /// behind "No shifts recorded yet". A fresh install — nothing in either
+  /// — is still the empty state.
+  bool get isEmpty => runCount == 0 && shiftsEnded == 0;
 
   // --- Formatting (shared with the stats screen) --------------------------
 

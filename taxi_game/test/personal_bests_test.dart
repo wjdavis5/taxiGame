@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/models/personal_bests.dart';
@@ -207,6 +209,123 @@ void main() {
         // No cleanBankedShifts key: the field postdates this save.
       });
       expect(restored.cleanBankedShifts, 0);
+    });
+  });
+
+  group('seeding the maxima from the window (issue #247)', () {
+    RunRecord windowRun({
+      int score = 120,
+      bool banked = true,
+      int chain = 2,
+      double distancePx = 4000,
+      int fares = 3,
+      int livesLost = 0,
+    }) {
+      return RunRecord(
+        endedAtMs: 0,
+        distancePx: distancePx,
+        score: score,
+        faresDelivered: fares,
+        longestChain: chain,
+        livesLost: livesLost,
+        lifeLossDistancesPx: List.filled(livesLost, 500.0),
+        banked: banked,
+        durationSeconds: 60,
+      );
+    }
+
+    test('each maximum takes the window\'s larger value, and only a bank '
+        'sets the banked score', () {
+      final bests = PersonalBests(bestBankedScore: 150);
+      final seeded = bests.seedFromWindow([
+        // A wreck with the biggest score never sets the banked record,
+        // exactly as applyRun judges it — but its distance still counts.
+        windowRun(
+          score: 500,
+          banked: false,
+          chain: 2,
+          distancePx: 9000,
+          fares: 2,
+          livesLost: 3,
+        ),
+        windowRun(
+          score: 240,
+          banked: true,
+          chain: 7,
+          distancePx: 8000,
+          fares: 9,
+        ),
+      ]);
+
+      expect(seeded, isTrue);
+      expect(bests.bestBankedScore, 240);
+      expect(bests.longestChain, 7);
+      expect(bests.furthestDistancePx, 9000);
+      expect(bests.mostFaresInOneShift, 9);
+    });
+
+    test('a save ahead of its window is left alone and reports no change',
+        () {
+      final bests = PersonalBests(
+        bestBankedScore: 340,
+        longestChain: 6,
+        furthestDistancePx: 20000,
+        mostFaresInOneShift: 10,
+      );
+
+      final seeded = bests.seedFromWindow([
+        windowRun(score: 100, chain: 3, distancePx: 5000, fares: 4),
+      ]);
+
+      expect(seeded, isFalse,
+          reason: 'post-migration saves always hold the larger numbers');
+      expect(bests.bestBankedScore, 340);
+      expect(bests.longestChain, 6);
+      expect(bests.furthestDistancePx, 20000);
+      expect(bests.mostFaresInOneShift, 10);
+    });
+
+    test('a load seeds the maxima its save missed and persists them',
+        () async {
+      // The issue's own case: the save's PB says 150 while the window
+      // still holds a banked 240 — the records screen showed 150 against
+      // a menu BEST of 240 until the seed. The seed must reach the disk
+      // immediately, before the window can trim the record away.
+      final save = SaveData.createDefault();
+      save.personalBests
+        ..bestBankedScore = 150
+        ..longestChain = 3
+        ..furthestDistancePx = 10000
+        ..mostFaresInOneShift = 4;
+      SharedPreferences.setMockInitialValues({
+        StorageService.runHistoryKey: jsonEncode([
+          windowRun(
+            score: 240,
+            chain: 7,
+            distancePx: 22000,
+            fares: 9,
+          ).toJson(),
+        ]),
+        StorageService.saveDataKey: jsonEncode(save.toJson()),
+      });
+      final storage = StorageService();
+      await storage.init();
+      final loaded = GameStateService(storage);
+      await loaded.loadSaveData();
+
+      expect(loaded.personalBests.bestBankedScore, 240);
+      expect(loaded.personalBests.longestChain, 7);
+      expect(loaded.personalBests.furthestDistancePx, 22000);
+      expect(loaded.personalBests.mostFaresInOneShift, 9);
+
+      // A restart finds the seeded block in the save, not the window: the
+      // seed is durable, and the second load no-ops.
+      final reloadedStorage = StorageService();
+      await reloadedStorage.init();
+      final reloaded = GameStateService(reloadedStorage);
+      await reloaded.loadSaveData();
+      expect(reloaded.personalBests.bestBankedScore, 240);
+      expect(reloaded.personalBests.longestChain, 7);
     });
   });
 
