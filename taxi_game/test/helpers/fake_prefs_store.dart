@@ -4,8 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 /// An in-memory prefs store whose writes can fail on demand — the seam
-/// for the storage-guard tests (issue #230) and the diagnostics-erase
-/// failure (issue #233).
+/// for the storage-guard tests (issue #230), the diagnostics-erase
+/// failure (issue #233), and the multi-step reset transaction (issue
+/// #232).
 ///
 /// Extends [InMemorySharedPreferencesStore] so reads, prefixes, and the
 /// legacy API's own lookups behave exactly like the mock the rest of the
@@ -41,6 +42,15 @@ class FailingPrefsStore extends InMemorySharedPreferencesStore {
   /// Completes when a [setValue] reaches [holdNextWrite] and parks.
   final Completer<void> writeHeld = Completer<void>();
 
+  /// When set, the next non-failing [remove] parks on it before reaching
+  /// the store — the remove-side twin of [holdNextWrite], for parking a
+  /// multi-step transaction (the reset, issue #232) on one of its clears.
+  /// Single-use, like [holdNextWrite].
+  Completer<void>? holdNextRemove;
+
+  /// Completes when a [remove] reaches [holdNextRemove] and parks.
+  final Completer<void> removeHeld = Completer<void>();
+
   @override
   Future<bool> setValue(String valueType, String key, Object value) async {
     writtenKeys.add(key);
@@ -62,15 +72,21 @@ class FailingPrefsStore extends InMemorySharedPreferencesStore {
   }
 
   @override
-  Future<bool> remove(String key) {
+  Future<bool> remove(String key) async {
     removedKeys.add(key);
     if (throwOnRemoves > 0) {
       throwOnRemoves--;
-      return Future<bool>.error(StateError('storage remove failed'));
+      throw StateError('storage remove failed');
     }
     if (refuseRemoves > 0) {
       refuseRemoves--;
-      return Future<bool>.value(false);
+      return false;
+    }
+    final hold = holdNextRemove;
+    if (hold != null) {
+      holdNextRemove = null;
+      if (!removeHeld.isCompleted) removeHeld.complete();
+      await hold.future;
     }
     return super.remove(key);
   }

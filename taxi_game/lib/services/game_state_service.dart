@@ -512,32 +512,19 @@ class GameStateService extends ChangeNotifier {
 
   /// Reset all progress (for testing)
   ///
-  /// Asynchronous since issue #232: the three clears and the fresh save
-  /// used to be fire-and-forget, all issued at once, so a kill (or one
-  /// failed remove) inside the flush window left the default save beside
-  /// the old run history, daily results, and ghost — exactly the
-  /// inconsistency the corrupt-load path of #218 removed. Ordering alone
-  /// was still not enough: a clear whose both attempts failed was
-  /// swallowed, and the reset wrote the fresh save anyway, recreating the
-  /// same split state. The clears therefore run first and report their
-  /// outcome ([StorageService]'s clear methods answer whether the remove
-  /// landed); a terminal failure abandons the reset around the old,
-  /// coherent save instead of writing a fresh one beside dead records.
+  /// The wipe is one storage transaction (issue #232): the three record
+  /// keys and the fresh save move together inside a single queue entry
+  /// that nothing else can slip into, and every step is retried before
+  /// the transaction rolls the earlier removes back. The old shape
+  /// awaited three separate clears, which left the reset half-applied in
+  /// two ways: a run-history clear that landed stayed landed when a later
+  /// clear failed (no rollback), and a fresh save whose both attempts
+  /// failed was never inspected, so the reset returned with fresh memory
+  /// and deleted records beside the old durable save. Memory swaps only
+  /// after the transaction reports success; a terminal failure leaves the
+  /// old, coherent save in place — and the abandoned reset is logged, not
+  /// applied.
   Future<void> resetProgress() async {
-    // The wipe reaches storage first, in order, and gates everything
-    // below: the first clear that reports failure stops the reset before
-    // any state changes, leaving the remaining records untouched rather
-    // than half-wiped.
-    if (!await _storageService.clearRunHistory() ||
-        !await _storageService.clearDailyHistory() ||
-        !await _storageService.clearDailyGhost()) {
-      Diagnostics.instance.logError(
-        'reset',
-        StateError('reset abandoned: a records clear did not land'),
-        StackTrace.current,
-      );
-      return;
-    }
     // Settings are preference, not progress (issue #83): the whole
     // Settings block — the three toggles and both volumes — rides over
     // to the fresh save, not just the booleans a bug report names. A
@@ -545,14 +532,25 @@ class GameStateService extends ChangeNotifier {
     // vibration back on under a player who had turned them off, and the
     // notifyListeners below would then hand `true` to the composition
     // root's audio listener — starting the menu music mid-dialog-
-    // dismissal. Captured before the swap, applied via the cascade
+    // dismissal. Built before the transaction; applied via the cascade
     // because `createDefault` takes no settings override.
-    final keptSettings = _saveData.settings;
-    // The fresh save also un-dismisses the stick-control hint (issue
-    // #37): a wiped save is a first-time player again, and the next
-    // game start teaches the stick once more — the same convention as
-    // the run history below.
-    _saveData = SaveData.createDefault()..settings = keptSettings;
+    final freshSave = SaveData.createDefault()..settings = _saveData.settings;
+    // The transaction writes the fresh save itself (issue #232): a
+    // separate save() after it would be the second entry the reservation
+    // exists to prevent.
+    if (!await _storageService.resetAll(freshSave)) {
+      Diagnostics.instance.logError(
+        'reset',
+        StateError('reset abandoned: the storage transaction did not land'),
+        StackTrace.current,
+      );
+      return;
+    }
+    // The wipe has fully landed; only now do memory and the fresh save
+    // swap together. The fresh save also un-dismisses the stick-control
+    // hint (issue #37): a wiped save is a first-time player again, and
+    // the next game start teaches the stick once more.
+    _saveData = freshSave;
     // The shift history is progress too (issue #17): a reset wipes it with
     // everything else, so the stats screen never shows numbers from a run
     // of a save that no longer exists.
@@ -569,8 +567,5 @@ class GameStateService extends ChangeNotifier {
     // with the save that earned it.
     _pendingAchievementUnlocks.clear();
     notifyListeners();
-    // The wipe has fully landed; only now does the fresh save follow
-    // (issue #232).
-    await save();
   }
 }

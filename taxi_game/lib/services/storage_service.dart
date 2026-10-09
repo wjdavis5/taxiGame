@@ -80,8 +80,17 @@ class StorageService {
   /// order no matter how slow a retry is. With nothing in flight it
   /// starts right away, keeping the saver's old synchronous reach for
   /// the platform.
-  Future<bool> _write(String what, Future<bool> Function() write) {
-    final operation = _QueuedWrite(what, write, Zone.current);
+  Future<bool> _write(String what, Future<bool> Function() write) =>
+      _enqueue(() => _attemptWrite(what, write));
+
+  /// Queues one raw operation and returns its result. The operation owns
+  /// its attempts: [_write] wraps one platform call in the attempt-retry
+  /// above, while the reset transaction ([resetAll]) rides this directly
+  /// because it retries each step on its own — retrying the whole wipe
+  /// after a terminal step failure would redo the removes its rollback
+  /// just undid.
+  Future<bool> _enqueue(Future<bool> Function() run) {
+    final operation = _QueuedWrite(run, Zone.current);
     _queuedWrites.add(operation);
     _drainWrites();
     return operation.completer.future;
@@ -105,9 +114,9 @@ class StorageService {
     unawaited(operation.zone.run(() async {
       var succeeded = false;
       try {
-        succeeded = await _attemptWrite(operation.what, operation.write);
+        succeeded = await operation.run();
       } catch (_) {
-        // _attemptWrite swallows by contract; a surprise must still settle
+        // The operation swallows by contract; a surprise must still settle
         // its caller and release the queue rather than hang it.
       }
       _writeInFlight = false;
@@ -116,7 +125,8 @@ class StorageService {
     }));
   }
 
-  /// The one attempt-then-retry body of [_write].
+  /// The attempt-then-retry body of one platform call ([_write]), reused
+  /// per step by the reset transaction ([resetAll]).
   Future<bool> _attemptWrite(
     String what,
     Future<bool> Function() write,
@@ -255,6 +265,66 @@ class StorageService {
   Future<bool> clearDailyGhost() =>
       _write('daily ghost', () => _prefs.remove(dailyGhostKey));
 
+  /// Wipe the three progress records and write [freshSave] as one storage
+  /// transaction (issue #232): every step lives inside a single queue
+  /// entry, so no write issued behind the reset can land between the
+  /// clears — the split state the corrupt-load path of #218 removed, the
+  /// reset's old three-separate-clears shape could still recreate.
+  ///
+  /// Each step is its own attempt-retry ([_attemptWrite]) rather than a
+  /// public queued call: a queued call from inside the holder would wait
+  /// on itself forever. The three record values are read before the
+  /// first remove, so a later step's terminal failure can put back what
+  /// earlier steps removed; those restores are best-effort, because a
+  /// store that loses a record and then fails to write it back is beyond
+  /// what any caller can repair (the double failure is logged like every
+  /// other terminal storage failure). Returns false when any step fails
+  /// terminally, leaving the caller to keep the old, coherent state.
+  Future<bool> resetAll(SaveData freshSave) {
+    final jsonString = jsonEncode(freshSave.toJson());
+    return _enqueue(() async {
+      // Read all three before the first remove: the prefs cache drops a
+      // key the moment its remove is issued, so after that the value is
+      // beyond recovery.
+      final runHistory = _prefs.getString(runHistoryKey);
+      final dailyHistory = _prefs.getString(dailyHistoryKey);
+      final ghost = _prefs.getString(dailyGhostKey);
+
+      if (!await _attemptWrite(
+          'run history', () => _prefs.remove(runHistoryKey))) {
+        return false; // Nothing left the store, so nothing needs putting back.
+      }
+      if (!await _attemptWrite(
+          'daily history', () => _prefs.remove(dailyHistoryKey))) {
+        await _restoreRecord('run history', runHistoryKey, runHistory);
+        return false;
+      }
+      if (!await _attemptWrite(
+          'daily ghost', () => _prefs.remove(dailyGhostKey))) {
+        await _restoreRecord('run history', runHistoryKey, runHistory);
+        await _restoreRecord('daily history', dailyHistoryKey, dailyHistory);
+        return false;
+      }
+      if (!await _attemptWrite(
+          'save data', () => _prefs.setString(saveDataKey, jsonString))) {
+        await _restoreRecord('run history', runHistoryKey, runHistory);
+        await _restoreRecord('daily history', dailyHistoryKey, dailyHistory);
+        await _restoreRecord('daily ghost', dailyGhostKey, ghost);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  /// Puts back one record a failed reset step removed, best-effort: one
+  /// attempt-retry, a terminal failure logged like any other storage
+  /// failure. A record that was never stored needs no restore — a remove
+  /// cannot lose what was not there.
+  Future<void> _restoreRecord(String what, String key, String? value) async {
+    if (value == null) return;
+    await _attemptWrite('$what restore', () => _prefs.setString(key, value));
+  }
+
   /// Clear all saved data
   Future<void> clearData() async {
     await _write('save data', () => _prefs.remove(saveDataKey));
@@ -266,13 +336,12 @@ class StorageService {
   }
 }
 
-/// One storage operation waiting its turn: what it is, how to run it, the
-/// zone that asked for it (issue #230), and the result its caller awaits.
+/// One storage operation waiting its turn: how to run it, the zone that
+/// asked for it (issue #230), and the result its caller awaits.
 class _QueuedWrite {
-  _QueuedWrite(this.what, this.write, this.zone);
+  _QueuedWrite(this.run, this.zone);
 
-  final String what;
-  final Future<bool> Function() write;
+  final Future<bool> Function() run;
   final Zone zone;
   final Completer<bool> completer = Completer<bool>();
 }
