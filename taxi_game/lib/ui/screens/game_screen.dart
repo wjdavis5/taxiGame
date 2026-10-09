@@ -414,7 +414,18 @@ class _LevelCompleteOverlayState extends State<LevelCompleteOverlay> {
   /// the rung it could not read.
   bool _loadFailed = false;
 
+  /// True from a tap until its load settles (issue #243): two taps inside
+  /// one frame both reached the handler, and [TaxiGame.loadLevel] sets
+  /// the rung counter before its first await — the second call then
+  /// computed the rung after next, racing two loads and skipping a
+  /// designed rung. While it holds, the button refuses re-entry (the
+  /// #221 BUY latch's shape, covering the whole in-flight load rather
+  /// than one frame).
+  bool _starting = false;
+
   Future<void> _nextLevel() async {
+    if (_starting) return;
+    _starting = true;
     final game = widget.game;
     game.audio?.playButtonSound();
     game.haptics?.buttonPress();
@@ -425,6 +436,8 @@ class _LevelCompleteOverlayState extends State<LevelCompleteOverlay> {
     } on LevelLoadException {
       if (!mounted) return;
       setState(() => _loadFailed = true);
+    } finally {
+      _starting = false;
     }
   }
 

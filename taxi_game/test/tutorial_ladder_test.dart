@@ -775,6 +775,43 @@ void main() {
           reason: 'the failed load stays on the rung it tried');
     });
 
+    testWidgets('a doubled NEXT LEVEL tap starts one load, not two (issue '
+        '#243)', (tester) async {
+      final loader = _CountingLoader();
+      final game = (await tester.runAsync<TaxiGame>(() async {
+        final game = await mountGame(
+          probeGame(await gameStateAtLevel(1), loader),
+        );
+        await tickAndSettle(game);
+        final level = game.currentLevel;
+        await rideTo(game, level.pickupPoints.first, level.dropoffPoints.first);
+        return game;
+      }))!;
+      expect(loader.requested, [1],
+          reason: 'precondition: the mount loaded rung 1 exactly once');
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: LevelCompleteOverlay(game: game))),
+      );
+      await tester.pump();
+
+      // Two taps inside one frame both reach the handler before the first
+      // load's future settles. loadLevel advances the rung counter before
+      // its first await, so an unlatched second call computes the rung
+      // after next: two loads race and a designed rung is skipped. One
+      // tap must be one load.
+      await tester.tap(find.text('NEXT LEVEL'));
+      await tester.tap(find.text('NEXT LEVEL'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(game.currentLevelNumber, 2,
+          reason: 'the advance lands on the next rung, not the one after');
+      expect(loader.requested, [1, 2],
+          reason: 'one tap, one load — the latch swallows the same-frame '
+              're-entry');
+    });
+
     testWidgets('the final rung with a dead probe still reaches Endless',
         (tester) async {
       final game = (await tester.runAsync<TaxiGame>(() async {
@@ -1179,6 +1216,19 @@ void main() {
 class _DeadProbeLevelLoader extends LevelLoaderService {
   @override
   Future<bool> levelExists(int levelNumber) async => false;
+}
+
+/// A working loader that records every rung handed to it, so a doubled
+/// NEXT LEVEL invocation's two loads would be visible as two rung
+/// numbers (issue #243).
+class _CountingLoader extends LevelLoaderService {
+  final List<int> requested = <int>[];
+
+  @override
+  Future<GameLevel> loadLevel(int levelNumber) async {
+    requested.add(levelNumber);
+    return super.loadLevel(levelNumber);
+  }
 }
 
 /// A dead probe plus a load failure for every rung but the first, so an
