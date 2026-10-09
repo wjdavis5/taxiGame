@@ -1,3 +1,4 @@
+import 'dart:async' show Completer, Zone, unawaited;
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -32,22 +33,33 @@ class StorageService {
     _prefs = await SharedPreferences.getInstance();
   }
 
-  /// The tail of the storage queue (issue #230): [_write] chains every
-  /// operation — retries included — behind the previous one's settlement.
-  /// Without it each operation ran independently, so an older save whose
-  /// first attempt failed could retry *after* a newer save had already
-  /// landed and overwrite the newer snapshot with the older one. The
-  /// queue only carries ordering, never failure: the stored chain
-  /// swallows errors so a failed operation still lets the next one run.
-  Future<void> _writeTail = Future<void>.value();
+  /// The operations waiting their turn, in call order (issue #230).
+  final List<_QueuedWrite> _queuedWrites = <_QueuedWrite>[];
 
-  /// Settles when every queued and in-flight operation — the tail of
-  /// [_writeTail] — has finished. Test observability for the ordering
-  /// guarantee above: the fire-and-forget savers make no promise about
-  /// *when* a write lands, so a test that measures the platform traffic
-  /// or reloads after a burst of saves must wait for the queue.
+  /// True while one operation — its attempts and retry included — is
+  /// running on the platform; nothing else may touch storage until it
+  /// settles. Without the queue each operation ran independently, so an
+  /// older save whose first attempt failed could retry *after* a newer
+  /// save had already landed and overwrite the newer snapshot with the
+  /// older one.
+  bool _writeInFlight = false;
+
+  /// Completed when the last queued operation settles (see
+  /// [pendingWrites]).
+  Completer<void>? _writesIdle;
+
+  /// Settles when every queued and in-flight operation has finished. Test
+  /// observability for the ordering guarantee above: the fire-and-forget
+  /// savers make no promise about *when* a write lands, so a test that
+  /// measures platform traffic or reloads after a burst of saves must
+  /// wait for the queue.
   @visibleForTesting
-  Future<void> get pendingWrites => _writeTail;
+  Future<void> get pendingWrites {
+    if (!_writeInFlight && _queuedWrites.isEmpty) {
+      return Future<void>.value();
+    }
+    return (_writesIdle ??= Completer<void>()).future;
+  }
 
   /// Runs one persistence operation, retrying once on failure and landing
   /// a terminal failure in the diagnostics tail (issue #230). Returns
@@ -63,13 +75,45 @@ class StorageService {
   /// log covers the rest, and not throwing keeps a storage failure from
   /// riding a UI callback out as an uncaught async error.
   ///
-  /// The operation is appended to [_writeTail] and only starts when the
-  /// previous one — attempts, retry, and all — has settled, so operations
-  /// land in issue order no matter how slow a retry is.
+  /// The operation is queued and only starts when the previous one —
+  /// attempts, retry, and all — has settled, so operations land in call
+  /// order no matter how slow a retry is. With nothing in flight it
+  /// starts right away, keeping the saver's old synchronous reach for
+  /// the platform.
   Future<bool> _write(String what, Future<bool> Function() write) {
-    final operation = _writeTail.then((_) => _attemptWrite(what, write));
-    _writeTail = operation.then<void>((_) {}, onError: (_) {});
-    return operation;
+    final operation = _QueuedWrite(what, write, Zone.current);
+    _queuedWrites.add(operation);
+    _drainWrites();
+    return operation.completer.future;
+  }
+
+  /// Starts the next queued operation if nothing is running, or releases
+  /// the idle waiters when the queue is empty.
+  void _drainWrites() {
+    if (_writeInFlight) return;
+    if (_queuedWrites.isEmpty) {
+      _writesIdle?.complete();
+      _writesIdle = null;
+      return;
+    }
+    final operation = _queuedWrites.removeAt(0);
+    _writeInFlight = true;
+    // Run the operation in the zone that requested it: a widget test
+    // builds the service in `setUp` (the outer zone) and awaits a save in
+    // the fake-async test body, and a platform future created in the
+    // wrong zone never resolves there.
+    unawaited(operation.zone.run(() async {
+      var succeeded = false;
+      try {
+        succeeded = await _attemptWrite(operation.what, operation.write);
+      } catch (_) {
+        // _attemptWrite swallows by contract; a surprise must still settle
+        // its caller and release the queue rather than hang it.
+      }
+      _writeInFlight = false;
+      operation.completer.complete(succeeded);
+      _drainWrites();
+    }));
   }
 
   /// The one attempt-then-retry body of [_write].
@@ -220,4 +264,15 @@ class StorageService {
   bool hasSaveData() {
     return _prefs.containsKey(saveDataKey);
   }
+}
+
+/// One storage operation waiting its turn: what it is, how to run it, the
+/// zone that asked for it (issue #230), and the result its caller awaits.
+class _QueuedWrite {
+  _QueuedWrite(this.what, this.write, this.zone);
+
+  final String what;
+  final Future<bool> Function() write;
+  final Zone zone;
+  final Completer<bool> completer = Completer<bool>();
 }
