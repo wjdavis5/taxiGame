@@ -78,6 +78,37 @@ class EndlessFareController extends Component
   /// own world.
   World? _runWorld;
 
+  /// The next fare, built once and reused (issue #253).
+  ///
+  /// [EndlessCourse.fare] is a pure function of (index, live world frame,
+  /// environment), but the horizon test in [_generateAhead] used to
+  /// rebuild the whole thing — a seeded RNG, six-plus draws, kerb lookups
+  /// with road geometry — every frame just to read
+  /// [EndlessFare.pickupDistance]. The pending fare is cached here and
+  /// only rebuilt when the index advances or the world folds: the fare's
+  /// positions are stamped in the live frame, so a fold moves the frame
+  /// the next spawn must land in.
+  EndlessFare? _pendingFare;
+  int _pendingFareIndex = -1;
+  double? _pendingFareShift;
+
+  /// The fare at [index] in the live frame, from the cache when possible
+  /// (issue #253).
+  EndlessFare _fareFor(int index) {
+    final shift = game.worldShift;
+    final pending = _pendingFare;
+    if (pending != null &&
+        _pendingFareIndex == index &&
+        _pendingFareShift == shift) {
+      return pending;
+    }
+    final fare = course.fare(index, worldShift: shift);
+    _pendingFare = fare;
+    _pendingFareIndex = index;
+    _pendingFareShift = shift;
+    return fare;
+  }
+
   @override
   void onMount() {
     super.onMount();
@@ -184,9 +215,10 @@ class EndlessFareController extends Component
     final behindDistance = cameraDistance - cullBehind;
     var spawned = 0;
     while (spawned < _maxSpawnsPerUpdate) {
-      final pickupDistance =
-          course.fare(nextFareIndex, worldShift: game.worldShift)
-              .pickupDistance;
+      // Built (or reused from the cache) once per iteration instead of
+      // twice on the spawn path (issue #253).
+      final fare = _fareFor(nextFareIndex);
+      final pickupDistance = fare.pickupDistance;
       if (pickupDistance < behindDistance) {
         // Hopelessly behind the player (a teleport or long freeze jumped
         // the course): skip it without ever putting it on the street.
@@ -197,7 +229,7 @@ class EndlessFareController extends Component
       if (pickupDistance > horizonDistance) {
         break; // Not needed yet; check again later.
       }
-      _spawnFare(course.fare(nextFareIndex, worldShift: game.worldShift));
+      _spawnFare(fare);
       nextFareIndex++;
       spawned++;
     }
