@@ -34,6 +34,10 @@ void main() {
 
   group('recording a completed daily', () {
     test('stores it and reads it back from storage', () async {
+      // The save goes first, as it does on a device: a shift that records
+      // a daily result has long since written one, and history left
+      // without a save is cleared with it (issue #218).
+      await gameState.save();
       // Calendar yesterday, never now − 24h (issue #196): on the 25-hour
       // fall-back day that is still today for the hour after midnight, and
       // the "yesterday" result would spend today's one attempt instead.

@@ -230,6 +230,21 @@ class GameStateService extends ChangeNotifier {
     final data = await _storageService.loadSaveData();
     if (data != null) {
       _saveData = data;
+    } else {
+      // A corrupt (or absent) save is a fresh save (issue #218): the
+      // history, the daily results, and the ghost left on disk describe
+      // a save that no longer exists — the same progress a reset wipes —
+      // and the migrations below used to seed phantom stats and awards
+      // from that dead window and hand its ghost back. Clearing here, the
+      // way [resetProgress] does, keeps the fresh save and the records
+      // that leave with it in agreement; a first launch has nothing to
+      // clear.
+      _runHistory.clear();
+      await _storageService.clearRunHistory();
+      _dailyHistory.clear();
+      await _storageService.clearDailyHistory();
+      _dailyGhost = null;
+      await _storageService.clearDailyGhost();
     }
     // A missing or corrupt history is a fresh one — the same recovery a
     // corrupt save gets, never a crash.
@@ -252,15 +267,9 @@ class GameStateService extends ChangeNotifier {
     // window holds, so a pre-fix save keeps every clean bank its window
     // still shows — and persist it immediately, before the window can
     // trim one out from under the seed. Post-migration saves always hold
-    // the larger number, so this no-ops from then on.
-    final windowCleanBanks = _runHistory
-        .where((record) => record.banked && record.livesLost == 0)
-        .length;
+    // the larger number, so this no-ops from then on. Only a loaded save
+    // (no else above) has a window that belongs to it (issue #218).
     var migratedCleanBanks = false;
-    if (windowCleanBanks > _saveData.personalBests.cleanBankedShifts) {
-      _saveData.personalBests.cleanBankedShifts = windowCleanBanks;
-      migratedCleanBanks = true;
-    }
     // The lifetime totals' seed of the same shape (issue #183): a save
     // written before the totals block existed stores nothing, and its
     // only record of anything is the window. Each counter takes the
@@ -268,11 +277,20 @@ class GameStateService extends ChangeNotifier {
     // and the seed persists immediately, before the window can trim a
     // shift out from under it. Post-migration saves always hold the
     // larger number, so this no-ops from then on.
-    final migratedTotals =
-        _saveData.lifetimeRunTotals.seedFromWindow(_runHistory);
-    // The ghost trace loads with everything else (issue #20); a missing
-    // or corrupt one just means no ghost to race, never a crash.
-    _dailyGhost = _storageService.loadDailyGhost();
+    var migratedTotals = false;
+    if (data != null) {
+      final windowCleanBanks = _runHistory
+          .where((record) => record.banked && record.livesLost == 0)
+          .length;
+      if (windowCleanBanks > _saveData.personalBests.cleanBankedShifts) {
+        _saveData.personalBests.cleanBankedShifts = windowCleanBanks;
+        migratedCleanBanks = true;
+      }
+      migratedTotals = _saveData.lifetimeRunTotals.seedFromWindow(_runHistory);
+      // The ghost trace loads with everything else (issue #20); a missing
+      // or corrupt one just means no ghost to race, never a crash.
+      _dailyGhost = _storageService.loadDailyGhost();
+    }
     // A save can silently deserve achievements it has never been given
     // (issue #21): this build ships awards an older build never knew
     // about. Retro-award them once, quietly — no unlock banner fires
