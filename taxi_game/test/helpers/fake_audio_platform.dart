@@ -219,6 +219,10 @@ class FakeGlobalAudioplayersPlatform
   /// Every context handed to [setGlobalAudioContext], in order.
   final List<AudioContext> contexts = [];
 
+  /// Every [setGlobalAudioContext] invocation, successful or not —
+  /// includes held and failed attempts, so retry counts are observable.
+  int attempts = 0;
+
   /// When true, [setGlobalAudioContext] throws — simulating a session the
   /// OS refuses to configure.
   bool failSetGlobalAudioContext = false;
@@ -232,6 +236,7 @@ class FakeGlobalAudioplayersPlatform
 
   @override
   Future<void> setGlobalAudioContext(AudioContext ctx) async {
+    attempts++;
     await hold?.future;
     if (failSetGlobalAudioContext) {
       throw PlatformException(

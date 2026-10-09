@@ -9,6 +9,8 @@ import 'package:path_provider/path_provider.dart'
     show getTemporaryDirectory;
 import 'package:provider/provider.dart';
 
+import 'diagnostics.dart';
+
 /// Audio playback for the game (issue #4), on top of `flame_audio`.
 ///
 /// Every asset lives under `assets/audio/` — which is exactly the prefix
@@ -131,6 +133,15 @@ class AudioService {
   /// `.playback` default — the guarantee issue #39 used to buy by
   /// re-applying the context on every play.
   Future<void>? _sessionReady;
+
+  /// True while a failed session claim still owes its one retry (issue
+  /// #234). Armed by the failure; spent by the next [playSound] or
+  /// [playMusic].
+  bool _sessionRetryArmed = false;
+
+  /// True once the one retry has been spent, success or failure — so a
+  /// session the OS keeps refusing is retried once, not once per play.
+  bool _sessionRetryAttempted = false;
 
   bool _soundEnabled = true;
   bool _musicEnabled = true;
@@ -269,15 +280,33 @@ class AudioService {
 
   /// Applies the ambient session (issue #39) on iOS before any player
   /// exists, replacing the plugin's launch-time `.playback` default. Off iOS
-  /// this is a no-op — Android mixes by default and gets no counterpart. A
-  /// failure is swallowed: a session that will not configure must never
-  /// crash or block startup.
+  /// this is a no-op — Android mixes by default and gets no counterpart.
+  ///
+  /// A failure is logged and arms the one retry the next [playSound] or
+  /// [playMusic] spends (issue #234): on iOS this is the only place the
+  /// ambient session is claimed, so a refusal left the plugin's
+  /// `.playback` default standing — the game interrupting other apps'
+  /// music and playing through the Ring/Silent switch — with no record
+  /// and no second chance. It must still never crash or block startup.
   Future<void> _applyIosAudioContext() async {
     final context = _platformContext;
     if (context == null) return;
     try {
       await AudioPlayer.global.setAudioContext(context);
-    } catch (_) {}
+    } catch (error, stack) {
+      Diagnostics.instance.logError('audio_session', error, stack);
+      if (!_sessionRetryAttempted) _sessionRetryArmed = true;
+    }
+  }
+
+  /// Spends the armed retry of a failed session claim (issue #234), if
+  /// there is one. New players wait on [_sessionReady], so the retry is
+  /// ordered ahead of any voice or loop this play is about to create.
+  void _retryIosAudioContextIfArmed() {
+    if (!_sessionRetryArmed) return;
+    _sessionRetryArmed = false;
+    _sessionRetryAttempted = true;
+    _sessionReady = _applyIosAudioContext();
   }
 
   /// True when music should currently be audible.
@@ -348,6 +377,8 @@ class AudioService {
     if (!_soundEnabled) return;
     final file = soundFiles[soundName];
     if (file == null) return;
+    // A refused session claim gets its one retry here (issue #234).
+    _retryIosAudioContextIfArmed();
     attemptedPlays.update(soundName, (n) => n + 1, ifAbsent: () => 1);
     final level = volume ?? _defaultVolumes[soundName] ?? 1.0;
     final voices = _voices.putIfAbsent(soundName, _Voices.new);
@@ -425,6 +456,8 @@ class AudioService {
   /// Starts the looping music track. Remembered even while music is disabled,
   /// so re-enabling music resumes the same track.
   Future<void> playMusic() async {
+    // A refused session claim gets its one retry here (issue #234).
+    _retryIosAudioContextIfArmed();
     _musicWanted = true;
     if (!isMusicWanted) return;
     try {

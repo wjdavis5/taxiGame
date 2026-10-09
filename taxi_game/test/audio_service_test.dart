@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/services.dart' show AssetManifest, rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/services/audio_service.dart';
+import 'package:taxi_game/services/diagnostics.dart';
 
 import 'helpers/fake_audio_platform.dart';
 
@@ -735,10 +736,60 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       fake.global.failSetGlobalAudioContext = true;
 
-      // Completing at all is the assertion: the failure is swallowed and
-      // the rest of startup (BGM init, cache warm) runs.
+      // Completing at all is the assertion: the failure is logged and the
+      // rest of startup (BGM init, cache warm) runs.
       await AudioService().initialize();
       expect(fake.global.contexts, isEmpty);
+    });
+
+    test('a failed session claim is logged and retried on the next play '
+        '(issue #234)', () async {
+      // On iOS this call is the only place the ambient session is claimed
+      // — per-player contexts are null there (issue #49) — so a refused
+      // activation must not leave the plugin's `.playback` default
+      // standing without a trace or a second chance.
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      fake.global.failSetGlobalAudioContext = true;
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      final audio = AudioService();
+      await audio.initialize();
+      expect(Diagnostics.instance.export(),
+          contains('[error:audio_session]'),
+          reason: 'the refusal is recorded, not swallowed');
+      expect(fake.global.contexts, isEmpty);
+
+      // The next play spends the one retry, and the session lands.
+      fake.global.failSetGlobalAudioContext = false;
+      audio.playCoinSound();
+      await until(() => fake.global.contexts.isNotEmpty);
+      expect(fake.global.contexts.single.iOS.category,
+          AVAudioSessionCategory.ambient);
+      await audio.dispose();
+    });
+
+    test('the session retry is spent once, not once per play (issue #234)',
+        () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      fake.global.failSetGlobalAudioContext = true;
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      final audio = AudioService();
+      await audio.initialize();
+      audio.playCoinSound();
+      await until(() => fake.global.attempts == 2);
+      await settle();
+
+      // The retry failed too: it is spent. Later plays must not hammer a
+      // session the OS keeps refusing.
+      audio.playCoinSound();
+      await audio.playMusic();
+      await settle();
+      expect(fake.global.attempts, 2,
+          reason: 'one initial attempt plus exactly one retry');
+      await audio.dispose();
     });
   });
 
