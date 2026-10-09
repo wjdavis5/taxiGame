@@ -40,6 +40,13 @@ import UIKit
     observeSystemAudio(through: channel)
   }
 
+  /// The observer tokens [observeSystemAudio] installed. Re-installation
+  /// removes these first (issue #236): each block retains the channel it
+  /// was registered with, so repeated implicit-engine initialization
+  /// would otherwise accumulate observers that keep old channels — and
+  /// their whole plugin registries — alive, and fire duplicate events.
+  private var systemAudioObservers: [NSObjectProtocol] = []
+
   /// Issue #236 — system audio can leave through a door Flutter never
   /// opens. AVAudioSession interruptions (a call, Siri, another app
   /// claiming audio) and output-route changes (headphones unplugged or
@@ -48,10 +55,16 @@ import UIKit
   /// the speaker after headphones left. Forward both to AudioService as
   /// `systemAudioPaused` / `systemAudioResumed` over the share channel;
   /// Dart suspends on the first and restores the wants on the second.
+  /// Idempotent: a second call re-installs against the new channel
+  /// instead of stacking a second pair of observers.
   private func observeSystemAudio(through channel: FlutterMethodChannel) {
     let center = NotificationCenter.default
+    for observer in systemAudioObservers {
+      center.removeObserver(observer)
+    }
+    systemAudioObservers.removeAll()
 
-    center.addObserver(
+    systemAudioObservers.append(center.addObserver(
       forName: AVAudioSession.interruptionNotification,
       object: nil,
       queue: .main
@@ -72,14 +85,23 @@ import UIKit
           note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
         let options = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
         guard options.contains(.shouldResume) else { return }
-        try? AVAudioSession.sharedInstance().setActive(true)
+        // Activation must really succeed before Dart is told the session
+        // resumed (issue #236): a swallowed failure here would restart
+        // playback onto a session the OS still owns, and the game would
+        // think it is audible. On failure stay quiet — the same held
+        // state as shouldResume == false.
+        do {
+          try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+          return
+        }
         channel.invokeMethod("systemAudioResumed", arguments: nil)
       @unknown default:
         break
       }
-    }
+    })
 
-    center.addObserver(
+    systemAudioObservers.append(center.addObserver(
       forName: AVAudioSession.routeChangeNotification,
       object: nil,
       queue: .main
@@ -99,7 +121,7 @@ import UIKit
       default:
         break
       }
-    }
+    })
   }
 
   /// The root view controller of the foreground scene's key window. Under
