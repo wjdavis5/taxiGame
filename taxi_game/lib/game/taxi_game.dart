@@ -572,8 +572,13 @@ class TaxiGame extends FlameGame
     // A save pointing past the last level means the tutorial ladder is
     // finished (issue #16): the ladder's whole job is to hand the player
     // to Endless, so PLAY opens onto a fresh shift — never an endless
-    // replay of level 10.
-    if (!await levelLoader.levelExists(gameState.currentLevel)) {
+    // replay of level 10. The save's own state is the authority on
+    // whether the ladder is finished (issue #229): the old branch asked
+    // `levelExists(currentLevel)` and opened Endless whenever the probe
+    // answered false, so a manifest problem silently swapped a level run
+    // for a shift. Inside the ladder a declared-but-unreadable level now
+    // throws from `loadLevel` and fails loudly instead.
+    if (gameState.tutorialComplete) {
       await startEndlessRun(seed: freshSeed());
       return;
     }

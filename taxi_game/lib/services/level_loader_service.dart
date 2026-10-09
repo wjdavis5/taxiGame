@@ -1,7 +1,32 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../game/levels/level.dart';
+
+/// Thrown when a level the bundle should ship cannot be read or parsed
+/// (issue #229).
+///
+/// The loader used to answer a failure with [GameLevel.createTestLevel]:
+/// a corrupted or schema-shifted asset silently became level 1, the game
+/// drove it under whatever level header the save named, and completing
+/// the stand-in still unlocked the next rung. A typed failure keeps that
+/// from ever being mistaken for real content or real progress.
+class LevelLoadException implements Exception {
+  LevelLoadException(this.levelNumber, this.assetPath, this.cause);
+
+  /// The level the caller asked for.
+  final int levelNumber;
+
+  /// The asset the bundle was asked for.
+  final String assetPath;
+
+  /// The read/parse failure underneath.
+  final Object cause;
+
+  @override
+  String toString() =>
+      'LevelLoadException: level $levelNumber ($assetPath) could not be '
+      'loaded: $cause';
+}
 
 /// Service to load levels from JSON files
 class LevelLoaderService {
@@ -18,16 +43,23 @@ class LevelLoaderService {
   String _levelAssetPath(int levelNumber) =>
       'assets/levels/level_${levelNumber.toString().padLeft(3, '0')}.json';
 
-  /// Load a level by number
+  /// Load a level by number.
+  ///
+  /// A level the bundle declares but cannot read or parse **throws** a
+  /// [LevelLoadException] rather than substituting
+  /// [GameLevel.createTestLevel] (issue #229): the silent substitution
+  /// drove a real save through a stand-in level and still unlocked the
+  /// next rung when it completed. The caller decides how to surface the
+  /// failure.
   Future<GameLevel> loadLevel(int levelNumber) async {
     // Check cache first
     if (_levelCache.containsKey(levelNumber)) {
       return _levelCache[levelNumber]!;
     }
 
+    final path = _levelAssetPath(levelNumber);
     try {
-      final jsonString =
-          await rootBundle.loadString(_levelAssetPath(levelNumber));
+      final jsonString = await rootBundle.loadString(path);
       final jsonData = json.decode(jsonString) as Map<String, dynamic>;
 
       final level = GameLevel.fromJson(jsonData);
@@ -36,11 +68,8 @@ class LevelLoaderService {
       _levelCache[levelNumber] = level;
 
       return level;
-    } catch (e) {
-      // If level file doesn't exist, return a default test level
-      debugPrint('Error loading level $levelNumber: $e');
-      debugPrint('Falling back to test level');
-      return GameLevel.createTestLevel();
+    } catch (error) {
+      throw LevelLoadException(levelNumber, path, error);
     }
   }
 

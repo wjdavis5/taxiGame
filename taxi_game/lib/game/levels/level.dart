@@ -1,4 +1,5 @@
 import 'package:flame/components.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../../models/traffic_pattern.dart';
 
 /// Represents a game level with all its data
@@ -39,7 +40,13 @@ class GameLevel {
     TrafficPattern? trafficPattern,
   }) : trafficPattern = trafficPattern ?? TrafficPattern.light;
 
-  /// Creates a simple test level for initial development
+  /// Creates a simple test level for initial development.
+  ///
+  /// Test-only (issue #229): the shipping loader used to fall back to
+  /// this on any read or parse failure, which turned a broken level asset
+  /// into plausible-looking progress. Nothing in `lib/` may call it —
+  /// tests that need a stand-in GameLevel build one from here.
+  @visibleForTesting
   factory GameLevel.createTestLevel() {
     return GameLevel(
       levelNumber: 1,

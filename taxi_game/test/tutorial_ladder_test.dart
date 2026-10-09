@@ -108,8 +108,10 @@ void main() {
 
       for (var i = 1; i <= GameLevel.ladderLength; i++) {
         final level = await levelLoader.loadLevel(i);
-        // The loader falls back to a throwaway test level when an asset
-        // is missing; a levelNumber mismatch catches that silently.
+        // An unreadable rung throws from the loader (issue #229), so a
+        // failure surfaces at the load itself; the name check stands as a
+        // tripwire in case the old test-level substitution is ever
+        // reintroduced.
         expect(level.levelNumber, i, reason: 'rung $i failed to load');
         expect(level.name, isNot(equals('Test Level')));
       }
