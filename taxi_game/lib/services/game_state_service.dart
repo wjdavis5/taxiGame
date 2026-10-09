@@ -279,6 +279,12 @@ class GameStateService extends ChangeNotifier {
     // shift out from under it. Post-migration saves always hold the
     // larger number, so this no-ops from then on.
     var migratedTotals = false;
+    // The personal-best maxima seed the same way (issue #247): the four
+    // records are stored maxima too, and a save whose block predates (or
+    // missed the write of) a window best used to keep the older number
+    // while the history — and the menu's BEST line — still showed the
+    // better shift. Per-field max, folded into the one migration write.
+    var migratedPbs = false;
     if (data != null) {
       final windowCleanBanks = _runHistory
           .where((record) => record.banked && record.livesLost == 0)
@@ -288,6 +294,7 @@ class GameStateService extends ChangeNotifier {
         migratedCleanBanks = true;
       }
       migratedTotals = _saveData.lifetimeRunTotals.seedFromWindow(_runHistory);
+      migratedPbs = _saveData.personalBests.seedFromWindow(_runHistory);
       // The ghost trace loads with everything else (issue #20); a missing
       // or corrupt one just means no ghost to race, never a crash.
       _dailyGhost = _storageService.loadDailyGhost();
@@ -298,7 +305,7 @@ class GameStateService extends ChangeNotifier {
     // from a load; the records screen simply shows them earned.
     _evaluateAchievements(announce: false);
     notifyListeners();
-    if (migratedCleanBanks || migratedTotals) await save();
+    if (migratedCleanBanks || migratedTotals || migratedPbs) await save();
   }
 
   /// True while [resetProgress]'s storage transaction is in flight
