@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/game/systems/run_length_simulator.dart';
 import 'package:taxi_game/game/systems/run_environment.dart';
+import 'package:taxi_game/models/traffic_pattern.dart';
 
 /// The Monte-Carlo run-length estimate behind issue #18's tuning.
 ///
@@ -273,4 +276,74 @@ void main() {
               'later');
     });
   });
+
+  group('the shared spawn-wave roll (issue #216)', () {
+    test('spends one roll per lane, in lane order, before any gate', () {
+      // The live spawner and the simulator both drive every wave through
+      // [forEachRolledLane], so this is the one place the order can go
+      // wrong. Every lane rolls its probability — lanes a caller's later
+      // gate will skip included — and a passed lane's callback draws
+      // (speed, type) run immediately, before the next lane's roll.
+      const lanes = [
+        TrafficLaneConfig(
+          laneX: 140,
+          speedRange: SpeedRange(min: 80, max: 120),
+          spawnProbability: 1.0,
+          oncoming: true,
+        ),
+        TrafficLaneConfig(
+          laneX: 260,
+          speedRange: SpeedRange(min: 80, max: 120),
+          spawnProbability: 0.0,
+          oncoming: false,
+        ),
+        TrafficLaneConfig(
+          laneX: 200,
+          speedRange: SpeedRange(min: 80, max: 120),
+          spawnProbability: 1.0,
+          oncoming: false,
+        ),
+      ];
+      final random = _ScriptedRandom([0.5, 0.25, 0.1, 0.75, 0.2]);
+      final spawned = <double>[];
+      final draws = <double>[];
+
+      forEachRolledLane(random, lanes, (lane) {
+        spawned.add(lane.laneX);
+        draws.add(random.nextDouble()); // the callback's own draw
+      });
+
+      expect(spawned, [140.0, 200.0],
+          reason: 'only a passed roll spawns, and the refused lane still '
+              'spent its roll to get there');
+      expect(random.doubles, [0.5, 0.25, 0.1, 0.75, 0.2],
+          reason: 'one probability roll per lane in order, with the '
+              'callback\'s draw interleaved immediately after each pass');
+      expect(draws, [0.25, 0.2],
+          reason: 'the callback runs before the next lane\'s roll');
+    });
+  });
+}
+
+/// A [math.Random] that answers from a script and records every draw, for
+/// the wave-contract test (issue #216).
+class _ScriptedRandom implements math.Random {
+  _ScriptedRandom(this._script);
+
+  final List<double> _script;
+  final List<double> doubles = [];
+  int _next = 0;
+
+  @override
+  double nextDouble() {
+    final value = _script[_next++];
+    doubles.add(value);
+    return value;
+  }
+
+  @override
+  bool nextBool() => throw UnimplementedError();
+
+  @override
+  int nextInt(int max) => throw UnimplementedError();
 }

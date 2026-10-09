@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flame/components.dart';
 
 /// Defines a traffic pattern for spawning vehicles
@@ -127,6 +129,29 @@ class TrafficLaneConfig {
       'spawnProbability': spawnProbability,
       'oncoming': oncoming,
     };
+  }
+}
+
+/// Drives one spawn wave's per-lane probability rolls (issue #216).
+///
+/// The live spawner and the tuning simulator must consume the RNG in the
+/// same order: the same seed has to draw the same road the player drives,
+/// or the harness stops measuring what ships. That order lives here, in
+/// the one place both call — one `nextDouble()` per lane, in lane order,
+/// *before* any gate that can skip the lane's spawn, so a skipped lane
+/// still spends its roll. [onRolled] runs immediately for a lane whose
+/// roll passed, keeping the speed and type draws inside it interleaved
+/// with the next lane's probability roll, exactly the live spawner's
+/// order.
+void forEachRolledLane(
+  math.Random random,
+  List<TrafficLaneConfig> lanes,
+  void Function(TrafficLaneConfig lane) onRolled,
+) {
+  for (final lane in lanes) {
+    if (random.nextDouble() <= lane.spawnProbability) {
+      onRolled(lane);
+    }
   }
 }
 

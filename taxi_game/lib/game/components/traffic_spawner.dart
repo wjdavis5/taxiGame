@@ -239,12 +239,13 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     // wave: the children scan below already covers every earlier wave.
     final wave = <_AcceptedSpawn>[];
 
-    // Try to spawn a vehicle in each lane based on probability
-    for (final laneConfig in lanes) {
-      if (random.nextDouble() <= laneConfig.spawnProbability) {
-        _spawnVehicleInLane(laneConfig, spawnY, spawnDistance, wave);
-      }
-    }
+    // Try to spawn a vehicle in each lane based on probability. The roll
+    // order is the shared contract with the tuning simulator (issue #216):
+    // [forEachRolledLane] spends one probability roll per lane, in order,
+    // before the gates in [_spawnVehicleInLane] can skip the spawn.
+    forEachRolledLane(random, lanes, (laneConfig) {
+      _spawnVehicleInLane(laneConfig, spawnY, spawnDistance, wave);
+    });
   }
 
   void _spawnVehicleInLane(
