@@ -113,6 +113,28 @@ void main() {
     );
   });
 
+  testWidgets('two BUY invocations inside one frame charge once (issue #221)',
+      (tester) async {
+    // The double-tap window: both taps reach the button before the
+    // post-purchase rebuild swaps BUY for SELECT. The second invocation
+    // must not spend again — one car, one charge.
+    final compact = VehicleCatalog.byId('compact_red')!;
+    gameState.addCoins(compact.price * 2 + 137);
+    await pumpGarage(tester);
+
+    final buy = tester.widget<ElevatedButton>(
+      find.byKey(const ValueKey('garage_buy_compact_red')),
+    );
+    buy.onPressed!();
+    buy.onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(gameState.totalCoins, compact.price + 137,
+        reason: 'a duplicate BUY invocation must not charge a second time');
+    expect(gameState.unlockedVehicles, contains('compact_red'));
+    expect(gameState.selectedVehicle, 'compact_red');
+  });
+
   testWidgets('a car you cannot afford stays locked and says so',
       (tester) async {
     await pumpGarage(tester);

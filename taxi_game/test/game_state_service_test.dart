@@ -43,6 +43,26 @@ void main() {
     expect(gameStateService.unlockedVehicles, contains('sport_taxi'));
   });
 
+  test('a repeat unlock of an owned car never charges again (issue #221)',
+      () {
+    // The double-BUY window: two invocations land before the garage
+    // rebuilds, and the old order spent the cost before it checked
+    // ownership — the player paid twice for one car. The repeat call is
+    // the purchase it repeats, so it reports true and costs nothing.
+    gameStateService.addCoins(100);
+
+    expect(gameStateService.unlockVehicle('sport_taxi', 50), isTrue);
+    expect(gameStateService.unlockVehicle('sport_taxi', 50), isTrue);
+    expect(gameStateService.totalCoins, 50,
+        reason: 'one car, one charge');
+  });
+
+  test('an unaffordable first unlock still refuses', () {
+    expect(gameStateService.unlockVehicle('sport_taxi', 50), isFalse);
+    expect(gameStateService.totalCoins, 0);
+    expect(gameStateService.unlockedVehicles, isNot(contains('sport_taxi')));
+  });
+
   test('unlocked and selected vehicles survive a reload', () async {
     final sedanPrice = VehicleCatalog.byId('sedan_blue')!.price;
     gameStateService.addCoins(sedanPrice);

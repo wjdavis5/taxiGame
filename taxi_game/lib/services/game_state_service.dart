@@ -416,16 +416,19 @@ class GameStateService extends ChangeNotifier {
   
   /// Unlock a vehicle
   bool unlockVehicle(String vehicleId, int cost) {
+    // Ownership is checked before the spend (issue #221): the spend used
+    // to run first and a duplicate BUY — two taps inside one garage frame
+    // — charged the same car twice, permanently. A repeat call now costs
+    // nothing and reports true, the purchase it repeats.
+    if (_saveData.unlockedVehicles.contains(vehicleId)) return true;
     if (spendCoins(cost)) {
-      if (!_saveData.unlockedVehicles.contains(vehicleId)) {
-        _saveData.unlockedVehicles.add(vehicleId);
-        notifyListeners();
-        save();
-        // The garage is a gameplay event too (issue #21): cars-collected
-        // achievements are evaluated the moment the fleet grows, so the
-        // purchase that earned one can announce it.
-        _evaluateAchievements();
-      }
+      _saveData.unlockedVehicles.add(vehicleId);
+      notifyListeners();
+      save();
+      // The garage is a gameplay event too (issue #21): cars-collected
+      // achievements are evaluated the moment the fleet grows, so the
+      // purchase that earned one can announce it.
+      _evaluateAchievements();
       return true;
     }
     return false;
