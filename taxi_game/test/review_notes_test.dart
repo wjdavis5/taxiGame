@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'helpers/workflow_guards.dart';
+
 /// The 4.3(a) guard (issue #211): every App Store submission must carry the
 /// app's differentiation statement for App Review.
 ///
@@ -66,6 +68,32 @@ void main() {
       expect(workflow, contains('fastlane/review_notes.txt is missing'));
       expect(workflow, contains('fastlane/review_notes.txt is empty'));
       expect(workflow, contains('4.3(a) guard'));
+
+      // The strings above are the annotations, not the refusal: they
+      // survive a deleted `exit 1`. Each refusal is pinned inside its own
+      // branch (issue #224). The old step-wide token scan was satisfied
+      // by the sibling What's New guard's `echo "::error::"` + `exit 1`,
+      // so deleting either refusal here kept this test green — the
+      // 4.3(a) gate would be described but never enforced.
+      final gate = workflowStepBlock(
+          workflow, 'Decide whether to submit for review');
+      // The path assignment names the guard; the branches below only see
+      // the `$review_notes` variable.
+      final guard = shellIfBlock(gate, r'review_notes="$PROJECT_PATH');
+
+      final missingBranch = shellIfBlock(guard, r'! -f "$review_notes"');
+      expect(missingBranch, contains('::error::'));
+      expect(missingBranch, contains('exit 1'),
+          reason: 'a missing review_notes.txt must fail this step itself');
+      expect(missingBranch, contains('is missing'));
+      expect(missingBranch, contains('4.3(a) guard'));
+
+      final emptyBranch = shellIfBlock(guard, r'< "$review_notes"');
+      expect(emptyBranch, contains('::error::'));
+      expect(emptyBranch, contains('exit 1'),
+          reason: 'an empty review_notes.txt must fail this step itself');
+      expect(emptyBranch, contains('is empty'));
+      expect(emptyBranch, contains('4.3(a) guard'));
     });
 
     test('the fastlane lane writes the file onto the version before deliver',

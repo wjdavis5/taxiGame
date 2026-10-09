@@ -67,6 +67,15 @@ void main() {
     game.update(1 / 60);
     expect(game.isMounted, isTrue);
     expect(game.world.children, isNotEmpty);
+    // Real postcondition (issue #227): the parked launch events must
+    // leave a live, unpaused run — a handler that read the pre-mount
+    // inactive as a backgrounding would freeze the fresh shift, and one
+    // that never ran would leave both flags as constructed.
+    expect(game.isGameActive, isTrue,
+        reason: 'the launch sequence must leave the endless run live');
+    expect(game.paused, isFalse,
+        reason: 'the pre-mount lifecycle events must not freeze the '
+            'fresh run');
   });
 
   test('probe: transient inactive during an active run then resumed', () async {
@@ -75,11 +84,18 @@ void main() {
     expect(game.isGameActive, isTrue, reason: 'endless run should be live');
 
     game.lifecycleStateChange(AppLifecycleState.inactive);
+    expect(game.paused, isTrue,
+        reason: 'the inactive freeze engages the pause machinery');
+
     game.lifecycleStateChange(AppLifecycleState.resumed);
+    expect(game.paused, isTrue,
+        reason: 'still frozen — the player must re-enter deliberately');
 
     // The player walks back in through the pause menu.
     expect(game.overlays.activeOverlays, contains('pauseMenu'));
     game.resumeGame();
+    expect(game.paused, isFalse, reason: 'the menu hands the run back');
+    expect(game.overlays.isActive('pauseMenu'), isFalse);
     for (var i = 0; i < 30; i++) {
       game.update(1 / 60);
     }
@@ -93,12 +109,36 @@ void main() {
     // background the app inside that window.
     final restart = game.startEndlessRun(seed: 7);
     game.lifecycleStateChange(AppLifecycleState.hidden);
+
+    // Real postconditions (issue #227), the lifecycle_pause_test.dart
+    // contract: the fresh run was live when hidden landed, so the freeze
+    // engages silently before any menu.
+    expect(game.paused, isTrue,
+        reason: 'the hidden event froze the restarted run');
+    expect(game.overlays.isActive('pauseMenu'), isFalse,
+        reason: 'silent — no menu over a street nobody can see');
+
     await restart;
+
+    // The restore completes under the freeze, with the world intact and
+    // the run still held for a deliberate re-entry.
+    expect(game.paused, isTrue,
+        reason: 'the restored run is still frozen, not quietly live');
+    expect(game.isGameActive, isTrue, reason: 'the shift itself is intact');
+
     game.lifecycleStateChange(AppLifecycleState.resumed);
+    expect(game.paused, isTrue,
+        reason: 'still frozen — the resume must not hand back traffic');
+    expect(game.overlays.isActive('pauseMenu'), isTrue,
+        reason: 'the pause menu is the way back in');
+
+    game.resumeGame();
+    expect(game.paused, isFalse);
+    expect(game.overlays.isActive('pauseMenu'), isFalse);
     for (var i = 0; i < 30; i++) {
       game.update(1 / 60);
     }
-    expect(game.isGameActive, isTrue);
+    expect(game.isGameActive, isTrue, reason: 'the restored run plays on');
     expect(game.world.children, isNotEmpty);
   });
 
@@ -106,11 +146,28 @@ void main() {
     final game = await mountGame();
     game.update(1 / 60);
     game.lifecycleStateChange(AppLifecycleState.detached);
+
+    // Detached is as live as any other backgrounding (issue #227): the
+    // run freezes silently and waits for a deliberate walk back in.
+    expect(game.paused, isTrue,
+        reason: 'the detached freeze engages the pause machinery');
+    expect(game.overlays.isActive('pauseMenu'), isFalse,
+        reason: 'silent until the app returns');
+
     game.lifecycleStateChange(AppLifecycleState.resumed);
+    expect(game.paused, isTrue,
+        reason: 'still frozen — deliberate re-entry, not a dump back in');
+    expect(game.overlays.isActive('pauseMenu'), isTrue,
+        reason: 'the pause menu is the way back in');
+
+    game.resumeGame();
     for (var i = 0; i < 30; i++) {
       game.update(1 / 60);
     }
     expect(game.isMounted, isTrue);
+    expect(game.paused, isFalse);
+    expect(game.isGameActive, isTrue,
+        reason: 'the worst-case backgrounding still leaves a live run');
   });
 
   test('probe: fresh save, first game start on a level (tutorial path)', () async {

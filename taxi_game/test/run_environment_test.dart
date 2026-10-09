@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:taxi_game/game/components/dropoff_zone.dart';
+import 'package:taxi_game/game/components/pickup_zone.dart';
 import 'package:taxi_game/game/systems/difficulty_curve.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
 import 'package:taxi_game/game/systems/run_environment.dart';
@@ -582,15 +584,20 @@ void main() {
     test('fares never put a stop beyond the taxi clamp from the road',
         () {
       // The kerb sits [curbOffset] px past the road edge; the clamped
-      // taxi's centre is half a car inside it. The pickup zone's 40 px
-      // detection radius must outrun that distance on every width the
-      // environment draws, or a stop would be undriveable-to.
+      // taxi's centre is half a car inside it. The zones' detection
+      // radii must outrun the distance from the clamped taxi's hitbox to
+      // the kerb on every width the environment draws, or a stop would
+      // be undriveable-to. The radii are read from the shipped zone
+      // classes (issue #226): a local copy of the 40 px constant let the
+      // real radius shrink unseen.
       const clampToCurb = RunEnvironment.curbOffset + 50.0 / 2;
-      const detectionRadius = 40.0;
       // The zone circle only has to reach the clamp point: the player
       // hitbox (75% of the body) carries the rest of the contact.
-      expect(clampToCurb - 50.0 * 0.75 / 2, lessThan(detectionRadius),
-          reason: 'a clamped taxi still touches the zone on the kerb');
+      const gapToKerb = clampToCurb - 50.0 * 0.75 / 2;
+      expect(gapToKerb, lessThan(PickupZone.detectionRadius),
+          reason: 'a clamped taxi still touches a kerbside pickup');
+      expect(gapToKerb, lessThan(DropoffZone.detectionRadius),
+          reason: 'a clamped taxi still touches a kerbside dropoff');
     });
   });
 }
