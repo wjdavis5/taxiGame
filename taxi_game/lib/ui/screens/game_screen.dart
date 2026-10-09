@@ -348,7 +348,12 @@ class _GameScreenState extends State<GameScreen> {
                 // abandoned with coins at risk — steps back one route to
                 // where the run started, which on the daily path is the
                 // Daily screen that owns the still-unspent attempt.
+                // The bare pop carries the route-current guard (issue
+                // #242): a doubled tap's second pop would land on the
+                // route beneath instead. The `popUntil` branch is already
+                // idempotent by construction.
                 if (atRisk > 0) {
+                  if (ModalRoute.of(context)?.isCurrent != true) return;
                   Navigator.of(context).pop();
                 } else {
                   Navigator.of(context).popUntil((route) => route.isFirst);
@@ -569,6 +574,11 @@ class _LevelCompleteOverlayState extends State<LevelCompleteOverlay> {
             const SizedBox(height: 10),
             TextButton(
               onPressed: () {
+                // The bare pop's route-current guard (issue #242): a
+                // doubled tap's second pop would land on the route
+                // beneath — the menu that pushed the game — instead of
+                // being refused.
+                if (ModalRoute.of(context)?.isCurrent != true) return;
                 game.audio?.playButtonSound();
                 game.haptics?.buttonPress();
                 Navigator.of(context).pop();
@@ -660,6 +670,10 @@ class LevelFailedOverlay extends StatelessWidget {
             const SizedBox(height: 10),
             TextButton(
               onPressed: () {
+                // The same bare-pop guard as the completion panel (issue
+                // #242): one tap, one pop; the invocations that arrive
+                // while the route is leaving are refused.
+                if (ModalRoute.of(context)?.isCurrent != true) return;
                 game.audio?.playButtonSound();
                 game.haptics?.buttonPress();
                 Navigator.of(context).pop();
