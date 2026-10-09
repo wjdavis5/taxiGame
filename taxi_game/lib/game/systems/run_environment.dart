@@ -106,6 +106,14 @@ class WeatherState {
 
   /// 0..1, already including the fade at the segment's edges.
   final double intensity;
+
+  /// This sample's rain reading: its intensity when it is rain, else 0.
+  /// One sample can answer both weather questions (issues #252, #257) —
+  /// [RunEnvironment.rainIntensityAt] derives its answer from here.
+  double get rainIntensity => type == WeatherType.rain ? intensity : 0.0;
+
+  /// This sample's fog reading: its intensity when it is fog, else 0.
+  double get fogIntensity => type == WeatherType.fog ? intensity : 0.0;
 }
 
 /// A stretch where one side of the road is closed by a cone line. The
@@ -656,21 +664,22 @@ class RunEnvironment {
   }
 
   /// Rain wetness at [distance], 0..1. Zero when it is not raining.
-  double rainIntensityAt(double distance) {
-    final w = weatherAt(distance);
-    return w.type == WeatherType.rain ? w.intensity : 0.0;
-  }
+  double rainIntensityAt(double distance) =>
+      weatherAt(distance).rainIntensity;
 
   /// Fog density at [distance], 0..1. Zero when the air is clear.
-  double fogIntensityAt(double distance) {
-    final w = weatherAt(distance);
-    return w.type == WeatherType.fog ? w.intensity : 0.0;
-  }
+  double fogIntensityAt(double distance) =>
+      weatherAt(distance).fogIntensity;
 
   /// Lateral grip at [distance], as a fraction of the car's steering
   /// speed: 1.0 on dry ground, 1 − [rainGripLoss] kept in a storm.
-  double gripAt(double distance) =>
-      1.0 - rainGripLoss * rainIntensityAt(distance);
+  double gripAt(double distance) => gripFor(weatherAt(distance));
+
+  /// Lateral grip from one already-sampled [WeatherState] (issue #257):
+  /// the same rule [gripAt] applies, without a second weather sample for
+  /// callers that read several weather-derived values in one frame.
+  double gripFor(WeatherState weather) =>
+      1.0 - rainGripLoss * weather.rainIntensity;
 
   /// How far a driver can see at [distance], as a fraction of normal sight
   /// distance: 1.0 in clear air, 1 − [fogVisibilityLoss] in the thick.
@@ -715,8 +724,11 @@ class RunEnvironment {
   /// dark moments ride issue #18's wave *harder* — one system, one ramp,
   /// no parallel difficulty.
   double difficultyModifierAt(double distance) {
-    final m = rainPressure * rainIntensityAt(distance) +
-        fogPressure * fogIntensityAt(distance) +
+    // One weather sample answers both the rain and the fog term (issue
+    // #257); the arithmetic is exactly the pre-#257 expression.
+    final weather = weatherAt(distance);
+    final m = rainPressure * weather.rainIntensity +
+        fogPressure * weather.fogIntensity +
         nightPressure * darknessAt(distance);
     return math.min(maxModifier, m);
   }
@@ -777,6 +789,17 @@ class RunEnvironment {
       lanes: lanes,
     );
   }
+
+  /// The spawn interval alone at [distance] (issue #252): the scalar the
+  /// traffic spawner polls every frame while it waits for a wave. Exactly
+  /// the interval [trafficAt] would fold into a profile at the same
+  /// distance — both read [DifficultyCurve.spawnIntervalFor] with the
+  /// same environment modifier — but none of the road, lane, or speed
+  /// work the full profile does. The full profile stays for the frames
+  /// that actually spawn.
+  double spawnIntervalAt(double distance) =>
+      DifficultyCurve.spawnIntervalFor(distance,
+          environmentModifier: difficultyModifierAt(distance));
 
   // --- Construction -------------------------------------------------------
 

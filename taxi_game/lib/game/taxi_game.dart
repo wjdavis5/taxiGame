@@ -741,8 +741,11 @@ class TaxiGame extends FlameGame
     trafficSpawner = TrafficSpawner.distanceBased(
       // Traffic rides the difficulty curve laid out over the road that
       // actually exists at each distance, with weather and night folded
-      // into the pressure (issue #24).
+      // into the pressure (issue #24). The spawner waits on the interval
+      // alone each frame (issue #252) and only builds the profile — road,
+      // lanes, speeds — on the frames a wave actually fires.
       profileOf: (d) => environment!.trafficAt(d),
+      spawnIntervalOf: (d) => environment!.spawnIntervalAt(d),
       distanceOf: () => runDistance,
       // A spawner RNG derived from the run seed — never Dart's default
       // clock-seeded Random, or replays of one seed would diverge.

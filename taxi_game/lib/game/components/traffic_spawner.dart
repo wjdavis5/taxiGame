@@ -23,23 +23,35 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
       : _fixedPattern = pattern,
         _profileOf = null,
         _distanceOf = null,
+        _spawnIntervalOf = null,
         random = random ?? Random();
 
   /// Endless mode (issue #11): density and speed come from a continuous
   /// profile curve evaluated at the run's current distance, and the RNG is
   /// injectable so the same seed reproduces the same traffic exactly.
+  ///
+  /// [spawnIntervalOf] (issue #252) is the cheap scalar companion to
+  /// [profileOf]: the seconds-in-effect spawn interval at a distance,
+  /// computed without materialising the profile. When given, the spawner
+  /// waits on it every frame and only builds the whole profile on the
+  /// frame a wave actually fires; a caller that omits it (a test
+  /// injecting a custom [profileOf]) keeps the old per-frame profile
+  /// read exactly.
   TrafficSpawner.distanceBased({
     required TrafficProfile Function(double distance) profileOf,
     required double Function() distanceOf,
+    double Function(double distance)? spawnIntervalOf,
     Random? random,
   })  : _fixedPattern = null,
         _profileOf = profileOf,
         _distanceOf = distanceOf,
+        _spawnIntervalOf = spawnIntervalOf,
         random = random ?? Random();
 
   final TrafficPattern? _fixedPattern;
   final TrafficProfile Function(double distance)? _profileOf;
   final double Function()? _distanceOf;
+  final double Function(double distance)? _spawnIntervalOf;
 
   /// The RNG driving every spawn decision. Seeded in endless mode.
   final Random random;
@@ -93,6 +105,20 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     );
   }
 
+  /// Seconds until the next spawn attempt is due (issue #252).
+  ///
+  /// The per-frame wait reads the cheap scalar when the caller supplies
+  /// one — endless mode computes just the difficulty core's interval, not
+  /// the whole profile with its road geometry and lane list — and the
+  /// full profile is evaluated once, only on frames that actually spawn.
+  /// Without a scalar accessor the old per-frame profile read is kept, so
+  /// a caller injecting a custom [profileOf] keeps its exact semantics.
+  double get _spawnInterval {
+    final spawnIntervalOf = _spawnIntervalOf;
+    if (spawnIntervalOf != null) return spawnIntervalOf(_distanceOf!());
+    return _profile.spawnInterval;
+  }
+
   /// Bumper room the headway rule adds to the follower's own body length
   /// before its cap engages (issue #146). One frame at the fleet's
   /// fastest same-role overtake differential — an oncoming sports car
@@ -110,8 +136,9 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     if (_isActive) {
       _timeSinceLastSpawn += dt;
 
-      // Spawn new vehicles based on interval
-      if (_timeSinceLastSpawn >= _profile.spawnInterval) {
+      // Spawn new vehicles based on interval. The wait is a scalar read
+      // (issue #252); the profile is built once, only when a wave fires.
+      if (_timeSinceLastSpawn >= _spawnInterval) {
         _timeSinceLastSpawn = 0.0;
         _spawnVehicles(_profile);
       }

@@ -240,8 +240,7 @@ class DifficultyCurve {
         _startSpeedSpread, _rampedSpeedSpread, _creepSpeedSpread, variance);
 
     return TrafficCore(
-      spawnInterval: _lerpAnchors(
-          _startInterval, _rampedInterval, _creepInterval, pressure),
+      spawnInterval: _intervalForPressure(pressure),
       meanSpeed: meanSpeed,
       halfSpread: halfSpread,
       oncomingProbability: _lerpAnchors(
@@ -256,6 +255,19 @@ class DifficultyCurve {
           pressure),
     );
   }
+
+  /// The spawn interval alone at [distance] (issue #252): the scalar the
+  /// traffic spawner polls every frame to decide whether a wave is due,
+  /// without materialising a whole [TrafficProfile]. Exactly the value
+  /// [trafficCoreFor] folds in — both read [_intervalForPressure] at the
+  /// same pressure.
+  static double spawnIntervalFor(double distance,
+          {double environmentModifier = 0.0}) =>
+      _intervalForPressure(
+          pressureFor(distance, environmentModifier: environmentModifier));
+
+  static double _intervalForPressure(double pressure) => _lerpAnchors(
+      _startInterval, _rampedInterval, _creepInterval, pressure);
 
   /// The traffic profile in effect at [distance] px into the run, laid out
   /// on the classic two-lane street. The environment-aware layer
