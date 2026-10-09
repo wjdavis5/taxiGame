@@ -119,8 +119,9 @@ void main() {
       expect(fastfile, contains("File.expand_path(\"whats_new.txt\", __dir__)"));
       final lane = laneBody('set_whats_new');
       expect(lane, contains('File.read(notes_path).strip'));
-      expect(lane, contains('"Missing #{notes_path}'),
-          reason: 'the missing-file case must fail the lane naming the file');
+      expect(missingFileRefused(lane), isTrue,
+          reason: 'the missing-file case must raise its own failure naming '
+              'the file');
       expect(lane, contains('"#{notes_path} is empty'),
           reason: 'the whitespace-only case must fail the lane naming the '
               'empty file');
@@ -284,4 +285,19 @@ bool blankFileRefused(String lane) {
   if (endAt == -1) return false;
   final branch = lane.substring(branchAt, endAt);
   return branch.contains('UI.user_error!') && branch.contains('is empty');
+}
+
+/// True when the lane's own `unless File.exist?` branch refuses a
+/// missing file: the branch itself raises `UI.user_error!` naming the
+/// file, not some later validation in the lane. Bounded to the branch
+/// (issue #225) so a downgrade of this refusal to a warning fails even
+/// though the message string would survive elsewhere in the lane.
+bool missingFileRefused(String lane) {
+  final branchAt = lane.indexOf('unless File.exist?(notes_path)');
+  if (branchAt == -1) return false;
+  final endAt = lane.indexOf('\n  end', branchAt);
+  if (endAt == -1) return false;
+  final branch = lane.substring(branchAt, endAt);
+  return branch.contains('UI.user_error!') &&
+      branch.contains('Missing #{notes_path}');
 }
