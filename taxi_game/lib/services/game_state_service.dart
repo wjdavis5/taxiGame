@@ -568,6 +568,14 @@ class GameStateService extends ChangeNotifier {
   /// coherent save in memory and on disk, the abandoned reset logged,
   /// not applied.
   Future<void> resetProgress() async {
+    // Single-flight (issue #246): a second reset confirmed while the first
+    // transaction still runs was the one overlap the defer gate could not
+    // cover — the second transaction queues behind the first, and a failed
+    // first reset then restores and flushes the old save after the
+    // second's fresh write, making the old progress the last word on disk.
+    // A reset of a save already being wiped has nothing left to do, so a
+    // second call is refused while one is in flight.
+    if (_resetInFlight) return;
     // Settings are preference, not progress (issue #83): the whole
     // Settings block — the three toggles and both volumes — rides over
     // to the fresh save, not just the booleans a bug report names. A
@@ -596,6 +604,10 @@ class GameStateService extends ChangeNotifier {
     _resetInFlight = false;
     if (!landed) {
       _saveData = previousSave;
+      // The restore is a state change the UI may already have painted over
+      // from the temporary fresh save (a mid-window toggle rebuilds the
+      // settings card): notify so the screens show the save that survived.
+      notifyListeners();
       // A save deferred in the window is not lost with the abandoned
       // reset: with the old save back in memory, flushing persists it —
       // a mid-reset settings toggle included (the two saves share the

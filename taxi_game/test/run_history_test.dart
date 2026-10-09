@@ -466,6 +466,46 @@ void main() {
       // Memory agrees with the disk: the fresh save is the live one.
       expect(service.totalCoins, 0);
     });
+
+    test('a second reset inside the window is refused (issue #246)',
+        () async {
+      // Two overlapping resets were the one hole the defer gate could not
+      // cover: the second transaction queues behind the first, and a
+      // failed first reset then restores and flushes the old save after
+      // the second's fresh write — old progress last on disk. The reset
+      // is single-flight now; the second confirmation is a no-op.
+      final store = installFailingPrefsStore();
+      final fakeStorage = StorageService();
+      await fakeStorage.init();
+      final service = GameStateService(fakeStorage);
+      await service.loadSaveData();
+      service.addCoins(30);
+      await service.save();
+      store.removedKeys.clear();
+
+      // Park the first transaction on its first clear.
+      final hold = store.holdNextRemove = Completer<void>();
+      final first = service.resetProgress();
+      await store.removeHeld.future;
+
+      // A second confirmation lands while the first transaction runs. It
+      // must return at the single-flight guard rather than enqueue a
+      // second transaction; give it a turn before releasing the first.
+      final second = service.resetProgress();
+      await Future<void>.delayed(Duration.zero);
+
+      hold.complete();
+      await first;
+      await second;
+      await fakeStorage.pendingWrites;
+
+      expect(store.removedKeys, hasLength(3),
+          reason: 'only the first reset ran — its three record keys; a '
+              'second transaction would clear them again');
+      final stored = await fakeStorage.loadSaveData();
+      expect(stored!.totalCoins, 0,
+          reason: 'the fresh save is the last word on disk');
+    });
   });
 
   group('the lifetime totals (issue #183)', () {
