@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/models/run_record.dart';
+import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/stats_screen.dart';
@@ -61,6 +64,41 @@ void main() {
       expect(find.byKey(const Key('stats_empty_state')), findsOneWidget);
       expect(find.text('No shifts recorded yet'), findsOneWidget);
       expect(find.text('Shifts ended'), findsNothing);
+    });
+  });
+
+  group('a lost window over lifetime totals (issue #249)', () {
+    testWidgets('the empty gate yields to the save\'s lifetime totals',
+        (tester) async {
+      // A corrupt run history recovers to an empty window while the save
+      // keeps its lifetime counters. The empty state used to gate on the
+      // window alone, so a save with 300 shifts' totals read "No shifts
+      // recorded yet" and never showed a number it still had.
+      final save = SaveData.createDefault();
+      save.lifetimeRunTotals.shiftsEnded = 300;
+      save.lifetimeRunTotals.totalScore = 12345;
+      SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey: jsonEncode(save.toJson()),
+        StorageService.runHistoryKey: '{not json at all',
+      });
+      final storage = StorageService();
+      await storage.init();
+      gameState = GameStateService(storage);
+      await gameState.loadSaveData();
+      expect(gameState.runHistory, isEmpty,
+          reason: 'precondition: the window is gone');
+
+      await tester.pumpWidget(wrap(const StatsScreen()));
+      await tester.pump();
+
+      expect(find.byKey(const Key('stats_empty_state')), findsNothing,
+          reason: 'the totals exist; the invitation would be a lie');
+      expect(find.byKey(const Key('stats_shifts_total')), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('stats_shifts_total'))),
+        isA<Text>().having((t) => t.data, 'data', '300'),
+      );
+      expect(find.text('12345'), findsOneWidget);
     });
   });
 
