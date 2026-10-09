@@ -4,12 +4,14 @@ import 'dart:io' show Directory, File;
 import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, debugPrint;
+import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart'
     show getTemporaryDirectory;
 import 'package:provider/provider.dart';
 
 import 'diagnostics.dart';
+import 'share_service.dart';
 
 /// Audio playback for the game (issue #4), on top of `flame_audio`.
 ///
@@ -134,6 +136,52 @@ class AudioService {
   /// re-applying the context on every play.
   Future<void>? _sessionReady;
 
+  /// Routes the native bridge's audio events (issue #236).
+  ///
+  /// iOS never tells Flutter that an AVAudioSession interruption began or
+  /// that the output route vanished, so the engine loop and the music
+  /// could stay silent — or keep blasting through a speaker after
+  /// headphones left — for the rest of a shift. `AppDelegate` observes
+  /// both notifications and forwards `systemAudioPaused`/
+  /// `systemAudioResumed` over the share channel; [initialize] registers
+  /// this as the channel's handler, so the app's one service owns the
+  /// reaction. Public for tests, which replay the native calls directly.
+  Future<Object?> handleSystemAudioCall(MethodCall call) async {
+    switch (call.method) {
+      case 'systemAudioPaused':
+        await handleSystemAudioPaused();
+      case 'systemAudioResumed':
+        await handleSystemAudioResumed();
+    }
+    return null;
+  }
+
+  /// The OS took the audio session away: an AVAudioSession interruption
+  /// began, or the output route vanished (headphones unplugged). The
+  /// native players may have been paused behind this service's back, so
+  /// pause through the normal path — it issues the platform pauses and
+  /// clears [_engineAudible] — and hold the suspended state, so the
+  /// per-frame sync cannot fight the OS for a session the app no longer
+  /// owns.
+  Future<void> handleSystemAudioPaused() async {
+    debugPrint('[audio] system paused');
+    await pauseAll();
+  }
+
+  /// The OS gave the session back: the interruption ended, or a route
+  /// returned. Resume only when the app is actually foreground — an
+  /// interruption can end while the app is backgrounded, and resuming
+  /// the music into the background is what [pauseAll] exists to stop.
+  Future<void> handleSystemAudioResumed() async {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) {
+      debugPrint('[audio] system resumed while $lifecycle; holding');
+      return;
+    }
+    debugPrint('[audio] system resumed');
+    await resumeAll();
+  }
+
   /// True while a failed session claim still owes its one retry (issue
   /// #234). Armed by the failure; spent by the next [playSound] or
   /// [playMusic].
@@ -208,7 +256,8 @@ class AudioService {
   final Map<String, int> attemptedPlays = <String, int>{};
 
   /// Initializes the BGM lifecycle handler (auto pause/resume around app
-  /// backgrounding), claims the iOS audio session (issue #39), and warms the
+  /// backgrounding), claims the iOS audio session (issue #39), listens for
+  /// the native bridge's system-audio events (issue #236), and warms the
   /// sound cache. Safe to call twice; safe when no plugin exists (tests) —
   /// everything below swallows its failures.
   Future<void> initialize() async {
@@ -221,6 +270,12 @@ class AudioService {
     // apiece. It has to be first: a load that races ahead of the pin
     // mints the very folder this exists to prevent.
     FlameAudio.audioCache.cacheId = audioCacheId;
+    // The native session events ride the share channel (issue #236):
+    // interrupting a call or unplugging headphones never reaches Flutter's
+    // lifecycle, so AppDelegate forwards both here. Registering in
+    // initialize keeps the app's one service the listener; a second
+    // initialize replaces the handler with the same object.
+    ShareService.channel.setMethodCallHandler(handleSystemAudioCall);
     final sessionReady = _sessionReady = _applyIosAudioContext();
     await sessionReady;
     // The music never reads its position, so it must not poll for it: the

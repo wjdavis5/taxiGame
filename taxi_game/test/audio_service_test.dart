@@ -6,10 +6,12 @@ import 'package:audioplayers_platform_interface/audioplayers_platform_interface.
 import 'package:flame_audio/flame_audio.dart' show FlameAudio, PlayerState;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, debugDefaultTargetPlatformOverride;
-import 'package:flutter/services.dart' show AssetManifest, rootBundle;
+import 'package:flutter/services.dart'
+    show AssetManifest, MethodCall, StandardMethodCodec, rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/diagnostics.dart';
+import 'package:taxi_game/services/share_service.dart';
 
 import 'helpers/fake_audio_platform.dart';
 
@@ -896,6 +898,64 @@ void main() {
       await AudioService.sweepAbandonedAudioCaches(
         Directory('${Directory.systemTemp.path}/sweep_198_not_here'),
       );
+    });
+  });
+
+  group('system audio events (issue #236)', () {
+    // The iOS audio session exists only in native code: AppDelegate
+    // observes AVAudioSession interruptions and route changes and sends
+    // systemAudioPaused/systemAudioResumed over the share channel. These
+    // tests replay both the handler and the channel route.
+    test('a system pause suspends the engine and music; a resume restores '
+        'the wants', () async {
+      final audio = AudioService();
+      await audio.playMusic();
+      audio.setEngineRunning(true);
+      await until(() => audio.isEngineLoopActive);
+
+      await audio.handleSystemAudioPaused();
+
+      expect(audio.isEngineLoopActive, isFalse,
+          reason: 'the OS owns the session; the loop must go quiet');
+      expect(audio.isMusicWanted, isFalse);
+
+      await audio.handleSystemAudioResumed();
+
+      expect(audio.isMusicWanted, isTrue);
+      // The engine comes back only through the game's per-frame want, the
+      // same re-entry backgrounding uses.
+      audio.setEngineRunning(true);
+      await until(() => audio.isEngineLoopActive);
+      await audio.dispose();
+    });
+
+    test('native messages ride the share channel to the service', () async {
+      final audio = AudioService();
+      await audio.initialize();
+      await audio.playMusic();
+      expect(audio.isMusicWanted, isTrue);
+
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const codec = StandardMethodCodec();
+
+      await messenger.handlePlatformMessage(
+        ShareService.channel.name,
+        codec.encodeMethodCall(const MethodCall('systemAudioPaused')),
+        null,
+      );
+      expect(audio.isMusicWanted, isFalse,
+          reason: 'the native pause event reached the running service');
+
+      await messenger.handlePlatformMessage(
+        ShareService.channel.name,
+        codec.encodeMethodCall(const MethodCall('systemAudioResumed')),
+        null,
+      );
+      expect(audio.isMusicWanted, isTrue,
+          reason: 'and so did the resume');
+
+      await audio.dispose();
     });
   });
 }
