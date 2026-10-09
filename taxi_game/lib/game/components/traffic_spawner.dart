@@ -61,6 +61,15 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
 
   final List<TrafficVehicle> _activeVehicles = [];
 
+  /// The headway pass's snapshot of the street, reused every frame (issue
+  /// #254). The pass needs to walk the traffic list twice (clear the caps,
+  /// then compare every pair), and the old code built a fresh
+  /// `whereType<TrafficVehicle>().toList()` for it on every tick. The set
+  /// of cars is the same — the run world's own traffic children, in child
+  /// order — only the list object is now owned by the spawner and cleared
+  /// and refilled per pass, so the frame loop allocates none.
+  final List<TrafficVehicle> _headwayTraffic = [];
+
   /// The world this run's traffic belongs to, captured on mount (issue
   /// #32). A retired spawner can still get one update after [TaxiGame]
   /// has swapped in the fresh run's world; spawning through the live
@@ -178,22 +187,30 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   void _capTrafficHeadway() {
     final world = _runWorld;
     if (world == null) return;
-    final traffic = world.children.whereType<TrafficVehicle>().toList();
+    // Refill the spawner's own reused snapshot (issue #254): the nested
+    // pass below indexes the street twice, and a fresh list per frame was
+    // one of the two full-children scans the audit found. World child
+    // order is preserved, so the pass sees the exact list (and pair
+    // order) the old `.whereType().toList()` produced.
+    _headwayTraffic.clear();
+    for (final child in world.children) {
+      if (child is TrafficVehicle) _headwayTraffic.add(child);
+    }
 
     // A fresh cap every frame: a cap that survived its frame would pace
     // a car to traffic that has since merged away or been culled.
-    for (final vehicle in traffic) {
+    for (final vehicle in _headwayTraffic) {
       vehicle.paceLimit = null;
     }
 
-    for (final follower in traffic) {
+    for (final follower in _headwayTraffic) {
       // Unmounted cars were queued this very frame, and a mounted car
       // whose async onLoad (sprite load) has not completed yet has no
       // velocity — either way it has no place in this frame's road, and
       // reading one would pace a whole lane to a standing ghost.
       if (!follower.isMounted || !follower.isLoaded) continue;
       final followerOncoming = follower.velocity.y > 0;
-      for (final leader in traffic) {
+      for (final leader in _headwayTraffic) {
         if (identical(leader, follower)) continue;
         if (!leader.isMounted || !leader.isLoaded) continue;
         // Same role only.
