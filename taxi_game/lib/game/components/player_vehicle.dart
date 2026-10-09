@@ -74,7 +74,15 @@ class PlayerVehicle extends PositionComponent
   /// Logical footprint of the vehicle, from [stats] — each car has its own
   /// body since issue #9. The hitbox is derived from this, never from the
   /// sprite, so swapping the art cannot change collision behaviour.
-  Vector2 get vehicleSize => Vector2(stats.width, stats.height);
+  ///
+  /// One shared vector for the component's life (issue #257): the old
+  /// getter allocated a fresh `Vector2` on every read, and the scraped
+  /// pace cap, the collision judge, and the danger telegraph all read it
+  /// — several allocations per frame at traffic density. No caller
+  /// mutates the vector: every use here and in [TrafficVehicle] either
+  /// reads a component or derives a new vector (`size =` copies, and
+  /// `vehicleSize * n` allocates), so sharing it is safe.
+  late final Vector2 vehicleSize = Vector2(stats.width, stats.height);
 
   /// Pre-loaded sprite to render instead of the bundled one (tests inject a
   /// fake here). When null the sprite is loaded from the bundled PNG.

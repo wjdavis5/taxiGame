@@ -458,6 +458,22 @@ class TaxiGame extends FlameGame
   /// next frame can add a fresh delta on top of the untouched position.
   final Vector2 _appliedShakeOffset = Vector2.zero();
 
+  /// One scratch vector for the shake arithmetic (issue #257): the old
+  /// form allocated three `Vector2`s per frame (the base, the envelope's
+  /// returned offset, and the sum). Reused because the viewport's setter
+  /// copies its argument.
+  final Vector2 _shakeScratch = Vector2.zero();
+
+  /// The camera centre's world y for this tick (issue #257).
+  ///
+  /// [camera.viewfinder.position] clones a `Vector2` on every read, and
+  /// every live traffic car used to read it twice per frame just to test
+  /// its cull band. The first reader in a tick caches the value and every
+  /// later reader shares it; [update] clears the cache before the tree
+  /// ticks, so each tick publishes the freshly followed camera.
+  double? _cameraY;
+  double get cameraY => _cameraY ??= camera.viewfinder.position.y;
+
   /// The overlay a crash deferred until the hit-stop ends (issue #7):
   /// 'levelFailed' for the tutorial ladder, 'shiftWrecked' for the third
   /// endless crash (issue #14). The impact lands first, then the panel
@@ -1844,6 +1860,11 @@ class TaxiGame extends FlameGame
     // own dt.
     dt = math.min(dt, maxUpdateDelta);
 
+    // Republish this tick's camera y on first read (issue #257): the
+    // camera updates ahead of the world, so the first traffic car to ask
+    // gets the followed value, and every later car shares it.
+    _cameraY = null;
+
     // Engine audio (issue #4): humming while the shift is live, idling
     // under a stopped taxi and rising with forward speed. Re-asserted every
     // frame — including frozen ones — so a hit-stop or a crash stall quiets
@@ -2001,14 +2022,18 @@ class TaxiGame extends FlameGame
     }
 
     final distance = runDistance;
-    gripMultiplier = env.gripAt(distance);
+    // One weather sample answers grip, rain, and fog (issues #252/#257);
+    // the old code sampled the weather once per accessor, three objects a
+    // frame, for identical values.
+    final weather = env.weatherAt(distance);
+    gripMultiplier = env.gripFor(weather);
     darkness = env.darknessAt(distance);
     _background.darkness = darkness;
     final overlay = _environmentOverlay;
     if (overlay != null) {
       overlay.darkness = darkness;
-      overlay.rainIntensity = env.rainIntensityAt(distance);
-      overlay.fogIntensity = env.fogIntensityAt(distance);
+      overlay.rainIntensity = weather.rainIntensity;
+      overlay.fogIntensity = weather.fogIntensity;
     }
   }
 
@@ -2063,10 +2088,19 @@ class TaxiGame extends FlameGame
   /// Applies one frame of screen shake as a delta on the viewport
   /// position, so it never fights the camera's follow logic (which owns
   /// the viewfinder) and leaves no residue when it decays.
+  ///
+  /// In place with one scratch vector (issue #257): the base (the
+  /// viewport without the previously applied offset), the new envelope
+  /// offset, and their sum used to be three fresh `Vector2`s per frame.
+  /// The arithmetic and RNG draws are exactly the old ones — the envelope
+  /// writes its offset into [_appliedShakeOffset] instead of returning a
+  /// new vector.
   void _applyShake(double dt) {
-    final base = camera.viewport.position - _appliedShakeOffset;
-    _appliedShakeOffset.setFrom(shake.update(dt));
-    camera.viewport.position = base + _appliedShakeOffset;
+    _shakeScratch
+      ..setFrom(camera.viewport.position)
+      ..sub(_appliedShakeOffset);
+    shake.updateInto(_appliedShakeOffset, dt);
+    camera.viewport.position = _shakeScratch..add(_appliedShakeOffset);
   }
 
   @override

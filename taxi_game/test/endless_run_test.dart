@@ -1569,6 +1569,22 @@ void main() {
     }, timeout: const Timeout(Duration(minutes: 4)));
   });
 
+  group('the published camera y (issue #257)', () {
+    test('tracks the viewfinder on every tick', () async {
+      final game = await mountGame(endlessGame(7));
+      await tickAndSettle(game);
+      expect(game.cameraY, game.camera.viewfinder.position.y,
+          reason: 'the published value must be the followed camera\'s');
+
+      // Park the cab deep on the road: one settle, and the published
+      // value must again equal the freshly followed viewfinder.
+      game.player.position = Vector2(200, -1500);
+      await tickAndSettle(game);
+      expect(game.cameraY, game.camera.viewfinder.position.y);
+      expect(game.cameraY, closeTo(-1500, 50));
+    });
+  });
+
   group('endless HUD', () {
     testWidgets('shows the distance driven, live', (tester) async {
       late TaxiGame game;
