@@ -419,4 +419,56 @@ void main() {
           reason: "D's ghost survives untouched");
     });
   });
+
+  group('the seed\'s day is pinned through the start (issue #248)', () {
+    // The screen derives the seed from a calendar day and carries it
+    // along; the game used to re-read the clock when the run actually
+    // started, so a start at the last moment of a day could run D's
+    // course while pinning D+1's key. Both pins must come from the
+    // carried day: the scoring daily's result key and the ghost key.
+
+    test('a daily started across midnight pins the seed\'s day', () async {
+      final dayD = DailyShift.todayKey;
+      final game = withOverlays(TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: DailyShift.seedForDateKey(dayD),
+        isDailyShift: true,
+        dailyDateKey: dayD,
+      ));
+      // Midnight passes between the screen deriving the seed and the
+      // run starting.
+      DailyShift.clock = () => calendarDaysFromNow(1);
+      addTearDown(() => DailyShift.clock = DateTime.now);
+
+      await mountGame(game);
+
+      expect(game.runDateKey, dayD,
+          reason: 'the pinned day is the seed\'s day, not the clock\'s at '
+              'start');
+    });
+
+    test('a ghost race started across midnight replays the seed\'s day',
+        () async {
+      final dayD = DailyShift.todayKey;
+      await plantGhost(); // D's ghost
+      final game = withOverlays(TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+        endlessSeed: DailyShift.seedForDateKey(dayD),
+        isGhostRace: true,
+        dailyDateKey: dayD,
+      ));
+      DailyShift.clock = () => calendarDaysFromNow(1);
+      addTearDown(() => DailyShift.clock = DateTime.now);
+
+      await mountGame(game);
+
+      expect(game.runDateKey, dayD,
+          reason: 'the ghost day is the seed\'s day too');
+      expect(game.ghostCar, isNotNull,
+          reason: 'D\'s ghost rides the run of D\'s course — the clock '
+              'crossing must not orphan it');
+    });
+  });
 }

@@ -350,6 +350,7 @@ class MainMenuScreen extends StatelessWidget {
                   builder: (context) => GameScreen(
                     endlessSeed: DailyShift.seedForDateKey(dayKey),
                     isDailyShift: true,
+                    dailyDateKey: dayKey,
                   ),
                 ),
               );

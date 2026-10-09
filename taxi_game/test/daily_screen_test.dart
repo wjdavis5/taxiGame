@@ -410,6 +410,9 @@ void main() {
           reason: "this run is the day's one scoring attempt");
       expect(game.endlessSeed, DailyShift.seedForDateKey(DailyShift.todayKey),
           reason: 'the same date-derived course the menu button starts');
+      expect(game.runDateKey, DailyShift.todayKey,
+          reason: 'the run pins the day the screen seeded it from '
+              '(issue #248), carried through GameScreen');
       expect(game.isGameActive, isTrue,
           reason: 'the daily course is running, not just mounted');
     });

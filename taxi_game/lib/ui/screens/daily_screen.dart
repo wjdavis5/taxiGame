@@ -300,6 +300,9 @@ class _TodayCard extends StatelessWidget {
                       builder: (context) => GameScreen(
                         endlessSeed: DailyShift.seedForDateKey(dayKey),
                         isDailyShift: true,
+                        // The same day the seed came from (issue #248):
+                        // the run pins this day, never a fresh clock read.
+                        dailyDateKey: dayKey,
                       ),
                     ),
                   );
@@ -346,6 +349,11 @@ class _TodayCard extends StatelessWidget {
                         endlessSeed:
                             DailyShift.seedForDateKey(result!.dateKey),
                         isGhostRace: true,
+                        // The race's day is the result's day — the day
+                        // the seed came from (issue #248) — so a clock
+                        // crossing cannot pin the next day to this
+                        // course's ghost.
+                        dailyDateKey: result!.dateKey,
                       ),
                     ),
                   );

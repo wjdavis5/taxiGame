@@ -65,6 +65,7 @@ class TaxiGame extends FlameGame
     this.endlessSeed,
     this.isDailyShift = false,
     this.isGhostRace = false,
+    this.dailyDateKey,
   }) : super(
           camera: CameraComponent.withFixedResolution(width: 400, height: 800),
         );
@@ -89,6 +90,16 @@ class TaxiGame extends FlameGame
   /// continuously generated fares, and distance-curve traffic. The same
   /// seed always reproduces the identical course.
   final int? endlessSeed;
+
+  /// The calendar day [endlessSeed] was derived from, when this game was
+  /// built for the daily course (issue #248): the day whose result a
+  /// scoring daily records and whose ghost a race replays. The screen
+  /// that derives the seed from the date carries it here, so the run pins
+  /// the day the seed belongs to — re-reading the clock at run start
+  /// could cross midnight between the two and pin the next day's key to
+  /// this day's course. Null for a run on no daily course; direct
+  /// constructions without a day fall back to the clock at start.
+  final String? dailyDateKey;
 
   /// True when this game is running today's Daily Shift (issue #19): an
   /// endless run whose seed comes from the calendar date, so every player
@@ -623,11 +634,18 @@ class TaxiGame extends FlameGame
     _activeRunSeed = seed;
     // A daily shift pins the day it started on (issue #19): a run still
     // being driven at midnight belongs to the course — and the result —
-    // of the day it set out on.
-    _dailyDateKey = isDailyShift ? DailyShift.todayKey : null;
+    // of the day it set out on. The day is the one the seed was derived
+    // from, carried from the screen that built the run (issue #248): a
+    // clock read here could already be past midnight and pin the next
+    // day's key to this day's course. Direct constructions that carry no
+    // day (headless tests) fall back to the clock.
+    final courseDateKey = dailyDateKey ?? DailyShift.todayKey;
+    _dailyDateKey = isDailyShift ? courseDateKey : null;
     // A ghost race replays the day's course too (issue #20), so it pins
-    // the recording-and-replay day by the same rule.
-    _ghostDateKey = (isDailyShift || isGhostRace) ? DailyShift.todayKey : null;
+    // the recording-and-replay day by the same rule — and the same
+    // carried day (issue #248).
+    _ghostDateKey =
+        (isDailyShift || isGhostRace) ? courseDateKey : null;
     _ghostRecorder =
         _ghostDateKey != null ? GhostRecorder() : null;
 

@@ -446,6 +446,9 @@ void main() {
       expect(game.endlessSeed, DailyShift.seedForDateKey(dayD),
           reason: 'the tapped day is the day the card named — the label '
               'cannot disagree with the course it starts');
+      expect(game.runDateKey, dayD,
+          reason: 'and the run pins the carried day (issue #248), not the '
+              'clock read at start');
     });
   });
 

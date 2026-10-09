@@ -19,11 +19,20 @@ class GameScreen extends StatefulWidget {
     this.endlessSeed,
     this.isDailyShift = false,
     this.isGhostRace = false,
+    this.dailyDateKey,
   });
 
   /// When non-null, the screen runs an endless procedural shift seeded
   /// with this value instead of the next hand-made level (issue #11).
   final int? endlessSeed;
+
+  /// The calendar day [endlessSeed] was derived from, when this screen is
+  /// a run on the daily course (issue #248): the scoring Daily Shift or
+  /// its ghost race. The caller that derives the seed from the date
+  /// passes the same day here, and the game pins its result and ghost
+  /// keys from it — never from a second clock read that could cross
+  /// midnight and pin the next day to this day's course.
+  final String? dailyDateKey;
 
   /// True when [endlessSeed] is today's date-derived course and this
   /// screen is the player's one Daily Shift (issue #19) — the flag rides
@@ -67,6 +76,7 @@ class _GameScreenState extends State<GameScreen> {
       endlessSeed: widget.endlessSeed,
       isDailyShift: widget.isDailyShift,
       isGhostRace: widget.isGhostRace,
+      dailyDateKey: widget.dailyDateKey,
     );
   }
 
