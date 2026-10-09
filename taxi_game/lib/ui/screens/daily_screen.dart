@@ -272,6 +272,11 @@ class _TodayCard extends StatelessWidget {
               ElevatedButton.icon(
                 key: const Key('daily_start_button'),
                 onPressed: () {
+                  // A stray second tap from the push transition is
+                  // refused (issue #220) so the one shift cannot start
+                  // twice; the guard sits before the dressing, which a
+                  // refused tap does not get.
+                  if (ModalRoute.of(context)?.isCurrent != true) return;
                   // The app-wide click (issue #4) and tick (issue #5)
                   // every button press gets, null-safe like _MenuButton —
                   // a missing provider must never break the button.
@@ -311,6 +316,9 @@ class _TodayCard extends StatelessWidget {
               ElevatedButton.icon(
                 key: const Key('daily_race_ghost_button'),
                 onPressed: () {
+                  // A duplicate push from the transition is refused here
+                  // too (issue #220), before the day check.
+                  if (ModalRoute.of(context)?.isCurrent != true) return;
                   // The day this card was built for (issue #96): the
                   // card is a Consumer snapshot, so a screen left open
                   // across midnight still shows D's result — and this

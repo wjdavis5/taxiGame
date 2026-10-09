@@ -373,7 +373,13 @@ class RunSummaryPanel extends StatelessWidget {
               const SizedBox(height: 8),
               TextButton(
                 onPressed: () {
-                  Navigator.of(context).pop();
+                  // MAIN MENU means the menu (issue #222): a run started
+                  // from the Daily screen sits two routes above it, and a
+                  // bare pop landed back on that Daily screen under this
+                  // label — the player needed a second exit they were
+                  // never told about. The first route is the menu on
+                  // every stack this panel can appear over.
+                  Navigator.of(context).popUntil((route) => route.isFirst);
                 },
                 child: const Text(
                   'MAIN MENU',

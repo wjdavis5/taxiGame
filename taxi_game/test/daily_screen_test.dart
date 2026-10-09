@@ -426,6 +426,79 @@ void main() {
     });
   });
 
+  group("MAIN MENU from the daily start path (issue #222)", () {
+    testWidgets('a settled shift exits to the menu, not back to the Daily '
+        'screen', (tester) async {
+      // The stack this path produces: menu -> DailyScreen -> GameScreen
+      // (the daily start button pushes over the screen the menu's daily
+      // link opened). MAIN MENU must go all the way home; a bare pop
+      // lands on the Daily screen under a button that says MAIN MENU.
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<GameStateService>.value(value: gameState),
+            Provider<AudioService>.value(value: AudioService()),
+            Provider<HapticsService>.value(value: HapticsService()),
+            Provider<LevelLoaderService>.value(value: LevelLoaderService()),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              key: ValueKey('issue222_home'),
+              body: Center(child: Text('HOME')),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      Navigator.push(
+        tester.element(find.text('HOME')),
+        MaterialPageRoute(builder: (context) => const DailyScreen()),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('daily_screen')), findsOneWidget);
+
+      // Start today's shift from the Daily screen, as the player does.
+      await tester.tap(find.byKey(const Key('daily_start_button')));
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      final game = tester
+          .widget<GameWidget<TaxiGame>>(find.byType(GameWidget<TaxiGame>))
+          .game!;
+      await tester.runAsync(() async {
+        for (var i = 0;
+            i < 300 && !(game.isGameActive && game.player.isLoaded);
+            i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+
+      // Settle the shift through its public seams (the run-summary
+      // harness's path), leaving the summary panel up.
+      game.fareChain.awardNearMiss();
+      game.bankFromPause();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('run_summary_panel')), findsOneWidget,
+          reason: 'the settled daily shows its summary');
+
+      await tester.ensureVisible(find.text('MAIN MENU'));
+      await tester.pump();
+      await tester.tap(find.text('MAIN MENU'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+
+      expect(find.text('HOME'), findsOneWidget,
+          reason: 'MAIN MENU goes to the first route, the menu');
+      expect(find.byKey(const Key('daily_screen')), findsNothing,
+          reason: 'the Daily screen must not be where MAIN MENU lands');
+      expect(find.byType(GameScreen), findsNothing);
+    });
+  });
+
   group('the screen survives the day rolling over (issue #113)', () {
     // Like the menu's card, this screen's two day-dependent blocks were
     // Consumers that only re-ran on save writes, so a day that changed

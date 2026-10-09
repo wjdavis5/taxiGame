@@ -345,6 +345,70 @@ void main() {
     });
   });
 
+  group('sound-off and pauseAll govern one-shot voices (issue #219)', () {
+    test('a mute landing mid-creation stops the in-flight one-shot',
+        () async {
+      // The first play of a sound creates its player asynchronously — on
+      // a device tens of milliseconds. The switch used to be read once,
+      // at admission, so a mute landing inside that window still heard
+      // the sound start.
+      fake.player.latency = const Duration(milliseconds: 50);
+      final audio = AudioService();
+
+      audio.playCoinSound();
+      audio.setSoundEnabled(false);
+
+      // The voice being created is dropped: it never resumes, and its
+      // half-made player is disposed rather than left for a sound nobody
+      // asked to hear.
+      await until(() => fake.player.count('dispose') == 1);
+      expect(fake.player.count('resume'), 0,
+          reason: 'the voice must not start after the mute');
+      await audio.dispose();
+    });
+
+    test('a backgrounding landing mid-creation drops the in-flight one-shot',
+        () async {
+      // The same window as the mute case, with the lifecycle instead of
+      // the switch: pauseAll promises silence from the moment the app
+      // leaves the foreground, so a voice still being created must not
+      // start behind the pause when its player lands.
+      fake.player.latency = const Duration(milliseconds: 50);
+      final audio = AudioService();
+
+      audio.playCoinSound();
+      await audio.pauseAll();
+
+      await until(() => fake.player.count('dispose') == 1);
+      expect(fake.player.count('resume'), 0,
+          reason: 'the voice must not start behind the pause');
+      await audio.resumeAll();
+      await audio.dispose();
+    });
+
+    test('turning sound off stops a ready voice', () async {
+      final audio = AudioService()..playCoinSound();
+      await until(() => fake.player.count('resume') == 1);
+
+      audio.setSoundEnabled(false);
+      await until(() => fake.player.count('stop') == 1);
+
+      expect(fake.player.created, hasLength(1));
+      await audio.dispose();
+    });
+
+    test('pauseAll stops a ready voice', () async {
+      final audio = AudioService()..playLevelCompleteSound();
+      await until(() => fake.player.count('resume') == 1);
+
+      await audio.pauseAll();
+      await until(() => fake.player.count('stop') == 1);
+
+      await audio.resumeAll();
+      await audio.dispose();
+    });
+  });
+
   group('the engine loop on a slow device (issue #49)', () {
     /// One game frame: the two calls TaxiGame.update makes every frame,
     /// then a real gap so the slow fake platform can make progress.

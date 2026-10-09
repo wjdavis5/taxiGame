@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/models/ghost_trace.dart';
 import 'package:taxi_game/models/run_record.dart';
+import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
@@ -250,11 +252,65 @@ void main() {
       expect(gameState.currentLevel, 1);
     });
 
+    test('a corrupt save does not resurrect its history as phantom stats',
+        () async {
+      // The save is dead but the history it wrote survives: nothing in
+      // that window belongs to the fresh save, so loading must not seed
+      // counters, awards, or a ghost from it (issue #218). Five clean
+      // banks would seed the lifetime counter and retro-award
+      // bank_clean_5 if the dead window were read.
+      SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey: '{not json at all',
+        StorageService.runHistoryKey: jsonEncode(
+          [for (var i = 0; i < 5; i++) run(score: 10 * (i + 1)).toJson()],
+        ),
+        // A real ghost beside the dead save: without one the "no ghost"
+        // assertion below would pass vacuously.
+        StorageService.dailyGhostKey: jsonEncode(const GhostTrace(
+          dateKey: '2026-09-26',
+          score: 480,
+          banked: true,
+          vehicleId: 'sedan_blue',
+          samples: [200, 0, 205, -60],
+        ).toJson()),
+      });
+
+      final storage = StorageService();
+      await storage.init();
+      final gameState = GameStateService(storage);
+      await gameState.loadSaveData();
+
+      expect(gameState.runHistory, isEmpty,
+          reason: 'the history of a save that no longer exists is cleared');
+      expect(gameState.runStats.shiftsEnded, 0,
+          reason: 'the lifetime totals must not seed from the dead window');
+      expect(gameState.achievementState.cleanBankedShifts, 0,
+          reason: 'the clean-bank counter must not seed from the dead '
+              'window');
+      expect(gameState.isAchievementUnlocked('bank_clean_5'), isFalse,
+          reason: 'no award may be retro-earned by a dead save');
+      expect(gameState.todayGhost, isNull,
+          reason: 'a fresh save has no ghost to race');
+      expect(storage.loadDailyGhost(), isNull,
+          reason: 'the dead save ghost is cleared from disk too');
+
+      // And the dead window is gone from disk, not just memory: the
+      // restart cannot re-seed from it either.
+      final reloaded = await restarted();
+      expect(reloaded.runHistory, isEmpty);
+      expect(reloaded.achievementState.cleanBankedShifts, 0);
+      expect(reloaded.todayGhost, isNull);
+    });
+
     test('a record missing keys loads with defaults, keeping its neighbours',
         () async {
       // fromJson defaults missing keys rather than throwing, so a record
-      // written by an older build costs nothing but its unknowns.
+      // written by an older build costs nothing but its unknowns. The
+      // save is a real one: a missing save clears its history with
+      // everything else (issue #218), and this test is about the record
+      // shape alone.
       SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey: jsonEncode(SaveData.createDefault().toJson()),
         StorageService.runHistoryKey: '[{"score": 120}, {}]',
       });
 

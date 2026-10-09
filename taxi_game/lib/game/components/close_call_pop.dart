@@ -1,13 +1,15 @@
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
+import 'world_one_shot.dart';
+
 /// Floating world-space award for one close call (issue #23). Names the
 /// points where the pass happened — a near-miss the player does not
 /// notice scores nothing psychologically, so the award rises out of the
 /// gap the taxi just threaded. Rises and shrinks, then removes itself —
 /// the same beat the scrape marker plays, in the close-call palette's
 /// cyan so the two touch-adjacent events never read alike.
-class CloseCallPop extends TextComponent {
+class CloseCallPop extends TextComponent with WorldOneShot {
   CloseCallPop({
     required Vector2 position,
     required int points,

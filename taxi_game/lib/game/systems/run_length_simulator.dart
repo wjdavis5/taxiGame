@@ -717,76 +717,81 @@ class RunLengthSimulator {
         // inside a work zone's closed lanes, and no spawn is kept whose
         // fixed-x path leaves the road anywhere over the span it covers
         // — all through the same [RunEnvironment] helpers the live
-        // spawner calls. The junction and works clearances run before
-        // the per-lane roll; the containment check cannot, because it
-        // has to ask about the body the spawn rolled (a sedan fits a
-        // narrow street where a bus would overhang — gating every spawn
-        // on the bus emptied 2.5 km of same-direction traffic before
-        // every narrowing and flipped the economy's new-below-median
-        // invariant). A skipped spawn's draws produce nothing, so the
-        // stream stays deterministic per seed either way.
+        // spawner calls. The per-lane probability rolls go through the
+        // shared [forEachRolledLane] (issue #216): one roll per lane, in
+        // lane order, before the junction and works gates below — the
+        // same order and the same spend as the live spawner, so the same
+        // seed draws the same road the player drives. The containment
+        // check cannot run before the roll, because it has to ask about
+        // the body the spawn rolled (a sedan fits a narrow street where a
+        // bus would overhang — gating every spawn on the bus emptied
+        // 2.5 km of same-direction traffic before every narrowing and
+        // flipped the economy's new-below-median invariant); it stays in
+        // the callback, after the speed and type rolls, exactly where the
+        // live spawner's runs.
         final junction = env.isIntersectionAt(spawnDistance);
-        for (final lane
-            in env.trafficAt(distance, geometryDistance: spawnDistance).lanes) {
-          if (junction) continue;
+        final lanes =
+            env.trafficAt(distance, geometryDistance: spawnDistance).lanes;
+        forEachRolledLane(random, lanes, (lane) {
+          // The gates skip the spawn, not the roll (issue #216): this
+          // lane's probability roll was already spent above.
+          if (junction) return;
           final laneX = lane.laneX;
-          if (env.isLaneBlockedAt(spawnDistance, laneX)) continue;
-          if (random.nextDouble() <= lane.spawnProbability) {
-            var laneSpeed = lane.speedRange.min +
-                random.nextDouble() *
-                    (lane.speedRange.max - lane.speedRange.min);
-            if (!lane.oncoming) laneSpeed *= 0.5;
-            const types = TrafficVehicleType.values;
-            final type = types[random.nextInt(types.length)];
-            // The rolled body's own footprint, full sprite width — the
-            // thing a player would see crossing the kerb (issue #87) —
-            // asked of the merge schedule per constant-x leg (issue
-            // #107, mirroring the live spawner exactly: the same
-            // helpers, the same verdicts, so the simulator's traffic
-            // merges across the same tapers the player sees and the
-            // harness measures what ships).
-            final merge = env.trafficMergeWaypoints(
-              spawnDistance,
-              laneX,
-              oncoming: lane.oncoming,
-            );
-            if (!env.mergePathHoldsOnRoad(
-              merge,
-              type.size.x / 2,
-              oncoming: lane.oncoming,
-            )) {
+          if (env.isLaneBlockedAt(spawnDistance, laneX)) return;
+          var laneSpeed = lane.speedRange.min +
+              random.nextDouble() *
+                  (lane.speedRange.max - lane.speedRange.min);
+          if (!lane.oncoming) laneSpeed *= 0.5;
+          const types = TrafficVehicleType.values;
+          final type = types[random.nextInt(types.length)];
+          // The rolled body's own footprint, full sprite width — the
+          // thing a player would see crossing the kerb (issue #87) —
+          // asked of the merge schedule per constant-x leg (issue
+          // #107, mirroring the live spawner exactly: the same
+          // helpers, the same verdicts, so the simulator's traffic
+          // merges across the same tapers the player sees and the
+          // harness measures what ships).
+          final merge = env.trafficMergeWaypoints(
+            spawnDistance,
+            laneX,
+            oncoming: lane.oncoming,
+          );
+          if (!env.mergePathHoldsOnRoad(
+            merge,
+            type.size.x / 2,
+            oncoming: lane.oncoming,
+          )) {
+            return;
+          }
+          // No materialising on top of living traffic (issue #146,
+          // mirroring the live spawner's occupancy gate): skip when
+          // the rolled body would land overlapping a same-role car's
+          // full body plus the headway margin. Skipped after the
+          // rolls, so the stream stays deterministic per seed.
+          final spawnY = y - spawnDistanceAhead;
+          var occupied = false;
+          for (final other in vehicles) {
+            if (other.oncoming != lane.oncoming) continue;
+            if ((other.x - laneX).abs() >=
+                other.fullHalfW + type.size.x / 2) {
               continue;
             }
-            // No materialising on top of living traffic (issue #146,
-            // mirroring the live spawner's occupancy gate): skip when
-            // the rolled body would land overlapping a same-role car's
-            // full body plus the headway margin. Skipped after the
-            // rolls, so the stream stays deterministic per seed.
-            final spawnY = y - spawnDistanceAhead;
-            var occupied = false;
-            for (final other in vehicles) {
-              if (other.oncoming != lane.oncoming) continue;
-              if ((other.x - laneX).abs() >=
-                  other.fullHalfW + type.size.x / 2) {
-                continue;
-              }
-              if ((other.y - spawnY).abs() <
-                  other.fullHalfH + type.size.y / 2 + headwayMargin) {
-                occupied = true;
-                break;
-              }
+            if ((other.y - spawnY).abs() <
+                other.fullHalfH + type.size.y / 2 + headwayMargin) {
+              occupied = true;
+              break;
             }
-            if (occupied) continue;
-            vehicles.add(_SimVehicle(
-              x: laneX,
-              y: y - spawnDistanceAhead,
-              speed: laneSpeed * type.speedMultiplier,
-              oncoming: lane.oncoming,
-              type: type,
-              mergeWaypoints: merge,
-            ));
           }
-        }
+          if (occupied) return;
+          vehicles.add(_SimVehicle(
+            x: laneX,
+            y: y - spawnDistanceAhead,
+            speed: laneSpeed * type.speedMultiplier,
+            oncoming: lane.oncoming,
+            type: type,
+            mergeWaypoints: merge,
+          ));
+        });
       }
 
       // --- Headway: no traffic drives through traffic (issue #146) ---

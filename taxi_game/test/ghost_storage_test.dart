@@ -137,6 +137,10 @@ void main() {
 
   group('persistence and reset', () {
     test('a fresh service loads the stored ghost', () async {
+      // The save comes first, as it does on a device: a shift that
+      // records a ghost has long since written one, and a ghost left
+      // without a save is cleared with it (issue #218).
+      await gameState.save();
       await recordGhost(score: 321);
       final reloaded = GameStateService(storage);
       await reloaded.loadSaveData();

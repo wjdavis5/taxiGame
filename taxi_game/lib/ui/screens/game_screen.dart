@@ -250,7 +250,16 @@ class _GameScreenState extends State<GameScreen> {
               onPressed: () {
                 game.audio?.playButtonSound();
                 game.haptics?.buttonPress();
-                Navigator.of(context).pop();
+                // The label names the exit (issue #222): MAIN MENU goes
+                // all the way to the first route, while QUIT — a run
+                // abandoned with coins at risk — steps back one route to
+                // where the run started, which on the daily path is the
+                // Daily screen that owns the still-unspent attempt.
+                if (atRisk > 0) {
+                  Navigator.of(context).pop();
+                } else {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                }
               },
               child: Text(
                 atRisk > 0 ? 'QUIT — $atRisk LOST' : 'MAIN MENU',

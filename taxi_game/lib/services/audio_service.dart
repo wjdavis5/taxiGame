@@ -392,9 +392,32 @@ class AudioService {
       }
       voices.creating--;
       if (player == null) return;
+      // Re-read the state once the player exists (issue #219): the gate
+      // above ran when the play was admitted, but creating the first
+      // voice of a sound takes tens of milliseconds on a device, and a
+      // mute or a backgrounding landing inside that window was ignored —
+      // the player then resumed while the app owed silence. A dropped
+      // arrival is disposed unplayed (the next enabled play makes a fresh
+      // voice) rather than resumed or parked in the pool.
+      if (!_soundEnabled || _suspended) {
+        unawaited(_disposeQuietly(player));
+        return;
+      }
       voices.ready.add(player);
       await _quietly(player.resume);
     }());
+  }
+
+  /// Stops every ready one-shot voice (issue #219). The sounds are
+  /// momentary, but turning the sound off and backgrounding the app both
+  /// promise silence from that moment, not once the current jingle has
+  /// rung out. Stopped voices stay in their pools for reuse.
+  void _stopVoices() {
+    for (final voices in _voices.values) {
+      for (final voice in voices.ready) {
+        unawaited(_quietly(voice.stop));
+      }
+    }
   }
 
   // --- music ----------------------------------------------------------------
@@ -536,6 +559,9 @@ class AudioService {
   void setSoundEnabled(bool enabled) {
     if (_soundEnabled == enabled) return;
     _soundEnabled = enabled;
+    // Muting silences what is already ringing too (issue #219); turning
+    // sound back on does not restart a stopped one-shot.
+    if (!enabled) _stopVoices();
     _syncEngine();
   }
 
@@ -572,6 +598,10 @@ class AudioService {
   Future<void> pauseAll() async {
     _suspended = true;
     setEngineRunning(false);
+    // The jingles are one-shots this service still owns: a banked jingle
+    // or level sting ringing when the app goes inactive must not play on
+    // through the background (issue #219).
+    _stopVoices();
     try {
       await FlameAudio.bgm.pause();
     } catch (_) {}

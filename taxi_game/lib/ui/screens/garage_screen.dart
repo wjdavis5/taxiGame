@@ -326,23 +326,10 @@ class _VehicleCard extends StatelessWidget {
       );
     }
 
-    return ElevatedButton.icon(
-      key: Key('garage_buy_${vehicle.id}'),
+    return _BuyButton(
+      vehicleId: vehicle.id,
+      price: vehicle.price,
       onPressed: () => _purchase(context),
-      icon: const Icon(Icons.monetization_on, size: 16),
-      label: Text(
-        '${vehicle.price}',
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-      ),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.yellow,
-        foregroundColor: Colors.black,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        minimumSize: const Size(0, 0),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-      ),
     );
   }
 
@@ -411,6 +398,75 @@ class _VehicleCard extends StatelessWidget {
           duration: const Duration(seconds: 2),
         ),
       );
+  }
+}
+
+/// The BUY button with a one-purchase latch (issue #221): two taps landing
+/// before the card rebuilds — two fingers inside one frame, or a double tap
+/// through a stalled frame — both reached `_purchase`, and the coin spend
+/// ran before ownership was checked. The latch lets the first tap through
+/// and swallows the rest of that frame, then releases so the refusal path
+/// (issue #171) can answer every later ask; the service's own ownership
+/// check is the backstop for any invocation that still gets through.
+class _BuyButton extends StatefulWidget {
+  const _BuyButton({
+    required this.vehicleId,
+    required this.price,
+    required this.onPressed,
+  });
+
+  final String vehicleId;
+  final int price;
+  final VoidCallback onPressed;
+
+  @override
+  State<_BuyButton> createState() => _BuyButtonState();
+}
+
+class _BuyButtonState extends State<_BuyButton> {
+  bool _bought = false;
+
+  @override
+  void didUpdateWidget(_BuyButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The card rebuilt: whatever the tap did has been rendered (BUY
+    // became SELECT, or the refusal is showing), so the button may be
+    // trusted again.
+    _bought = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ElevatedButton.icon(
+      key: Key('garage_buy_${widget.vehicleId}'),
+      onPressed: () {
+        if (_bought) return;
+        _bought = true;
+        widget.onPressed();
+        // The latch only needs to cover the frame a duplicate tap can
+        // land in. Release it once that frame has rendered, or a refused
+        // purchase — which rebuilds nothing — would swallow every later
+        // tap until the card happened to rebuild; every ask deserves its
+        // refusal (issue #171).
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _bought = false);
+        });
+      },
+      icon: const Icon(Icons.monetization_on, size: 16),
+      label: Text(
+        '${widget.price}',
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.yellow,
+        foregroundColor: Colors.black,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        minimumSize: const Size(0, 0),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+      ),
+    );
   }
 }
 

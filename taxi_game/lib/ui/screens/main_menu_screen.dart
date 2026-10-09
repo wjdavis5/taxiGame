@@ -381,6 +381,9 @@ class MainMenuScreen extends StatelessWidget {
           TextButton(
             key: const ValueKey('daily_history_button'),
             onPressed: () {
+              // The same transition guard as the menu buttons (issue
+              // #220): this link is a push too.
+              if (ModalRoute.of(context)?.isCurrent != true) return;
               audioOf(context)?.playButtonSound();
               hapticsOf(context)?.buttonPress();
               Navigator.push(
@@ -445,8 +448,13 @@ class _MenuButton extends StatelessWidget {
     return ElevatedButton.icon(
       key: buttonKey,
       // Every menu press clicks (issue #4) and ticks (issue #5), then
-      // does its job.
+      // does its job. The route guard comes first (issue #220): a stray
+      // second tap from the push transition — the menu stays
+      // hit-testable until the incoming route turns opaque — used to
+      // push a second screen over the first, and two live games stacked.
+      // Only the current route's buttons act.
       onPressed: () {
+        if (ModalRoute.of(context)?.isCurrent != true) return;
         audioOf(context)?.playButtonSound();
         hapticsOf(context)?.buttonPress();
         onPressed();
