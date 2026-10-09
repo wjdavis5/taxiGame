@@ -3,13 +3,15 @@ import 'dart:math' as math;
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
+import 'world_one_shot.dart';
+
 /// One-shot particle burst in world space (issue #7): the punctuation for
 /// a pickup, a dropoff, a crash, or a scrape.
 ///
 /// Draws plain circles — no textures, no saveLayer, at most a couple of
 /// dozen short-lived particles — so a burst costs almost nothing on the
 /// oldest supported device. Removes itself once every particle has died.
-class BurstParticles extends PositionComponent {
+class BurstParticles extends PositionComponent with WorldOneShot {
   BurstParticles({
     required Vector2 position,
     required List<Color> colors,

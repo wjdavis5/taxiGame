@@ -4,6 +4,7 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 import '../taxi_game.dart';
+import 'world_one_shot.dart';
 
 /// Floating world-space note the passenger "says" when their dropoff has
 /// to move (issue #28): the street is one-way, so a kerb the taxi drove
@@ -19,7 +20,7 @@ import '../taxi_game.dart';
 /// horizontally (vertical-only follow on [TaxiGame.roadCenterX]) and the
 /// world fold moves y only, so world x is screen x and clamping the
 /// component's x here is exact for the note's whole life.
-class PassengerNote extends TextComponent {
+class PassengerNote extends TextComponent with WorldOneShot {
   PassengerNote({required Vector2 position})
       : super(
           text: 'Passenger: anywhere ahead is fine',

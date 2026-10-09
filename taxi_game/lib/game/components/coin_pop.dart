@@ -4,6 +4,7 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 import '../taxi_game.dart';
+import 'world_one_shot.dart';
 
 /// A coin that bursts out of a world position and flies to the HUD coin
 /// counter (issue #7).
@@ -17,7 +18,8 @@ import '../taxi_game.dart';
 /// which keeps the coin on course while the camera follows the taxi.
 /// Before the HUD has measured (and headless), it falls back to a fixed
 /// top-right inset of the visible world. Removes itself on arrival.
-class CoinPop extends PositionComponent with HasGameReference<TaxiGame> {
+class CoinPop extends PositionComponent
+    with HasGameReference<TaxiGame>, WorldOneShot {
   CoinPop({
     required Vector2 startPosition,
     this.delay = 0,

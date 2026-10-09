@@ -1,9 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:flame/components.dart';
-import 'package:flutter/material.dart' show SizedBox;
+import 'package:flutter/material.dart' show Colors, SizedBox;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/burst_particles.dart';
 import 'package:taxi_game/game/components/dropoff_zone.dart';
 import 'package:taxi_game/game/components/pickup_zone.dart';
 import 'package:taxi_game/game/components/road_segment.dart';
@@ -360,6 +361,45 @@ void main() {
       expect(game.camera.viewfinder.position.x, TaxiGame.roadCenterX,
           reason: 'the camera stays locked on the road');
       expectWorldCoherent(game);
+    });
+  });
+
+  group('a world-fold crossing with a queued one-shot (issue #217)', () {
+    test('a one-shot queued on the crossing frame mounts in the live frame',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      // The frame just below the boundary: no fold yet.
+      game.player.position = Vector2(200, -(WorldOrigin.period - 50));
+      await tickAndSettle(game);
+      expect(game.worldShift, 0, reason: 'the boundary is not crossed yet');
+
+      // The crossing frame: the taxi is past the boundary, and a world
+      // one-shot is queued before the next tick's fold runs — a
+      // delivery, scrape, or near-miss that begins here loses its
+      // world-space confirmation unless the fold carries the queued
+      // component with it. The queued component is still in Flame's add
+      // queue when the fold walks the tree, so only its own anchor can
+      // carry it into the live frame.
+      game.player.position = Vector2(200, -(WorldOrigin.period + 25));
+      const eventTrueDistance = WorldOrigin.period + 10;
+      final fx = BurstParticles(
+        position: Vector2(200, game.worldShift - eventTrueDistance),
+        colors: const [Colors.yellow],
+      );
+      game.world.add(fx);
+      expect(fx.isLoaded, isTrue,
+          reason: 'a mounted game loads an add synchronously');
+
+      await tickAndSettle(game);
+
+      expect(game.worldShift, WorldOrigin.period, reason: 'the world folded');
+      expect(fx.isMounted, isTrue, reason: 'the queued one-shot mounted');
+      expect(fx.position.y,
+          closeTo(game.worldShift - eventTrueDistance, 0.5),
+          reason: 'the one-shot must mount in the live frame, not one '
+              'period below it');
     });
   });
 }
