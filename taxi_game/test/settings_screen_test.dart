@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/levels/level.dart';
 import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/services/audio_service.dart';
+import 'package:taxi_game/services/diagnostics.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/haptics_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -19,6 +20,7 @@ import 'package:taxi_game/ui/screens/settings_screen.dart';
 import 'package:taxi_game/ui/screens/stats_screen.dart';
 
 import 'helpers/fake_audio_platform.dart';
+import 'helpers/fake_prefs_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -360,6 +362,43 @@ void main() {
           button, find.byType(Scrollable).first, const Offset(0, -200));
       expect(button, findsOneWidget);
       expect(find.byKey(const Key('clear_diagnostics_button')), findsOneWidget);
+    });
+
+    testWidgets('a clear that really erased says so', (tester) async {
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      final button = find.byKey(const Key('clear_diagnostics_button'));
+      await tester.dragUntilVisible(
+          button, find.byType(Scrollable).first, const Offset(0, -200));
+      await tester.ensureVisible(button);
+      await tester.pumpAndSettle();
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Diagnostics cleared.'), findsOneWidget);
+      expect(find.text('Could not clear diagnostics.'), findsNothing);
+    });
+
+    testWidgets('a failed clear says so instead of claiming success '
+        '(issue #233)', (tester) async {
+      // The erase failure the old snackbar papered over: the persisted
+      // tail stays on disk and the next launch restores it, so the one
+      // moment the player is told it is gone must not lie.
+      final store = installFailingPrefsStore();
+      store.throwOnRemoves = 1;
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      final button = find.byKey(const Key('clear_diagnostics_button'));
+      await tester.dragUntilVisible(
+          button, find.byType(Scrollable).first, const Offset(0, -200));
+      await tester.ensureVisible(button);
+      await tester.pumpAndSettle();
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Diagnostics cleared.'), findsNothing,
+          reason: 'the claim the issue is about');
+      expect(find.text('Could not clear diagnostics.'), findsOneWidget);
     });
 
     testWidgets('a failing share explains itself instead of dying '

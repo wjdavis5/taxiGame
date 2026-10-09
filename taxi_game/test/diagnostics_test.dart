@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/services/diagnostics.dart';
 
+import 'helpers/fake_prefs_store.dart';
+
 /// The on-device diagnostics tail: the telemetry an offline game can
 /// have — bounded, persisted across hard kills, and readable only by the
 /// player sharing it by hand.
@@ -100,7 +102,8 @@ void main() {
 
   test('clear wipes the buffer and the storage', () async {
     Diagnostics.instance.log('gone tomorrow');
-    await Diagnostics.instance.clear();
+    expect(await Diagnostics.instance.clear(), isTrue,
+        reason: 'a clean erase reports success');
 
     expect(Diagnostics.instance.export(), isNot(contains('gone tomorrow')));
     Diagnostics.instance.resetForTest();
@@ -109,6 +112,23 @@ void main() {
       Diagnostics.instance.export(),
       isNot(contains('gone tomorrow')),
       reason: 'the storage copy went with the buffer',
+    );
+  });
+
+  test('clear reports a failed erase instead of claiming success (#233)',
+      () async {
+    final store = installFailingPrefsStore();
+    Diagnostics.instance.log('still here');
+    await Diagnostics.instance.flush();
+    // The erase fails now — as a corrupted container or a refused
+    // platform call does — and the tail stays on disk.
+    store.throwOnRemoves = 1;
+
+    expect(await Diagnostics.instance.clear(), isFalse);
+    expect(
+      (await store.getAll())['flutter.diagnostics_tail'],
+      contains('still here'),
+      reason: 'the persisted tail is exactly what the next launch restores',
     );
   });
 }

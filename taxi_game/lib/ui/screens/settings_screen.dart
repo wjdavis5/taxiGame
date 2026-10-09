@@ -264,12 +264,19 @@ class SettingsScreen extends StatelessWidget {
                                 onPressed: () async {
                                   audioOf(context)?.playButtonSound();
                                   hapticsOf(context)?.buttonPress();
-                                  await Diagnostics.instance.clear();
+                                  final cleared =
+                                      await Diagnostics.instance.clear();
                                   if (!context.mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Diagnostics cleared.'),
-                                      duration: Duration(seconds: 2),
+                                    SnackBar(
+                                      // The word follows the erase
+                                      // (issue #233): a failed remove
+                                      // leaves the tail on disk, and
+                                      // the next launch restores it.
+                                      content: Text(cleared
+                                          ? 'Diagnostics cleared.'
+                                          : 'Could not clear diagnostics.'),
+                                      duration: const Duration(seconds: 2),
                                     ),
                                   );
                                 },
