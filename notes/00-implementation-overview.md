@@ -1,4 +1,4 @@
-# Pick Me Up 3D - Implementation Overview
+# Cab Hustle - Implementation Overview
 
 ## Project Status
 **Date Started:** November 22, 2025  
@@ -6,7 +6,7 @@
 **Platform:** Flutter (Cross-platform: iOS, Android, Web, Desktop)
 
 ## Project Goals
-Create a cross-platform taxi game inspired by "Pick Me Up 3D" using Flutter framework:
+Create a cross-platform taxi game with Flutter and the Flame engine:
 - Single-button tap-hold-release control mechanic
 - 3D-style graphics with cartoonish aesthetic
 - Progressive level system (300+ levels)

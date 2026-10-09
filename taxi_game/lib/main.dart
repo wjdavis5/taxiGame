@@ -131,7 +131,7 @@ class TaxiGameApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Taxi Game',
+      title: 'Cab Hustle',
       theme: ThemeData(
         // Tooltips are labels, never feedback (issue #169): a long-pressed
         // tooltip fires the framework's own feedback — Feedback.forLongPress,

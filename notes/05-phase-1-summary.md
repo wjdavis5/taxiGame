@@ -1,7 +1,7 @@
 # Phase 1 Summary: Project Setup Complete ✅
 
 ## Overview
-Successfully completed Phase 1 of the Flutter taxi game implementation based on the "Pick Me Up 3D" specification. The project now has a complete foundation ready for core gameplay development.
+Successfully completed Phase 1 of the Flutter taxi game implementation from the original design specification. The project now has a complete foundation ready for core gameplay development.
 
 ## What Was Accomplished
 
