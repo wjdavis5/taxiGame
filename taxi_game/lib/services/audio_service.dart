@@ -511,9 +511,15 @@ class AudioService {
   /// Starts the looping music track. Remembered even while music is disabled,
   /// so re-enabling music resumes the same track.
   Future<void> playMusic() async {
-    // A refused session claim gets its one retry here (issue #234).
+    // A refused session claim gets its one retry here (issue #234) — and
+    // the retry is part of the start: the one-shot players wait for
+    // [_sessionReady] before they reach the platform, and the music must
+    // wait the same way. Without the wait `bgm.play` began while the
+    // retry was still claiming the ambient session, so the track started
+    // under the plugin's launch-time `.playback` default.
     _retryIosAudioContextIfArmed();
     _musicWanted = true;
+    await _sessionReady;
     if (!isMusicWanted) return;
     try {
       await FlameAudio.bgm.play(musicTrack, volume: 0.8);

@@ -1,4 +1,4 @@
-import 'dart:async' show Completer;
+import 'dart:async' show Completer, unawaited;
 import 'dart:io' show Directory, File;
 
 import 'package:audioplayers_platform_interface/audioplayers_platform_interface.dart'
@@ -791,6 +791,48 @@ void main() {
       await settle();
       expect(fake.global.attempts, 2,
           reason: 'one initial attempt plus exactly one retry');
+      await audio.dispose();
+    });
+
+    test('the BGM start waits for the retry the next play spends (issue #234)',
+        () async {
+      // playMusic spent the armed session retry but did not wait for it:
+      // `bgm.play` began while the ambient session was still being
+      // claimed, under the plugin's launch-time `.playback` default. The
+      // one-shot players wait on `_sessionReady`; the music must too.
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      fake.global.failSetGlobalAudioContext = true;
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      final audio = AudioService();
+      await audio.initialize(); // the claim fails; the one retry is armed
+      expect(fake.global.contexts, isEmpty);
+
+      // The retry will succeed, but only when the test lets it: held, it
+      // keeps the claim in flight while playMusic runs.
+      fake.global.failSetGlobalAudioContext = false;
+      final hold = fake.global.hold = Completer<void>();
+      var finished = false;
+      final starting = audio.playMusic();
+      unawaited(starting.whenComplete(() => finished = true));
+      await until(() => fake.global.attempts == 2);
+      await settle();
+
+      // The claim is still in flight: the start must still be waiting on
+      // it, not running `bgm.play` under the plugin's launch-time
+      // `.playback` default behind the retry.
+      expect(finished, isFalse,
+          reason: 'the BGM start must wait for the session claim');
+
+      hold.complete();
+      await starting;
+
+      expect(fake.global.contexts, hasLength(1));
+      expect(fake.global.contexts.single.iOS.category,
+          AVAudioSessionCategory.ambient);
+      expect(finished, isTrue,
+          reason: 'the start completes once the session has landed');
       await audio.dispose();
     });
   });
