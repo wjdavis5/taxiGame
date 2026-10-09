@@ -367,6 +367,25 @@ void main() {
       await audio.dispose();
     });
 
+    test('a backgrounding landing mid-creation drops the in-flight one-shot',
+        () async {
+      // The same window as the mute case, with the lifecycle instead of
+      // the switch: pauseAll promises silence from the moment the app
+      // leaves the foreground, so a voice still being created must not
+      // start behind the pause when its player lands.
+      fake.player.latency = const Duration(milliseconds: 50);
+      final audio = AudioService();
+
+      audio.playCoinSound();
+      await audio.pauseAll();
+
+      await until(() => fake.player.count('dispose') == 1);
+      expect(fake.player.count('resume'), 0,
+          reason: 'the voice must not start behind the pause');
+      await audio.resumeAll();
+      await audio.dispose();
+    });
+
     test('turning sound off stops a ready voice', () async {
       final audio = AudioService()..playCoinSound();
       await until(() => fake.player.count('resume') == 1);

@@ -392,14 +392,14 @@ class AudioService {
       }
       voices.creating--;
       if (player == null) return;
-      // Re-read the setting once the player exists (issue #219): the gate
+      // Re-read the state once the player exists (issue #219): the gate
       // above ran when the play was admitted, but creating the first
       // voice of a sound takes tens of milliseconds on a device, and a
-      // mute landing inside that window was ignored — the player then
-      // resumed with the switch off. A muted arrival is dropped (disposed
-      // unplayed; the next enabled play makes a fresh voice) rather than
-      // resumed or parked in the pool.
-      if (!_soundEnabled) {
+      // mute or a backgrounding landing inside that window was ignored —
+      // the player then resumed while the app owed silence. A dropped
+      // arrival is disposed unplayed (the next enabled play makes a fresh
+      // voice) rather than resumed or parked in the pool.
+      if (!_soundEnabled || _suspended) {
         unawaited(_disposeQuietly(player));
         return;
       }
