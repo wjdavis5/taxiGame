@@ -57,6 +57,17 @@ void main() {
     return workflow.substring(start, next == -1 ? workflow.length : next);
   }
 
+  /// The lane body alone: its `def` through the next `def ` (or EOF).
+  /// The old scan ran to EOF, where the sibling `set_review_notes` lane
+  /// supplied the same `notes.empty?` + `UI.user_error!` shape and kept
+  /// these assertions green through a downgraded refusal (issue #225).
+  String laneBody(String lane) {
+    final defAt = fastfile.indexOf('def $lane');
+    expect(defAt, greaterThan(-1), reason: 'lane "$lane" is missing');
+    final nextDef = fastfile.indexOf('\ndef ', defAt + 1);
+    return fastfile.substring(defAt, nextDef == -1 ? fastfile.length : nextDef);
+  }
+
   group('the release notes file itself', () {
     test('whats_new.txt ships with player-facing, non-blank content', () {
       final notes = readRepoFile('taxi_game/fastlane/whats_new.txt');
@@ -101,15 +112,21 @@ void main() {
         () {
       // The file contract: resolved beside the Fastfile (never the
       // runner's working directory), and both the missing and the
-      // blank/whitespace-only cases fail with UI.user_error! — the same
-      // loudness the wait and release-type helpers use.
+      // blank/whitespace-only cases fail with an error naming the case.
+      // The lanes are bounded at the next `def ` (issue #225): scanned to
+      // EOF, the sibling set_review_notes lane supplied the same
+      // `notes.empty?` + `UI.user_error!` shape and satisfied this test
+      // even when set_whats_new's own refusal was downgraded.
       expect(fastfile, contains('whats_new.txt'));
       expect(fastfile, contains("File.expand_path(\"whats_new.txt\", __dir__)"));
-      expect(fastfile, contains('File.read(notes_path).strip'));
-      final laneDef = fastfile.substring(fastfile.indexOf('def set_whats_new'));
-      expect(laneDef.indexOf('UI.user_error!'), greaterThan(-1),
-          reason: 'the missing-file case must fail the lane');
-      expect(blankFileRefused(laneDef), isTrue,
+      final lane = laneBody('set_whats_new');
+      expect(lane, contains('File.read(notes_path).strip'));
+      expect(lane, contains('"Missing #{notes_path}'),
+          reason: 'the missing-file case must fail the lane naming the file');
+      expect(lane, contains('"#{notes_path} is empty'),
+          reason: 'the whitespace-only case must fail the lane naming the '
+              'empty file');
+      expect(blankFileRefused(lane), isTrue,
           reason: 'a whitespace-only file must fail the lane too');
     });
 
@@ -123,13 +140,13 @@ void main() {
       // skips the write when this is the only one, which is a skip with
       // a log, never a raise: failing the lane is exactly the behavior
       // that lost the 1.0.0 resubmission.
-      final laneDef = fastfile.substring(fastfile.indexOf('def set_whats_new'));
-      final notesChecksAt = laneDef.indexOf('notes.empty?');
+      final lane = laneBody('set_whats_new');
+      final notesChecksAt = lane.indexOf('notes.empty?');
       final ensureAt =
-          laneDef.indexOf('app.ensure_version!(version, platform: platform)');
-      final guardAt = laneDef.indexOf(
+          lane.indexOf('app.ensure_version!(version, platform: platform)');
+      final guardAt = lane.indexOf(
           'get_app_store_versions(filter: { platform: platform }, limit: 2)');
-      final patchAt = laneDef.indexOf('whatsNew: notes');
+      final patchAt = lane.indexOf('whatsNew: notes');
 
       expect(guardAt, greaterThan(-1),
           reason: 'the first-version guard must exist');
@@ -152,9 +169,9 @@ void main() {
       // A skip, not a raise: between the count and the return there is
       // a UI.important saying why, and no UI.user_error! failing the
       // lane the submit still needs to run.
-      final returnAt = laneDef.indexOf('\n    return', guardAt);
+      final returnAt = lane.indexOf('\n    return', guardAt);
       expect(returnAt, greaterThan(-1), reason: 'the guard must return');
-      final guardBlock = laneDef.substring(guardAt, returnAt);
+      final guardBlock = lane.substring(guardAt, returnAt);
       expect(guardBlock, contains('UI.important'),
           reason: 'the skip must say why it skipped');
       expect(guardBlock.contains('UI.user_error!'), isFalse,
@@ -233,12 +250,22 @@ void main() {
   });
 }
 
-/// True when the lane definition refuses a whitespace-only file: the
-/// strip is what turns a blank file into the empty case the error
-/// names, and the empty comparison is what fails it.
-bool blankFileRefused(String laneDef) {
-  final stripAt = laneDef.indexOf('File.read(notes_path).strip');
+/// True when the lane's own `if notes.empty?` branch refuses a
+/// whitespace-only file: the strip is what turns a blank file into the
+/// empty case the error names, and the branch itself raises
+/// `UI.user_error!` with the empty-file message.
+///
+/// Bounded to that branch (issue #225): scanned to EOF, the sibling
+/// `set_review_notes` lane — or a later validation in this lane —
+/// supplied a `UI.user_error!` that satisfied this even when the empty
+/// branch no longer refused.
+bool blankFileRefused(String lane) {
+  final stripAt = lane.indexOf('File.read(notes_path).strip');
   if (stripAt == -1) return false;
-  final tail = laneDef.substring(stripAt);
-  return tail.contains('notes.empty?') && tail.contains('UI.user_error!');
+  final branchAt = lane.indexOf('if notes.empty?', stripAt);
+  if (branchAt == -1) return false;
+  final endAt = lane.indexOf('\n  end', branchAt);
+  if (endAt == -1) return false;
+  final branch = lane.substring(branchAt, endAt);
+  return branch.contains('UI.user_error!') && branch.contains('is empty');
 }
