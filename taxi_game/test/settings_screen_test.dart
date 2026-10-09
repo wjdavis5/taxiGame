@@ -209,6 +209,39 @@ void main() {
       expect(find.textContaining('0 coins'), findsOneWidget);
       expect(find.textContaining('75 coins'), findsNothing);
     });
+
+    testWidgets('a reset that did not land says so instead of implying '
+        'success (issue #244)', (tester) async {
+      // The abandoned wipe (#232's terminal storage failure): the dialog
+      // promised an irreversible wipe, and the old silent return left
+      // the player believing it happened. The settings screen must name
+      // the refusal, the diagnostics-erase wording's sibling (#233).
+      final store = installFailingPrefsStore();
+      storage = StorageService();
+      await storage.init();
+      gameState = GameStateService(storage);
+      await gameState.loadSaveData();
+      gameState.addCoins(200);
+      // Settle the setup save before arming the failure: its own retry
+      // must not consume the two throws meant for the reset.
+      await storage.pendingWrites;
+      store.throwOnWrites = 2;
+      Diagnostics.instance.resetForTest();
+      addTearDown(Diagnostics.instance.resetForTest);
+
+      await tester.pumpWidget(wrap(const SettingsScreen()));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('reset_progress_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reset_confirm_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Could not reset progress.'), findsOneWidget,
+          reason: 'the refusal the old silence hid');
+      expect(find.textContaining('200 coins'), findsOneWidget,
+          reason: 'the abandoned wipe changed nothing to display');
+    });
   });
 
   group('vibration (issue #5)', () {
@@ -491,6 +524,44 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a second tile tap during its push stacks no second screen '
+        '(issue #240)', (tester) async {
+      // The settings screen stays hit-testable through the push
+      // transition, so two taps reached a tile's callback — two pushes,
+      // two stacked screens, and every Back showed the first copy's
+      // title again. The second invocation must be refused while the
+      // settings route is no longer current (#220's menu guard, applied
+      // to the About tiles). All three tiles carry it; one loop each.
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      for (final (tileKey, screenType) in [
+        (const ValueKey('settings_records_tile'), RecordsScreen),
+        (const ValueKey('settings_stats_tile'), StatsScreen),
+        (const ValueKey('settings_credits_tile'), CreditsScreen),
+      ]) {
+        // Tear the previous iteration's navigator down: a bare
+        // pumpWidget would reuse the same MaterialApp and keep the
+        // pushed screen on top.
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(wrap(const SettingsScreen()));
+        await tester.pump();
+
+        final tile = tester.widget<ListTile>(find.byKey(tileKey));
+        tile.onTap!();
+        tile.onTap!();
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byType(screenType, skipOffstage: false),
+          findsOneWidget,
+          reason: '$tileKey must push one screen, not two — a stacked '
+              'second copy keeps every Back on the first',
+        );
+      }
     });
   });
 }

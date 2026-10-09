@@ -567,15 +567,22 @@ class GameStateService extends ChangeNotifier {
   /// still reaches the disk. A terminal failure therefore leaves the old,
   /// coherent save in memory and on disk, the abandoned reset logged,
   /// not applied.
-  Future<void> resetProgress() async {
+  ///
+  /// Returns whether the wipe landed (issue #244): `false` after a
+  /// terminal storage failure, or when a reset is already in flight; the
+  /// old save was kept either way. The caller must be able to tell the
+  /// player the reset did not happen — the confirmation dialog just
+  /// promised an irreversible wipe.
+  Future<bool> resetProgress() async {
     // Single-flight (issue #246): a second reset confirmed while the first
     // transaction still runs was the one overlap the defer gate could not
     // cover — the second transaction queues behind the first, and a failed
     // first reset then restores and flushes the old save after the
     // second's fresh write, making the old progress the last word on disk.
     // A reset of a save already being wiped has nothing left to do, so a
-    // second call is refused while one is in flight.
-    if (_resetInFlight) return;
+    // second call is refused while one is in flight — and reports that
+    // nothing was reset (issue #244).
+    if (_resetInFlight) return false;
     // Settings are preference, not progress (issue #83): the whole
     // Settings block — the three toggles and both volumes — rides over
     // to the fresh save, not just the booleans a bug report names. A
@@ -619,7 +626,7 @@ class GameStateService extends ChangeNotifier {
         StateError('reset abandoned: the storage transaction did not land'),
         StackTrace.current,
       );
-      return;
+      return false;
     }
     // The wipe has fully landed; only now do the records swap with the
     // fresh save. The fresh save also un-dismisses the stick-control
@@ -645,5 +652,6 @@ class GameStateService extends ChangeNotifier {
     // the transaction's own fresh-save write — and still carries fresh
     // data, never the old save (issue #246).
     await _flushDeferredSave();
+    return true;
   }
 }

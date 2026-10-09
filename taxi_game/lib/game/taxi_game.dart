@@ -1474,8 +1474,14 @@ class TaxiGame extends FlameGame
     if (next > GameLevel.ladderLength) {
       return false;
     }
-    overlays.remove('levelComplete');
+    // The panel survives the load, and only a load that landed retires
+    // it (issue #241): the load can throw [LevelLoadException] for a
+    // rung the bundle declares but cannot hand over, and a panel torn
+    // down first left the player on a frozen completion with nothing to
+    // read. The button catches the throw and re-shows the panel with a
+    // message; this order is what keeps the panel there to answer on.
     await loadLevel(next);
+    overlays.remove('levelComplete');
     return true;
   }
 
