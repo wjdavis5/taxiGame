@@ -838,9 +838,31 @@ void main() {
   });
 
   test('initialize is safe to call twice', () async {
+    // The contract is observable through the global fake only on iOS —
+    // the session claim exists nowhere else (issue #39).
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final audio = AudioService();
+
     await audio.initialize();
+    final bgm = FlameAudio.bgm.audioPlayer;
+    final playersCreated = fake.player.created.length;
+
     await audio.initialize();
+
+    expect(fake.global.contexts, hasLength(1),
+        reason: 'a second initialize must not re-claim the iOS session — '
+            'the re-claim is the regression issue #228 names');
+    expect(fake.global.contexts.single.iOS.category,
+        AVAudioSessionCategory.ambient,
+        reason: 'the one claim is the ambient session, not a re-assert of '
+            'the plugin default');
+    expect(fake.player.created.length, playersCreated,
+        reason: 'a second initialize must not duplicate players: BGM keeps '
+            'the one it already has, and nothing new is prepared');
+    expect(FlameAudio.bgm.audioPlayer, same(bgm),
+        reason: 'the BGM player the first initialize adopted stays the one '
+            'the service plays through');
   });
 
   group('the asset cache folder (issue #198)', () {

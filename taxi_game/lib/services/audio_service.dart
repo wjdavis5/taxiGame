@@ -130,6 +130,13 @@ class AudioService {
   AudioContext? get _playerContext =>
       defaultTargetPlatform == TargetPlatform.iOS ? null : _mixWithOthersContext;
 
+  /// True once [initialize] has run (issue #228). Set before the first
+  /// await so overlapping unawaited calls see it too; never cleared,
+  /// because the service is an app-lifetime singleton and a re-run would
+  /// re-claim the iOS session and re-copy the whole warmed cache for no
+  /// gain.
+  bool _initialized = false;
+
   /// Completes once [initialize] has claimed the iOS session. New players
   /// wait for it, so nothing ever plays under the plugin's launch-time
   /// `.playback` default — the guarantee issue #39 used to buy by
@@ -258,9 +265,24 @@ class AudioService {
   /// Initializes the BGM lifecycle handler (auto pause/resume around app
   /// backgrounding), claims the iOS audio session (issue #39), listens for
   /// the native bridge's system-audio events (issue #236), and warms the
-  /// sound cache. Safe to call twice; safe when no plugin exists (tests) —
-  /// everything below swallows its failures.
+  /// sound cache. Idempotent (issue #228): only the first call does any of
+  /// that — every later call returns immediately, claiming no second
+  /// session, re-registering nothing, and re-warming nothing. Safe when no
+  /// plugin exists (tests) — everything below swallows its failures.
   Future<void> initialize() async {
+    // The idempotence guard (issue #228) sits before every await, so a
+    // second call — even one overlapping an unawaited first — sees it and
+    // returns: re-running the chain re-claims the iOS session and
+    // re-copies the whole warmed cache for no gain.
+    //
+    // If the first run's session claim was refused, #234's retry is
+    // already armed and this guard deliberately leaves it alone. That
+    // retry is spent by the next playSound/playMusic — its spent-once
+    // contract — and spending it here would re-claim the session, the
+    // very duplicate this guard exists to prevent. The armed retry
+    // survives untouched for that play.
+    if (_initialized) return;
+    _initialized = true;
     // Pin the asset cache's folder name before anything loads (issue
     // #198). Every write into the cache reads `cacheId` at copy time —
     // the warm below, the voice and engine players (each assigned this
@@ -273,8 +295,8 @@ class AudioService {
     // The native session events ride the share channel (issue #236):
     // interrupting a call or unplugging headphones never reaches Flutter's
     // lifecycle, so AppDelegate forwards both here. Registering in
-    // initialize keeps the app's one service the listener; a second
-    // initialize replaces the handler with the same object.
+    // initialize keeps the app's one service the listener; the #228 guard
+    // above means it is registered exactly once per service.
     ShareService.channel.setMethodCallHandler(handleSystemAudioCall);
     final sessionReady = _sessionReady = _applyIosAudioContext();
     await sessionReady;
