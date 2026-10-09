@@ -405,9 +405,9 @@ class _VehicleCard extends StatelessWidget {
 /// before the card rebuilds — two fingers inside one frame, or a double tap
 /// through a stalled frame — both reached `_purchase`, and the coin spend
 /// ran before ownership was checked. The latch lets the first tap through
-/// and swallows the rest until the card next rebuilds; the service's own
-/// ownership check is the backstop for any invocation that still gets
-/// through.
+/// and swallows the rest of that frame, then releases so the refusal path
+/// (issue #171) can answer every later ask; the service's own ownership
+/// check is the backstop for any invocation that still gets through.
 class _BuyButton extends StatefulWidget {
   const _BuyButton({
     required this.vehicleId,
@@ -443,6 +443,14 @@ class _BuyButtonState extends State<_BuyButton> {
         if (_bought) return;
         _bought = true;
         widget.onPressed();
+        // The latch only needs to cover the frame a duplicate tap can
+        // land in. Release it once that frame has rendered, or a refused
+        // purchase — which rebuilds nothing — would swallow every later
+        // tap until the card happened to rebuild; every ask deserves its
+        // refusal (issue #171).
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _bought = false);
+        });
       },
       icon: const Icon(Icons.monetization_on, size: 16),
       label: Text(
