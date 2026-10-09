@@ -209,6 +209,58 @@ void main() {
       );
     });
 
+    test('a taxi pinned at the kerb still boards a fare (issue #226)',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final fare = game.course!.fare(0);
+      final halfWidth = game.player.vehicleSize.x / 2;
+
+      // Drop the taxi on the fare's own kerb x — outside the drivable
+      // range, so only the kerb clamp can put it at the road edge — and
+      // level with the zone, exactly where a player steering to the
+      // stop ends up.
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+      final road = game.environment!.roadAt(fare.pickupDistance);
+      expect(
+        fare.pickup.x < road.leftX + halfWidth ||
+            fare.pickup.x > road.rightX - halfWidth,
+        isTrue,
+        reason: 'precondition: the kerb lies outside the taxi clamp, so '
+            'the clamp — not the placement — owns the final x',
+      );
+
+      game.update(1 / 60);
+
+      // The clamp did the placing: the taxi sits exactly on the road
+      // edge at the distance its y reads...
+      final clampedRoad = game.environment!.roadAt(fare.pickupDistance - 30);
+      expect(
+        game.player.position.x,
+        anyOf(
+          closeTo(clampedRoad.leftX + halfWidth, 0.001),
+          closeTo(clampedRoad.rightX - halfWidth, 0.001),
+        ),
+        reason: 'the taxi is pinned at the kerb line, not left on the '
+            'kerb x it was dropped at',
+      );
+      // ...and the reach still boards it: the end-to-end half of the
+      // #226 arithmetic — shrink PickupZone.detectionRadius below the
+      // clamp-to-zone gap and the clamped hitbox no longer touches the
+      // zone, so this stays false.
+      expect(game.player.hasPassenger, isTrue,
+          reason: 'a taxi clamped at the kerb still boards the fare');
+
+      // The same reach carries the ride across to the dropoff kerb
+      // (DropoffZone.detectionRadius's own end-to-end guard).
+      game.player.position = Vector2(fare.dropoff.x, fare.dropoff.y + 30);
+      game.update(1 / 60);
+      expect(game.player.hasPassenger, isFalse,
+          reason: 'the fare is delivered at the dropoff kerb');
+      expect(game.fareController!.faresDelivered, 1);
+    });
+
     test('culls fares the player drives past without collecting', () async {
       final game = await mountGame(endlessGame(42));
       await tickAndSettle(game);
