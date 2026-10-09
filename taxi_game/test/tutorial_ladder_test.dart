@@ -734,6 +734,47 @@ void main() {
       expect(game.isEndless, isFalse);
     });
 
+    testWidgets('a next rung that cannot load leaves the panel up with a '
+        'message (issue #241)', (tester) async {
+      final game = (await tester.runAsync<TaxiGame>(() async {
+        final game = await mountGame(
+          probeGame(await gameStateAtLevel(1), _RungOneOnlyLoader()),
+        );
+        await tickAndSettle(game);
+        final level = game.currentLevel;
+        await rideTo(game, level.pickupPoints.first, level.dropoffPoints.first);
+        return game;
+      }))!;
+      expect(game.overlays.isActive('levelComplete'), isTrue);
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: LevelCompleteOverlay(game: game))),
+      );
+      await tester.pump();
+      expect(find.text('NEXT LEVEL'), findsOneWidget);
+
+      // The tap's load throws from inside startNextLevel. The panel must
+      // survive the failed advance — it used to be torn down before the
+      // load, leaving a frozen completed level and nothing to read — and
+      // the handler must answer the throw with a human message instead
+      // of letting it ride out of the button as an async error.
+      await tester.tap(find.text('NEXT LEVEL'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(tester.takeException(), isNull,
+          reason: 'the load failure is answered in the panel, not thrown '
+              'at the framework');
+      expect(game.overlays.isActive('levelComplete'), isTrue,
+          reason: 'only a load that landed may retire the panel');
+      expect(find.text('LEVEL COMPLETE!'), findsOneWidget);
+      expect(find.text('The next level could not be loaded.'), findsOneWidget);
+      expect(game.isEndless, isFalse,
+          reason: 'a failed advance must never land in Endless');
+      expect(game.currentLevelNumber, 2,
+          reason: 'the failed load stays on the rung it tried');
+    });
+
     testWidgets('the final rung with a dead probe still reaches Endless',
         (tester) async {
       final game = (await tester.runAsync<TaxiGame>(() async {

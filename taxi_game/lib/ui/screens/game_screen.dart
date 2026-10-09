@@ -50,7 +50,7 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen> {
-  late final TaxiGame game;
+  late TaxiGame game;
 
   /// True when this session's save has never dismissed the stick-control
   /// hint (issue #37): the first game start — level, endless, daily,
@@ -68,16 +68,28 @@ class _GameScreenState extends State<GameScreen> {
     super.initState();
     showControlHint =
         !context.read<GameStateService>().controlHintDismissed;
-    game = TaxiGame(
-      levelLoader: context.read<LevelLoaderService>(),
-      gameState: context.read<GameStateService>(),
-      audio: context.read<AudioService>(),
-      haptics: context.read<HapticsService>(),
-      endlessSeed: widget.endlessSeed,
-      isDailyShift: widget.isDailyShift,
-      isGhostRace: widget.isGhostRace,
-      dailyDateKey: widget.dailyDateKey,
-    );
+    game = _createGame();
+  }
+
+  /// Builds the game this screen drives — shared by the initial load and
+  /// the failed load's RETRY (issue #241). Carries the daily's date key
+  /// through (issue #248) so the run pins the day its seed came from.
+  TaxiGame _createGame() => TaxiGame(
+        levelLoader: context.read<LevelLoaderService>(),
+        gameState: context.read<GameStateService>(),
+        audio: context.read<AudioService>(),
+        haptics: context.read<HapticsService>(),
+        endlessSeed: widget.endlessSeed,
+        isDailyShift: widget.isDailyShift,
+        isGhostRace: widget.isGhostRace,
+        dailyDateKey: widget.dailyDateKey,
+      );
+
+  /// A fresh game for the failed load's RETRY (issue #241): a game whose
+  /// load threw cannot be re-loaded in place, and flame's GameWidget
+  /// re-runs the whole load when its `game` instance changes.
+  void _retryLoad() {
+    setState(() => game = _createGame());
   }
 
   @override
@@ -132,6 +144,13 @@ class _GameScreenState extends State<GameScreen> {
               // Game widget (full screen)
               GameWidget(
                 game: game,
+                // A game whose load throws gets a real recovery surface
+                // (issue #241), not flame's raw error box: the route
+                // vetoes back ([PopScope] above), so the red screen left
+                // the player stuck. RETRY rebuilds the game — a load
+                // that can simply run again does — and MAIN MENU leaves
+                // the route.
+                errorBuilder: _buildLoadError,
                 overlayBuilderMap: {
                   'hud': (context, TaxiGame game) => HudOverlay(game: game),
                   // The one-time stick-control hint (issue #37): active from
@@ -176,6 +195,70 @@ class _GameScreenState extends State<GameScreen> {
           ),
         ),
       ),
+      ),
+    );
+  }
+
+  /// The load failure's recovery surface (issue #241), rendered by the
+  /// [GameWidget]'s `errorBuilder` in place of flame's raw error box.
+  /// MAIN MENU always leaves the failed route; RETRY rebuilds the game,
+  /// which re-runs the whole load — the plausible recovery for the
+  /// failures that can simply run again. The level's number is named
+  /// when the throw carries it.
+  Widget _buildLoadError(BuildContext context, Object error) {
+    final levelNumber =
+        error is LevelLoadException ? error.levelNumber : null;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        margin: const EdgeInsets.symmetric(horizontal: 40),
+        decoration: BoxDecoration(
+          color: Colors.red.shade700,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.warning_amber_rounded,
+              size: 64,
+              color: Colors.white,
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'COULD NOT START',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              levelNumber != null
+                  ? 'Level $levelNumber could not be loaded.'
+                  : 'The level could not be loaded.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14, color: Colors.white),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              key: const ValueKey('game_load_retry_button'),
+              onPressed: _retryLoad,
+              child: const Text('RETRY'),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              key: const ValueKey('game_load_menu_button'),
+              onPressed: () =>
+                  Navigator.of(context).popUntil((route) => route.isFirst),
+              child: const Text(
+                'MAIN MENU',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -309,13 +392,40 @@ class _GameScreenState extends State<GameScreen> {
 /// the button starts the player's first endless shift in the same
 /// session. Public and self-contained so the ladder tests can pump it
 /// directly, like [LevelFailedOverlay].
-class LevelCompleteOverlay extends StatelessWidget {
+class LevelCompleteOverlay extends StatefulWidget {
   const LevelCompleteOverlay({super.key, required this.game});
 
   final TaxiGame game;
 
   @override
+  State<LevelCompleteOverlay> createState() => _LevelCompleteOverlayState();
+}
+
+class _LevelCompleteOverlayState extends State<LevelCompleteOverlay> {
+  /// True once this panel's NEXT LEVEL load failed (issue #241): the
+  /// rung is unreadable, so the button turns dead and the panel says
+  /// why. A retry is not offered from here because the failed load has
+  /// already advanced the game's rung counter — asking again would skip
+  /// the rung it could not read.
+  bool _loadFailed = false;
+
+  Future<void> _nextLevel() async {
+    final game = widget.game;
+    game.audio?.playButtonSound();
+    game.haptics?.buttonPress();
+    try {
+      // The panel is deliberately still up while this runs: the game
+      // retires it only once the load has landed (issue #241).
+      await game.startNextLevel();
+    } on LevelLoadException {
+      if (!mounted) return;
+      setState(() => _loadFailed = true);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final game = widget.game;
     // The completion's exit is the ladder and the save (issue #229),
     // never an asset probe: the ladder says whether a rung follows, and
     // the save says whether the tutorial was actually finished. A probe
@@ -425,6 +535,18 @@ class LevelCompleteOverlay extends StatelessWidget {
                 ),
               ),
             ],
+            // The failed advance's explanation (issue #241): the rung
+            // the bundle declares but cannot hand over. The panel stays,
+            // the message names what happened, and MAIN MENU is the way
+            // off the frozen world.
+            if (_loadFailed) ...[
+              const SizedBox(height: 10),
+              const Text(
+                'The next level could not be loaded.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: Colors.white),
+              ),
+            ],
             const SizedBox(height: 30),
             handoff
                 ? ElevatedButton(
@@ -436,11 +558,12 @@ class LevelCompleteOverlay extends StatelessWidget {
                     child: const Text('START SHIFT'),
                   )
                 : ElevatedButton(
-                    onPressed: () async {
-                      game.audio?.playButtonSound();
-                      game.haptics?.buttonPress();
-                      await game.startNextLevel();
-                    },
+                    // A rung that failed to load turns the button dead
+                    // (issue #241): the handler answers the throw with
+                    // the message above, and the failed load has already
+                    // advanced the rung counter — a second ask would
+                    // skip the rung it could not read.
+                    onPressed: _loadFailed ? null : _nextLevel,
                     child: const Text('NEXT LEVEL'),
                   ),
             const SizedBox(height: 10),
