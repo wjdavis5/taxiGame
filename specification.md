@@ -1,9 +1,13 @@
 
-# Pick Me Up 3D: Taxi Game - Complete Product Specifications
+# Cab Hustle - Complete Product Specifications
+
+> The project's original design document. The shipped game has since grown
+> its own modes - Daily Shift, Endless Shift with the bank-or-push fare
+> chain - beyond this first plan.
 
 ## 1. EXECUTIVE SUMMARY
 
-**Game Title:** Pick Me Up 3D: Taxi Simulator
+**Game Title:** Cab Hustle
 **Genre:** Casual 3D Driving/Arcade Taxi Simulation
 **Platform:** iOS \& Android (Mobile-first)
 **Target Audience:** Casual gamers, ages 10+, seeking quick, accessible gameplay sessions
@@ -935,13 +939,10 @@
 5. **Stress-free progression** - No energy systems, unlimited retries
 6. **Forgiving economy** - Earn coins even on failure, generous currency
 
-**Similar Games (Competition):**
+**The genre:**
 
-- Traffic Rider/Racer
-- Crossy Road (similar control philosophy)
-- Smashy Road
-- Dr. Driving
-- Crazy Taxi (inspiration, but more complex)
+One-button driving games are a crowded space; the differentiators below are
+what Cab Hustle is built around.
 
 **Competitive Advantages:**
 
@@ -982,78 +983,8 @@
 
 ***
 
-This specification provides everything needed to build a "Pick Me Up 3D" clone. The game's success comes from its brilliant simplification of driving mechanics into a single-button timing challenge, combined with clear progression, forgiving gameplay, and vibrant presentation. Focus on nailing the core feel first, then layer on content and monetization.
-<span style="display:none">[^1][^10][^11][^12][^13][^14][^15][^16][^17][^18][^19][^2][^20][^21][^22][^23][^24][^25][^26][^27][^28][^29][^3][^30][^31][^32][^33][^34][^35][^4][^5][^6][^7][^8][^9]</span>
-
-<div align="center">⁂</div>
-
-[^1]: https://pick-me-up-3d.en.aptoide.com/app
-
-[^2]: https://apps.apple.com/us/app/pick-me-up-3d-taxi-simulator/id1461463840
-
-[^3]: https://play.google.com/store/apps/details?id=com.appexgame.pick.me.up\&hl=en_US
-
-[^4]: https://play.google.com/store/apps/details?id=com.tp.pmu3d\&hl=en_US
-
-[^5]: https://yolokick.com/pick-me-up-3d-taxi-game/
-
-[^6]: https://appadvice.com/app/pick-me-up-3d-taxi-game/1492626683
-
-[^7]: https://www.youtube.com/watch?v=BRXJmZ8piCo
-
-[^8]: https://apps.apple.com/kh/app/pick-me-up-3d-taxi-simulator/id1461463840
-
-[^9]: https://apps.apple.com/us/app/1461463840?l=es-MX\&see-all=reviews\&platform=iphone
-
-[^10]: https://www.youtube.com/watch?v=b1N4CVf0O74
-
-[^11]: https://play.google.com/store/apps/details?id=com.tap.io.pick.me.up.drop.off.ride.sharing\&hl=en_US
-
-[^12]: https://www.youtube.com/watch?v=w-bToWq_vpc
-
-[^13]: https://www.youtube.com/watch?v=LvjruRBMdFE
-
-[^14]: https://www.reddit.com/r/IndieGaming/comments/1fufmpp/pick_up_hitchhikers_work_odd_jobs_and_customize/
-
-[^15]: https://www.youtube.com/watch?v=Sc0kXF_ZV64
-
-[^16]: https://pick-me-up-3d.updatestar.com
-
-[^17]: https://www.youtube.com/watch?v=SBsq7HjS-nU
-
-[^18]: https://reviewed.app/game/pick-me-up-3d-taxi-game/
-
-[^19]: https://apps.apple.com/us/app/pick-me-up-3d-taxi-game/id1492626683
-
-[^20]: https://www.youtube.com/watch?v=GAnQsyu93aA
-
-[^21]: https://www.reddit.com/r/SatisfactoryGame/comments/zen6hf/satisfactory_progression_guide_checklist_and_tips/
-
-[^22]: https://www.reddit.com/r/truegaming/comments/13egugb/does_anyone_else_get_really_caught_up_in_how_good/
-
-[^23]: https://www.reddit.com/r/WrestlingEmpire/comments/spbiz2/full_controls_list/
-
-[^24]: https://www.youtube.com/watch?v=1Fb2_OjwDLs
-
-[^25]: https://www.youtube.com/watch?v=btbe5Kr6cmY
-
-[^26]: https://www.youtube.com/watch?v=FC2Hi1Yr0RE
-
-[^27]: https://www.reddit.com/r/gaming/comments/1diuo96/what_game_began_the_hold_ax_to_interact_with_item/
-
-[^28]: https://www.youtube.com/watch?v=S5eDWoeouFI
-
-[^29]: https://www.youtube.com/watch?v=uNwNVBRazv0
-
-[^30]: https://www.youtube.com/watch?v=9vS5KqLo_qI
-
-[^31]: https://no.4fun.com/animation/pick_me_up_walkthrough
-
-[^32]: https://www.youtube.com/shorts/JK6RyvD7T_I
-
-[^33]: https://www.reddit.com/r/MonsterHunter/comments/1izg4h4/how_to_fix_seikret_controls_by_gaijinhunter_for/
-
-[^34]: https://www.facebook.com/groups/729420578517586/posts/781627373296906/
-
-[^35]: https://www.youtube.com/hashtag/pickmeup3d
-
+This specification describes the game's original design: a single-button
+timing challenge with clear progression, forgiving gameplay, and vibrant
+presentation - since extended in the shipped game with Daily Shift, Endless
+Shift, and the bank-or-push fare chain. Focus on nailing the core feel
+first, then layer on content and monetization.

@@ -2,7 +2,7 @@
 
 ## System Overview
 
-This document describes the technical architecture of the Pick Me Up 3D taxi game built with Flutter and Flame.
+This document describes the technical architecture of the Cab Hustle taxi game built with Flutter and Flame.
 
 ---
 

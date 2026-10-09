@@ -164,8 +164,8 @@
 
 ## Notes & Observations
 
-### Specification Highlights
-The Pick Me Up 3D game has several unique characteristics:
+### Design Highlights
+The game's design has several defining characteristics:
 1. **Single-button control** - Tap-hold-release mechanic (defining feature)
 2. **Automatic pathfinding** - Player controls speed, not direction
 3. **Timing-based challenge** - Success depends on when to move, not how

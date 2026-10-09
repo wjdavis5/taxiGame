@@ -115,6 +115,6 @@ attribution; the per-file inventory lives in
 `taxi_game/assets/licenses/LICENSES.txt` and the in-app Credits screen
 carries the courtesy credit.
 
-A learning project — not affiliated with "Pick Me Up 3D" or Voodoo.
+A learning project. Not affiliated with any other game or publisher.
 
 Project repository: <https://github.com/wjdavis5/taxiGame>
