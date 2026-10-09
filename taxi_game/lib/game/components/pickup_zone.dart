@@ -31,6 +31,28 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
   static const double baseRadius = 30.0;
   static const double detectionRadius = 40.0;
 
+  // The marker's paints, cached as fields (issue #256): every colour
+  // below is the fare kind's, constant for this zone's life, and the old
+  // renderer rebuilt three circle paints and two glyph paints per frame.
+  late final Paint _glowPaint = Paint()
+    ..color = passenger.fareType.markerColor.withValues(alpha: 0.3)
+    ..style = PaintingStyle.fill;
+  late final Paint _bodyPaint = Paint()
+    ..color = passenger.fareType.markerColor.withValues(alpha: 0.6)
+    ..style = PaintingStyle.fill;
+  late final Paint _borderPaint = Paint()
+    ..color = passenger.fareType.markerColor
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 3;
+  late final Paint _glyphInk = Paint()
+    ..color = Colors.white
+    ..style = PaintingStyle.fill;
+  late final Paint _glyphRim = Paint()
+    ..color = Colors.black.withValues(alpha: 0.85)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 3
+    ..strokeJoin = StrokeJoin.round;
+
   PickupZone({
     required Vector2 position,
     required this.passenger,
@@ -92,9 +114,9 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
     // VIP, purple for a long-haul, orange for an awkward crossing, and
     // the classic green for the everyday ride. Colour is secondary
     // emphasis now (issue #35): the glyph below is what sorts the kinds
-    // when hue cannot.
-    final color = passenger.fareType.markerColor;
-
+    // when hue cannot. The kind's colours are baked into the cached
+    // paints (issue #256).
+    //
     // Skip CircleComponent's default paint and draw centered on the
     // component (local origin is the top-left corner, not the center).
     // Every circle below reads _drawRadius, the pulsing brush — size
@@ -103,23 +125,13 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
     canvas.translate(size.x / 2, size.y / 2);
 
     // Draw outer glow
-    final glowPaint = Paint()
-      ..color = color.withValues(alpha: 0.3)
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset.zero, _drawRadius + 10, glowPaint);
+    canvas.drawCircle(Offset.zero, _drawRadius + 10, _glowPaint);
 
     // Draw main circle
-    final paint = Paint()
-      ..color = color.withValues(alpha: 0.6)
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset.zero, _drawRadius, paint);
+    canvas.drawCircle(Offset.zero, _drawRadius, _bodyPaint);
 
     // Draw border
-    final borderPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
-    canvas.drawCircle(Offset.zero, _drawRadius, borderPaint);
+    canvas.drawCircle(Offset.zero, _drawRadius, _borderPaint);
 
     // Draw the fare kind's glyph (issue #35).
     _drawKindGlyph(canvas);
@@ -135,14 +147,8 @@ class PickupZone extends CircleComponent with HasGameReference<TaxiGame>, Collis
     paintFareGlyph(
       canvas,
       passenger.fareType,
-      ink: Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.fill,
-      rim: Paint()
-        ..color = Colors.black.withValues(alpha: 0.85)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
-        ..strokeJoin = StrokeJoin.round,
+      ink: _glyphInk,
+      rim: _glyphRim,
     );
   }
 

@@ -34,44 +34,56 @@ FareGlyph glyphForFare(FareType type) => switch (type) {
 /// inside a marker's pulsing body (radius 25-35).
 const double fareGlyphRadius = 14;
 
+/// The memoised glyph paths (issue #256): markers redraw the same shape
+/// every frame, and building a native `Path` per draw was pure waste.
+/// Keyed exactly by (type, radius) — the shipped markers all ride the
+/// default [fareGlyphRadius], and a custom radius caches under its own
+/// key (no current caller animates the radius; if one ever does, it would
+/// want to quantise its own key so the memo stays bounded). The returned
+/// path is shared and draw-only: every caller paints it or probes it,
+/// never mutates it.
+final Map<(FareType, double), Path> _glyphPathCache = {};
+
 /// Builds [type]'s glyph as one [Path] centred on the canvas origin,
-/// scaled to fit [radius].
+/// scaled to fit [radius]. Memoised per (type, radius) since issue #256.
 ///
 /// Pure: the same call always returns the same shape, so the pickup and
 /// dropoff markers cannot drift apart and tests can compare silhouettes
 /// without rendering anything.
 Path fareGlyphPath(FareType type, {double radius = fareGlyphRadius}) {
-  final s = radius / fareGlyphRadius;
-  final path = Path();
-  switch (glyphForFare(type)) {
-    case FareGlyph.circle:
-      // A hollow ring — even-odd fill punches the hole.
-      path
-        ..fillType = PathFillType.evenOdd
-        ..addOval(Rect.fromCircle(center: Offset.zero, radius: 13 * s))
-        ..addOval(Rect.fromCircle(center: Offset.zero, radius: 7.5 * s));
-    case FareGlyph.crownRing:
-      // The crown inside a framing ring; the crown stays strictly inside
-      // the ring's hole so the even-odd fill reads ring, gap, crown.
-      path
-        ..fillType = PathFillType.evenOdd
-        ..addOval(Rect.fromCircle(center: Offset.zero, radius: 13.5 * s))
-        ..addOval(Rect.fromCircle(center: Offset.zero, radius: 10 * s))
-        ..addPath(_crownPath(s), Offset.zero);
-    case FareGlyph.chevronsUp:
-      // Two stacked chevrons pointing up the road.
-      path
-        ..fillType = PathFillType.nonZero
-        ..addPath(_chevronBand(-10 * s, s), Offset.zero)
-        ..addPath(_chevronBand(-1 * s, s), Offset.zero);
-    case FareGlyph.crossedArrows:
-      // Two double-headed arrows crossing over the four-lane street.
-      path
-        ..fillType = PathFillType.nonZero
-        ..addPath(_doubleArrow(-math.pi / 4, s), Offset.zero)
-        ..addPath(_doubleArrow(-3 * math.pi / 4, s), Offset.zero);
-  }
-  return path;
+  return _glyphPathCache.putIfAbsent((type, radius), () {
+    final s = radius / fareGlyphRadius;
+    final path = Path();
+    switch (glyphForFare(type)) {
+      case FareGlyph.circle:
+        // A hollow ring — even-odd fill punches the hole.
+        path
+          ..fillType = PathFillType.evenOdd
+          ..addOval(Rect.fromCircle(center: Offset.zero, radius: 13 * s))
+          ..addOval(Rect.fromCircle(center: Offset.zero, radius: 7.5 * s));
+      case FareGlyph.crownRing:
+        // The crown inside a framing ring; the crown stays strictly inside
+        // the ring's hole so the even-odd fill reads ring, gap, crown.
+        path
+          ..fillType = PathFillType.evenOdd
+          ..addOval(Rect.fromCircle(center: Offset.zero, radius: 13.5 * s))
+          ..addOval(Rect.fromCircle(center: Offset.zero, radius: 10 * s))
+          ..addPath(_crownPath(s), Offset.zero);
+      case FareGlyph.chevronsUp:
+        // Two stacked chevrons pointing up the road.
+        path
+          ..fillType = PathFillType.nonZero
+          ..addPath(_chevronBand(-10 * s, s), Offset.zero)
+          ..addPath(_chevronBand(-1 * s, s), Offset.zero);
+      case FareGlyph.crossedArrows:
+        // Two double-headed arrows crossing over the four-lane street.
+        path
+          ..fillType = PathFillType.nonZero
+          ..addPath(_doubleArrow(-math.pi / 4, s), Offset.zero)
+          ..addPath(_doubleArrow(-3 * math.pi / 4, s), Offset.zero);
+    }
+    return path;
+  });
 }
 
 /// Paints [type]'s glyph centred on the canvas origin.

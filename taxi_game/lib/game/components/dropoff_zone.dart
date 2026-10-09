@@ -34,6 +34,34 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
   static const double baseRadius = 30.0;
   static const double detectionRadius = 40.0;
 
+  // The marker's paints, cached as fields (issue #256): the old renderer
+  // rebuilt three circle paints and one glyph paint per frame. Their
+  // colours change exactly once — when the dropoff activates, crossing
+  // grey to blue — so they are tinted lazily and re-tinted only on that
+  // transition ([_paintsTinted]).
+  final Paint _glowPaint = Paint()..style = PaintingStyle.fill;
+  final Paint _bodyPaint = Paint()..style = PaintingStyle.fill;
+  final Paint _borderPaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 3;
+  final Paint _glyphInk = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.5
+    ..strokeJoin = StrokeJoin.round
+    ..strokeCap = StrokeCap.round;
+  bool _paintsTinted = false;
+
+  /// Bakes the current active/inactive state into the cached paints.
+  void _tintPaints() {
+    final color = _isActive ? Colors.blue : Colors.grey;
+    final opacity = _isActive ? 0.6 : 0.3;
+    _glowPaint.color = color.withValues(alpha: opacity * 0.5);
+    _bodyPaint.color = color.withValues(alpha: opacity);
+    _borderPaint.color = color;
+    _glyphInk.color = _isActive ? Colors.white : Colors.grey.shade400;
+    _paintsTinted = true;
+  }
+
   DropoffZone({
     required Vector2 position,
     required this.passenger,
@@ -81,6 +109,8 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
     // Check if passenger has been picked up
     if (!_isActive && passenger.isPickedUp) {
       _isActive = true;
+      // The marker's colours cross to the active palette (issue #256).
+      _paintsTinted = false;
     }
 
     if (!_isActive || _isCompleted) return;
@@ -101,30 +131,19 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
     canvas.save();
     canvas.translate(size.x / 2, size.y / 2);
 
-    final color = _isActive ? Colors.blue : Colors.grey;
-    final opacity = _isActive ? 0.6 : 0.3;
+    if (!_paintsTinted) _tintPaints();
 
     // Draw outer glow
-    final glowPaint = Paint()
-      ..color = color.withValues(alpha: opacity * 0.5)
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset.zero, _drawRadius + 10, glowPaint);
+    canvas.drawCircle(Offset.zero, _drawRadius + 10, _glowPaint);
 
     // Draw main circle
-    final paint = Paint()
-      ..color = color.withValues(alpha: opacity)
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset.zero, _drawRadius, paint);
+    canvas.drawCircle(Offset.zero, _drawRadius, _bodyPaint);
 
     // Draw border
-    final borderPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
-    canvas.drawCircle(Offset.zero, _drawRadius, borderPaint);
+    canvas.drawCircle(Offset.zero, _drawRadius, _borderPaint);
 
     // Draw the fare kind's glyph at the dropoff's lower weight (issue #35).
-    _drawKindGlyph(canvas, _isActive ? Colors.white : Colors.grey.shade400);
+    _drawKindGlyph(canvas);
 
     canvas.restore();
   }
@@ -133,16 +152,11 @@ class DropoffZone extends CircleComponent with HasGameReference<TaxiGame>, Colli
   /// than filled: the lighter weight so a fare's destination and its
   /// departure read apart even in greyscale, and the shape still says
   /// which kind of fare the meter is running toward.
-  void _drawKindGlyph(Canvas canvas, Color inkColor) {
+  void _drawKindGlyph(Canvas canvas) {
     paintFareGlyph(
       canvas,
       passenger.fareType,
-      ink: Paint()
-        ..color = inkColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5
-        ..strokeJoin = StrokeJoin.round
-        ..strokeCap = StrokeCap.round,
+      ink: _glyphInk,
     );
   }
 
