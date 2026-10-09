@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/models/ghost_trace.dart';
 import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
@@ -263,6 +264,15 @@ void main() {
         StorageService.runHistoryKey: jsonEncode(
           [for (var i = 0; i < 5; i++) run(score: 10 * (i + 1)).toJson()],
         ),
+        // A real ghost beside the dead save: without one the "no ghost"
+        // assertion below would pass vacuously.
+        StorageService.dailyGhostKey: jsonEncode(const GhostTrace(
+          dateKey: '2026-09-26',
+          score: 480,
+          banked: true,
+          vehicleId: 'sedan_blue',
+          samples: [200, 0, 205, -60],
+        ).toJson()),
       });
 
       final storage = StorageService();
@@ -281,12 +291,15 @@ void main() {
           reason: 'no award may be retro-earned by a dead save');
       expect(gameState.todayGhost, isNull,
           reason: 'a fresh save has no ghost to race');
+      expect(storage.loadDailyGhost(), isNull,
+          reason: 'the dead save ghost is cleared from disk too');
 
       // And the dead window is gone from disk, not just memory: the
       // restart cannot re-seed from it either.
       final reloaded = await restarted();
       expect(reloaded.runHistory, isEmpty);
       expect(reloaded.achievementState.cleanBankedShifts, 0);
+      expect(reloaded.todayGhost, isNull);
     });
 
     test('a record missing keys loads with defaults, keeping its neighbours',
