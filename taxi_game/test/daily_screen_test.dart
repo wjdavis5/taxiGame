@@ -499,6 +499,37 @@ void main() {
     });
   });
 
+  group('the today card holds its day until the rollover flips it '
+      '(issue #245)', () {
+    testWidgets('a save write inside the midnight window keeps the played '
+        'day\'s card and history coherent', (tester) async {
+      // The card reads the snapshot day (#113) but used to read the
+      // result live: a save write after midnight rebuilt it as D+1's
+      // empty card while the history — filtered by the D snapshot —
+      // still hid D's result. The day's result vanished from the whole
+      // screen for the rest of the window.
+      final dayD = DailyShift.todayKey;
+      await gameState.recordDailyResult(resultFor(dayD, score: 340));
+      await pumpScreen(tester);
+      expect(find.byKey(const Key('daily_today_score')), findsOneWidget,
+          reason: 'precondition: the card shows D\'s score');
+
+      // Midnight passes; a save write rebuilds the Consumers before the
+      // DayKeyBuilder's minute tick has flipped the snapshot.
+      DailyShift.clock = () => calendarDaysFromNow(1);
+      addTearDown(() => DailyShift.clock = DateTime.now);
+      gameState.addCoins(1);
+      await tester.pump();
+
+      expect(find.byKey(const Key('daily_today_score')), findsOneWidget,
+          reason: 'the card still shows the day it was built for');
+      expect(find.text('340'), findsOneWidget);
+      expect(find.byKey(const Key('daily_empty_history')), findsOneWidget,
+          reason: 'D\'s result has not been hidden from the history '
+              'filter without appearing in the card');
+    });
+  });
+
   group('the screen survives the day rolling over (issue #113)', () {
     // Like the menu's card, this screen's two day-dependent blocks were
     // Consumers that only re-ran on save writes, so a day that changed
