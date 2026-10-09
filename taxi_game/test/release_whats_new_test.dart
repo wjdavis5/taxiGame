@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'helpers/workflow_guards.dart';
+
 /// The What's New contract (issue #199).
 ///
 /// Apple requires release notes on every version after the first, and
@@ -49,13 +51,9 @@ void main() {
 
   /// The whole step block, from its `- name:` line to the next step's,
   /// so assertions cannot accidentally match text from some other step
-  /// (the release_submit_gate_test.dart helper).
-  String stepBlock(String stepName) {
-    final start = workflow.indexOf('- name: $stepName');
-    expect(start, greaterThan(-1), reason: 'step "$stepName" is missing');
-    final next = workflow.indexOf('\n      - name: ', start + 1);
-    return workflow.substring(start, next == -1 ? workflow.length : next);
-  }
+  /// (the shared workflow-guards helper).
+  String stepBlock(String stepName) =>
+      workflowStepBlock(workflow, stepName);
 
   /// The lane body alone: its `def` through the next `def ` (or EOF).
   /// The old scan ran to EOF, where the sibling `set_review_notes` lane
@@ -205,8 +203,26 @@ void main() {
       // actually be attempted: TestFlight-only runs need no notes.
       expect(gate, contains('whats_new.txt'));
       expect(gate, contains(r'if [ "$submit" = "true" ]'));
-      expect(gate, contains('::error::'));
-      expect(gate, contains('exit 1'));
+
+      // Each refusal is pinned inside its own branch (issue #224). The
+      // old step-wide token scan was satisfied by the sibling 4.3(a)
+      // guard's `echo "::error::"` + `exit 1`, so deleting either refusal
+      // here kept this test green — the silent submission loss issue #199
+      // exists to prevent.
+      final whatsNewGuard = shellIfBlock(gate, 'whats_new.txt');
+      final missingBranch = shellIfBlock(whatsNewGuard, r'! -f "$notes"');
+      expect(missingBranch, contains('::error::'));
+      expect(missingBranch, contains('exit 1'),
+          reason: 'a missing whats_new.txt must fail this step itself');
+      expect(missingBranch, contains(r'$notes is missing'),
+          reason: 'the refusal names the file it did not find');
+
+      final emptyBranch = shellIfBlock(whatsNewGuard, 'tr -d');
+      expect(emptyBranch, contains('::error::'));
+      expect(emptyBranch, contains('exit 1'),
+          reason: 'an empty whats_new.txt must fail this step itself');
+      expect(emptyBranch, contains(r'$notes is empty'),
+          reason: 'the refusal names the file it found blank');
 
       // Red before the spend: the gate step block precedes every build
       // step in the release job.
