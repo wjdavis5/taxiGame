@@ -410,7 +410,7 @@ void main() {
       gameState.dismissControlHint();
       expect(gameState.controlHintDismissed, isTrue);
 
-      gameState.resetProgress();
+      await gameState.resetProgress();
       expect(gameState.controlHintDismissed, isFalse,
           reason: 'a wiped save is a first-time player again');
 

@@ -349,7 +349,7 @@ void main() {
       await gameState.recordEndlessRun(run(chain: 3));
       expect(gameState.isAchievementUnlocked('chain_3'), isTrue);
 
-      gameState.resetProgress();
+      await gameState.resetProgress();
 
       expect(gameState.isAchievementUnlocked('chain_3'), isFalse);
       expect(gameState.unlockedAchievementCount, 0);

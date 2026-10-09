@@ -510,7 +510,15 @@ class GameStateService extends ChangeNotifier {
   }
 
   /// Reset all progress (for testing)
-  void resetProgress() {
+  ///
+  /// Asynchronous since issue #232: the three clears and the fresh save
+  /// used to be fire-and-forget, all issued at once, so a kill (or one
+  /// failed remove) inside the flush window left the default save beside
+  /// the old run history, daily results, and ghost — exactly the
+  /// inconsistency the corrupt-load path of #218 removed. Awaiting the
+  /// clears before the save means every point the process can die
+  /// between leaves records and save describing the same wipe.
+  Future<void> resetProgress() async {
     // Settings are preference, not progress (issue #83): the whole
     // Settings block — the three toggles and both volumes — rides over
     // to the fresh save, not just the booleans a bug report names. A
@@ -530,21 +538,23 @@ class GameStateService extends ChangeNotifier {
     // everything else, so the stats screen never shows numbers from a run
     // of a save that no longer exists.
     _runHistory.clear();
-    _storageService.clearRunHistory();
     // The daily history is the same kind of progress (issue #19): a reset
     // wipes it, and today's course becomes playable again.
     _dailyHistory.clear();
-    _storageService.clearDailyHistory();
     // The ghost is progress too (issue #20): a reset takes the stored
     // best run with everything else.
     _dailyGhost = null;
-    _storageService.clearDailyGhost();
     // The records and achievements are progress like everything else
     // (issue #21): the fresh save has empty records and an empty
     // achievements map, and any unlock still queued to be announced dies
     // with the save that earned it.
     _pendingAchievementUnlocks.clear();
     notifyListeners();
-    save();
+    // The wipe reaches storage first, in order, and only then does the
+    // fresh save land (issue #232).
+    await _storageService.clearRunHistory();
+    await _storageService.clearDailyHistory();
+    await _storageService.clearDailyGhost();
+    await save();
   }
 }

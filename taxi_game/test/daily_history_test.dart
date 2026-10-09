@@ -110,7 +110,7 @@ void main() {
   group('resetting progress', () {
     test('wipes the daily history too', () async {
       await gameState.recordDailyResult(resultFor(DailyShift.todayKey));
-      gameState.resetProgress();
+      await gameState.resetProgress();
 
       expect(gameState.dailyHistory, isEmpty);
       expect(gameState.todayDailyComplete, isFalse,

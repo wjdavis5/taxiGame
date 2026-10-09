@@ -150,7 +150,7 @@ void main() {
     gameStateService.toggleMusic();
     gameStateService.toggleVibration();
 
-    gameStateService.resetProgress();
+    await gameStateService.resetProgress();
 
     // The progress itself is gone...
     expect(gameStateService.currentLevel, 1);

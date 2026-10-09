@@ -8,6 +8,8 @@ import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 
+import 'helpers/fake_prefs_store.dart';
+
 /// The on-device shift history (issue #17): recorded shifts persist
 /// across an app restart, the window stays bounded, a reset wipes it, and
 /// corrupt storage reads as a fresh history rather than a crash.
@@ -111,7 +113,7 @@ void main() {
       await gameState.recordEndlessRun(run(score: 120));
       gameState.addCoins(30);
 
-      gameState.resetProgress();
+      await gameState.resetProgress();
 
       expect(gameState.runHistory, isEmpty);
       expect(gameState.runStats.isEmpty, isTrue);
@@ -129,7 +131,7 @@ void main() {
       expect(gameState.runStats.shiftsEnded,
           GameStateService.maxRecordedRuns + 1);
 
-      gameState.resetProgress();
+      await gameState.resetProgress();
 
       expect(gameState.runStats.shiftsEnded, 0);
       expect(gameState.runStats.totalScore, 0);
@@ -137,6 +139,38 @@ void main() {
       final reloaded = await restarted();
       expect(reloaded.runStats.shiftsEnded, 0,
           reason: 'a fresh save carries a fresh totals block');
+    });
+
+    test('the awaited reset clears the store before the fresh save lands '
+        '(issue #232)', () async {
+      // The old reset fired three unawaited clears and the save at once:
+      // a kill (or one lost remove) could leave the fresh save beside the
+      // old history — the stats screen showing shifts a save that no
+      // longer exists never counted. The awaited contract is observable
+      // on the store: the clears land, then the one save.
+      final store = installFailingPrefsStore();
+      final fakeStorage = StorageService();
+      await fakeStorage.init();
+      final service = GameStateService(fakeStorage);
+      await service.loadSaveData();
+      await service.recordEndlessRun(run(score: 120));
+      // The first load of an absent save clears the record keys too
+      // (issue #218), so the reset is measured by the growth of the log.
+      final clearsBeforeReset = store.removedKeys.length;
+
+      await service.resetProgress();
+
+      expect(store.removedKeys.length, greaterThan(clearsBeforeReset),
+          reason: 'the wipe reached the store, not just the cache');
+      expect(store.removedKeys.last,
+          'flutter.${StorageService.dailyGhostKey}',
+          reason: 'the three clears run in order, ending with the ghost');
+      expect(store.writtenKeys.last,
+          'flutter.${StorageService.saveDataKey}',
+          reason: 'the fresh save is written after the clears');
+      final storedSave = await fakeStorage.loadSaveData();
+      expect(storedSave!.totalCoins, 0);
+      expect(storedSave.currentLevel, 1);
     });
   });
 

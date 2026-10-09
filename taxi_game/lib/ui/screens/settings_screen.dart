@@ -417,7 +417,7 @@ class SettingsScreen extends StatelessWidget {
     );
 
     if (confirmed ?? false) {
-      gameState.resetProgress();
+      await gameState.resetProgress();
     }
   }
 }
