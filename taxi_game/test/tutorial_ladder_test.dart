@@ -642,11 +642,13 @@ void main() {
       expect(game.fareChain.nearMisses, 0);
       expect(game.isGameActive, isTrue);
 
-      // The street end (issue #31): past the final dropoff no spawn can
-      // reach the taxi (the spawner rejects beyond the road top), the
-      // clamp leaves no reverse, and cars despawn behind the cab — so
-      // the shave still owed can never land. The verdict is failure,
-      // not a dead end with only MAIN MENU as an exit.
+      // The street end (issue #31) is the lesson's deadline. Waves keep
+      // spawning until the taxi is ~650 px from the road top, so the
+      // stretch just past the final dropoff is still shaving ground —
+      // the completion test earns its shave there. The last ~600 px to
+      // the clamp accepted no new waves and the cab cannot reverse, so
+      // the shave still owed cannot land by then. The verdict is
+      // failure, not a dead end with only MAIN MENU as an exit.
       final roadTop = game.levelRoadTopY!;
       game.player.position = Vector2(
           TaxiGame.roadCenterX, roadTop + game.player.vehicleSize.y + 1);
@@ -698,6 +700,38 @@ void main() {
         find.text('CLOSE CALL TO FINISH \u2014 SHAVE A CAR AT SPEED'),
         findsNothing,
         reason: 'the ask stands down once the shave is in',
+      );
+    });
+
+    testWidgets('the HUD ask stands down behind the failure panel',
+        (tester) async {
+      final game = (await tester.runAsync<TaxiGame>(() async {
+        return mountLesson();
+      }))!;
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<GameStateService>.value(
+          value: saveAtEight,
+          child: MaterialApp(home: Scaffold(body: HudOverlay(game: game))),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(
+        find.text('CLOSE CALL TO FINISH \u2014 SHAVE A CAR AT SPEED'),
+        findsOneWidget,
+      );
+
+      // The run settles without the shave: the failure panel owns the
+      // screen, and the ask must not sit behind it — the pause button's
+      // isShiftOver stand-down (issue #52) applied to this line too.
+      game.onLevelFailed();
+      expect(game.lessonCloseCallOwed, isTrue,
+          reason: 'the shave is still owed; only the settled run hides it');
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(
+        find.text('CLOSE CALL TO FINISH \u2014 SHAVE A CAR AT SPEED'),
+        findsNothing,
+        reason: 'a settled run has no lesson line, owed or not',
       );
     });
   });
@@ -1488,8 +1522,9 @@ void main() {
       // own title: 'FARE MISSED!' is 384 px of bold type against the 200
       // px this panel's column offers on a 320 pt phone, and the bare
       // Text wrapped into two flush-left lines while the panel sat
-      // centred. Both branches ride the same scale-down box now, so both
-      // are pinned. Ahem advances a square per glyph — roughly twice
+      // centred. All three branches ride the same scale-down box now, so
+      // all three are pinned — 'CLOSE CALL MISSED!' (issue #269) is the
+      // longest of them. Ahem advances a square per glyph — roughly twice
       // Roboto — so the checks are strictly conservative (the garage
       // width-sweep reasoning, issue #156).
       addTearDown(tester.view.reset);
@@ -1501,6 +1536,7 @@ void main() {
 
         for (final (reason, title) in [
           (LevelFailReason.fareMissed, 'FARE MISSED!'),
+          (LevelFailReason.closeCallMissed, 'CLOSE CALL MISSED!'),
           (LevelFailReason.crash, 'CRASH!'),
         ]) {
           game.lastFailReason = reason;
