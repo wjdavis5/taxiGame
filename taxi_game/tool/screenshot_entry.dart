@@ -8,8 +8,8 @@
 //   flutter run -d <simulator-id> -t tool/screenshot_entry.dart \
 //     --dart-define=SHOT=menu     # or: game, garage, credits, settings
 //
-// Then capture with `xcrun simctl io <simulator-id> screenshot out.png`.
-// `tool/capture_screenshots.sh` wraps the whole sequence.
+// Then capture with `xcrun simctl io <simulator-id> screenshot out.png`,
+// following the full sequence in CLAUDE.md ("Screenshots for the App Store").
 //
 // This file is never referenced by lib/main.dart and ships in no build.
 
