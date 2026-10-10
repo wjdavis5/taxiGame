@@ -144,6 +144,10 @@ class _GameScreenState extends State<GameScreen> {
               // Game widget (full screen)
               GameWidget(
                 game: game,
+                // The authored transition (issue #265): what the player
+                // sees from navigation until the run is live, instead
+                // of the blank #1A1A1A rectangle flame falls back to.
+                loadingBuilder: (context) => const _RunLoadingState(),
                 // A game whose load throws gets a real recovery surface
                 // (issue #241), not flame's raw error box: the route
                 // vetoes back ([PopScope] above), so the red screen left
@@ -385,6 +389,72 @@ class _GameScreenState extends State<GameScreen> {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The authored loading state behind the [GameWidget] (issue #265): the
+/// menu's palette and wordmark — the blue field, the white title, the
+/// yellow cab — held from navigation until the road, the cab, and the
+/// HUD are ready. Before this, the tap on START DRIVING landed on a blank
+/// #1A1A1A rectangle. Flame swaps it for the first live frame the moment
+/// the game's load future completes, and [TaxiGame]'s load awaits the
+/// cab's sprite, so that frame is the whole run.
+class _RunLoadingState extends StatelessWidget {
+  const _RunLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('game_loading_state'),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.blue.shade300,
+            Colors.blue.shade600,
+          ],
+        ),
+      ),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.local_taxi, size: 84, color: Colors.yellow),
+          SizedBox(height: 20),
+          // The menu title's scale-down box (issue #187): one line,
+          // shrunk to whatever width the phone offers.
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              'CAB HUSTLE',
+              style: TextStyle(
+                fontSize: 40,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                shadows: [
+                  Shadow(
+                    offset: Offset(2, 2),
+                    blurRadius: 4,
+                    color: Colors.black45,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SizedBox(height: 10),
+          Text(
+            'STARTING THE ENGINE\u2026',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+        ],
       ),
     );
   }
