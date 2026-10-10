@@ -512,6 +512,22 @@ void main() {
           path: [position.clone(), Vector2(position.x, position.y + 3000)],
         );
 
+    /// Collects every fare, then rides each to its kerb — the whole
+    /// route, with nobody shaved.
+    Future<void> rideEveryFare(TaxiGame game) async {
+      final level = game.currentLevel;
+      for (final pickup in level.pickupPoints) {
+        game.player.position = Vector2(pickup.x, pickup.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+      for (final dropoff in level.dropoffPoints) {
+        game.player.position = Vector2(dropoff.x, dropoff.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+    }
+
     test('the ladder stays ten rungs and only the lesson requires a shave',
         () async {
       expect(GameLevel.ladderLength, 10);
@@ -564,16 +580,7 @@ void main() {
 
       // Collect every fare, then ride each to its kerb: the whole route,
       // with nobody shaved.
-      for (final pickup in level.pickupPoints) {
-        game.player.position = Vector2(pickup.x, pickup.y + 30);
-        game.update(1 / 60);
-        await drain();
-      }
-      for (final dropoff in level.dropoffPoints) {
-        game.player.position = Vector2(dropoff.x, dropoff.y + 30);
-        game.update(1 / 60);
-        await drain();
-      }
+      await rideEveryFare(game);
 
       expect(game.passengersDelivered, level.pickupPoints.length);
       expect(game.fareChain.nearMisses, 0);
@@ -623,6 +630,47 @@ void main() {
 
       expect(saveAtEight.currentLevel, 9,
           reason: 'the lesson completed and unlocked the next rung');
+    });
+
+    test('reaching the road end without the shave fails the rung, and '
+        'RETRY re-runs it', () async {
+      final game = await mountLesson();
+      final level = game.currentLevel;
+
+      await rideEveryFare(game);
+      expect(game.passengersDelivered, level.pickupPoints.length);
+      expect(game.fareChain.nearMisses, 0);
+      expect(game.isGameActive, isTrue);
+
+      // The street end (issue #31): past the final dropoff no spawn can
+      // reach the taxi (the spawner rejects beyond the road top), the
+      // clamp leaves no reverse, and cars despawn behind the cab — so
+      // the shave still owed can never land. The verdict is failure,
+      // not a dead end with only MAIN MENU as an exit.
+      final roadTop = game.levelRoadTopY!;
+      game.player.position = Vector2(
+          TaxiGame.roadCenterX, roadTop + game.player.vehicleSize.y + 1);
+      game.player.isAccelerating = true;
+      game.player.velocity = Vector2(0, -game.player.maxSpeed);
+      game.update(1 / 60);
+      await drain();
+
+      expect(game.isGameActive, isFalse,
+          reason: 'the lesson cannot be completed past the street end');
+      expect(game.lastFailReason, LevelFailReason.closeCallMissed);
+      expect(game.overlays.isActive('levelFailed'), isTrue);
+
+      // RETRY is the recovery the panel promises (the #112 pattern):
+      // the rung re-runs from below every zone, verdict cleared.
+      game.restartLevel();
+      for (var i = 0; i < 100 && !game.isGameActive; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(game.isGameActive, isTrue, reason: 'RETRY re-runs the rung');
+      expect(game.lastFailReason, isNull);
+      expect(game.overlays.isActive('levelFailed'), isFalse);
+      expect(game.fareChain.nearMisses, 0,
+          reason: 'the retry owes the shave again');
     });
 
     testWidgets('the HUD asks for the shave until the award lands',
@@ -1417,6 +1465,21 @@ void main() {
       // No telemetry on this run: the fallback collision line.
       expect(find.text('You collided with traffic.'), findsOneWidget);
       expect(find.text('FARE MISSED!'), findsNothing);
+    });
+
+    testWidgets('a missed close call names the lesson, not a crash',
+        (tester) async {
+      final game = await failureGame(tester);
+      game.lastFailReason = LevelFailReason.closeCallMissed;
+      await showPanel(tester, game);
+
+      expect(find.text('CLOSE CALL MISSED!'), findsOneWidget);
+      expect(
+          find.textContaining('needs one close call at speed'), findsOneWidget,
+          reason: 'the panel must say what the lesson wanted');
+      expect(find.text('CRASH!'), findsNothing);
+      expect(find.text('RETRY'), findsOneWidget,
+          reason: 'the recovery the panel promises');
     });
 
     testWidgets('the failure title stays one centred line at every iPhone '

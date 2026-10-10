@@ -130,6 +130,45 @@ void main() {
     });
   });
 
+  group('CloseCallPop geometry (issue #269)', () {
+    // The award rises out of the gap it names, and a kerb-side shave
+    // puts that gap near the road's edge. The first-award lesson line is
+    // far wider than 'CLOSE CALL +N', and centred at x 140 it ran half
+    // off the 400-px view; the pop now clamps like PassengerNote (#50).
+
+    test('a kerb-side award keeps the lesson line on the phone', () {
+      const roadWidth = 2 * TaxiGame.roadCenterX;
+      for (final kerbX in [60.0, 140.0, 340.0]) {
+        final pop = CloseCallPop(
+          position: Vector2(kerbX, -1000),
+          points: 60,
+          firstAward: true,
+        );
+        if (pop.width >= roadWidth - 2 * CloseCallPop.edgeMargin) {
+          expect(pop.width, greaterThan(roadWidth),
+              reason: 'the over-wide premise the branch asserts holds');
+          expect(pop.x, closeTo(TaxiGame.roadCenterX, 0.5),
+              reason: 'kerb $kerbX: an over-wide line collapses to the '
+                  'centre (a naive clamp(lo, hi) would have thrown here)');
+        } else {
+          expect(pop.x - pop.width / 2,
+              greaterThanOrEqualTo(CloseCallPop.edgeMargin - 0.5),
+              reason: 'kerb $kerbX: the line\'s start is on screen');
+          expect(pop.x + pop.width / 2,
+              lessThanOrEqualTo(roadWidth - CloseCallPop.edgeMargin + 0.5),
+              reason: 'kerb $kerbX: the line\'s end is on screen');
+        }
+      }
+    });
+
+    test('an ordinary award still rises where the pass happened', () {
+      // The plain line is short enough to sit at the kerb it was born
+      // on: the clamp must not drag every award to the road's centre.
+      final pop = CloseCallPop(position: Vector2(140, -1000), points: 15);
+      expect(pop.x, 140.0);
+    });
+  });
+
   group('close calls ride the fare chain', () {
     PassengerData fareOf(String id) => PassengerData(
           id: id,
