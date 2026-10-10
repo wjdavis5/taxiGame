@@ -66,19 +66,16 @@ class GarageVehicle {
 /// ([VehicleSprites.playerVehicleIds]), named, priced as an ascending
 /// ladder, and given a handling identity (issue #9).
 ///
-/// Prices are sized against the **endless** economy (issue #34): a shift
-/// pays its fares on delivery and banks the chain score 1:1, and the
-/// instrument behind `test/economy_simulation_test.dart` measured the
-/// result at 1,240–1,584 coins of fares alone per shift (p25–p75 across
-/// three skill stand-ins) before banking — a competent banked shift lands
-/// well past the audit's 800–2,000 figure. The ladder is priced off the
-/// conservative wallet those floors imply: roughly 2,000 coins a shift
-/// for a first-session player, 2,300–3,000 for a competent one. The
-/// targets: the first car costs two to three shifts, the mid fleet about
-/// a week of dailies, and The Executive is a real grind — weeks, not one
-/// lucky run. The starter cab costs nothing — it is owned from the first
-/// launch (`SaveData.createDefault`), so its price never renders; it is
-/// listed so the garage shows one card per vehicle that exists.
+/// Prices are the issue #34 ladder, sized against the conservative
+/// fare-floor wallet of the endless economy (a shift pays its fares on
+/// delivery and banks the chain score 1:1). The instrument behind
+/// `test/economy_simulation_test.dart` measures both bases; its banked
+/// totals sit above the fare floors the ladder was priced from, so the
+/// implied grind depends on bank timing. Re-pricing waits on issue #277,
+/// which measures that timing first. The starter cab costs nothing — it
+/// is owned from the first launch (`SaveData.createDefault`), so its
+/// price never renders; it is listed so the garage shows one card per
+/// vehicle that exists.
 ///
 /// The handling ladder, by character:
 ///

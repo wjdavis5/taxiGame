@@ -81,8 +81,14 @@ class RunLengthEstimate {
       RunLengthEstimate._(runs: List.unmodifiable(runs));
 
   /// Median distance the shift reached, in px.
-  double get medianDistancePx {
-    final sorted = runs.map((r) => r.distancePx).toList()..sort();
+  double get medianDistancePx => _median(runs.map((r) => r.distancePx));
+
+  /// Median seconds the shift was actively driven, stall time excluded —
+  /// [SimulatedRun.drivenSeconds]' own semantics.
+  double get medianDrivenSeconds => _median(runs.map((r) => r.drivenSeconds));
+
+  static double _median(Iterable<double> values) {
+    final sorted = values.toList()..sort();
     final mid = sorted.length ~/ 2;
     return sorted.length.isOdd
         ? sorted[mid]

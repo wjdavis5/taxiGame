@@ -146,30 +146,70 @@ void main() {
       }
     });
 
-    test('RunLengthEstimate computes the median of its input', () {
+    test('RunLengthEstimate computes the medians of its input', () {
+      // Deliberately asymmetric, out-of-order fixtures: for each list the
+      // mean, the max, the min, and the unsorted middle all differ from
+      // the true median, so only a real sorted-median implementation
+      // passes. (An arithmetic sequence would hide a mean in the median
+      // slot, and an in-order list would hide a missing sort.)
       final odd = RunLengthEstimate.compute([
-        for (var i = 0; i < 5; i++)
-          SimulatedRun(
-            seed: i,
-            distancePx: (5 - i) * 1000.0,
-            drivenSeconds: 1,
-            crashDistancesPx: const [],
-            survived: false,
-          ),
+        const SimulatedRun(
+          seed: 0,
+          distancePx: 1000,
+          drivenSeconds: 60,
+          crashDistancesPx: [],
+          survived: false,
+        ),
+        const SimulatedRun(
+          seed: 1,
+          distancePx: 100000,
+          drivenSeconds: 6000,
+          crashDistancesPx: [],
+          survived: false,
+        ),
+        const SimulatedRun(
+          seed: 2,
+          distancePx: 2000,
+          drivenSeconds: 120,
+          crashDistancesPx: [],
+          survived: false,
+        ),
       ]);
-      expect(odd.medianDistancePx, 3000.0);
+      expect(odd.medianDistancePx, 2000.0);
+      expect(odd.medianDrivenSeconds, 120.0);
 
       final even = RunLengthEstimate.compute([
-        for (var i = 0; i < 4; i++)
-          SimulatedRun(
-            seed: i,
-            distancePx: (i + 1) * 1000.0,
-            drivenSeconds: 1,
-            crashDistancesPx: const [],
-            survived: false,
-          ),
+        const SimulatedRun(
+          seed: 0,
+          distancePx: 1000,
+          drivenSeconds: 60,
+          crashDistancesPx: [],
+          survived: false,
+        ),
+        const SimulatedRun(
+          seed: 1,
+          distancePx: 100000,
+          drivenSeconds: 6000,
+          crashDistancesPx: [],
+          survived: false,
+        ),
+        const SimulatedRun(
+          seed: 2,
+          distancePx: 2000,
+          drivenSeconds: 120,
+          crashDistancesPx: [],
+          survived: false,
+        ),
+        const SimulatedRun(
+          seed: 3,
+          distancePx: 4000,
+          drivenSeconds: 240,
+          crashDistancesPx: [],
+          survived: false,
+        ),
       ]);
-      expect(even.medianDistancePx, 2500.0);
+      expect(even.medianDistancePx, 3000.0);
+      expect(even.medianDrivenSeconds, 180.0);
     });
   });
 
