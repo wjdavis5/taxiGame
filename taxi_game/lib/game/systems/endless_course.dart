@@ -253,7 +253,8 @@ class EndlessCourse {
     // passenger planted inside a junction band waits where cross traffic
     // runs and the corner sightlines break — and fare #33's pickup landed
     // in the 45,000 px junction under literally every seed, because its
-    // whole drawn inset range sits inside that band. Any stop that lands
+    // whole drawn inset range, 44,950–45,075, sits inside that junction's
+    // 44,800–45,200 stop-keeping band. Any stop that lands
     // in a band — widened by [junctionStopClearance] so the taxi never
     // has to stop inside the junction to collect — is nudged out by pure
     // arithmetic on the band grid: no fresh RNG draws, so every

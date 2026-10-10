@@ -12,9 +12,10 @@ import 'package:taxi_game/models/ghost_trace.dart';
 /// Golden seeds (issue #287): the course, the environment, the fare draw,
 /// and the ghost trace are contracts with history — a stored ghost replays
 /// its day's course, and the Daily Shift must deal the same city on every
-/// device. The tests below freeze exact outputs at one golden seed, so any
-/// change to a generator's draws, their order, or their arithmetic fails
-/// loudly instead of silently rewriting history.
+/// device. The tests below freeze exact outputs at the pinned seeds and
+/// distances, chosen so every generator surface the tests exercise carries
+/// a literal. Coverage is by example, not exhaustive: a change that never
+/// alters a pinned output passes, and nothing here claims otherwise.
 ///
 /// A deliberate generator change goes through the version constant each
 /// generator exposes — [EndlessCourse.generationVersion],
@@ -50,9 +51,10 @@ void main() {
     // index: (pickup.x, pickup.y, dropoff.x, dropoff.y, reward, kind,
     //         pickupDistance, dropoffDistance).
     // Covers both kerbs, every fare kind, the junction-nudged pickup in
-    // slot 32 (its whole drawn inset range sits inside the 45,000 px
-    // junction), and the junction-nudged dropoffs in slots 25 (far edge)
-    // and 57 (near edge, where the far edge pokes past the slot ceiling).
+    // slot 32 (its whole drawn inset range, 44,950–45,075, sits inside
+    // the nudge's 44,800–45,200 stop-keeping band), and the
+    // junction-nudged dropoffs in slots 25 (far edge) and 57 (near edge,
+    // where the far edge pokes past the slot ceiling).
     const fares =
         <int, (double, double, double, double, int, FareType, double, double)>{
       0: (
@@ -542,6 +544,32 @@ void main() {
           environmentModifier: env.difficultyModifierAt(20000));
       expect(core.meanSpeed, 132.97361534465867);
       expect(core.halfSpread, 26.599908966772873);
+    });
+
+    test('the avenue lane split is frozen', () {
+      // The 3-lane split: the oncoming share over one lane, the
+      // same-direction share over two, evenly. The per-side sum invariant
+      // alone cannot see an uneven split that keeps the sum, so the
+      // per-lane literals below are what pin the avenue's traffic.
+      final avenue = env.trafficAt(42000);
+      expect(avenue.lanes.length, 3);
+      expect(avenue.lanes.map((lane) => lane.laneX).toList(),
+          [112.0, 200.0, 288.0]);
+      expect(avenue.lanes.map((lane) => lane.oncoming).toList(),
+          [true, false, false]);
+      expect(
+        avenue.lanes.map((lane) => lane.spawnProbability).toList(),
+        [0.6094105579881658, 0.2406411627218935, 0.2406411627218935],
+      );
+      expect(avenue.lanes[0].speedRange.min, 116.85768402366865);
+      expect(avenue.lanes[0].speedRange.max, 195.65524615384618);
+      expect(avenue.spawnInterval, 2.537331907692307);
+      final core = DifficultyCurve.trafficCoreFor(42000,
+          environmentModifier: env.difficultyModifierAt(42000));
+      expect(core.meanSpeed, 156.2564650887574);
+      expect(core.halfSpread, 39.398781065088755);
+      expect(core.oncomingProbability, 0.6094105579881658);
+      expect(core.sameDirectionProbability, 0.481282325443787);
     });
   });
 
