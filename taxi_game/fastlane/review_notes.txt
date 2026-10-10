@@ -1,9 +1,11 @@
 Cab Hustle is an independently developed arcade game, written from scratch
-in Dart for Flutter and the Flame engine. Everything in the app is original
-to this project: the code, the top-down sprite art drawn for this game, and
-the audio (CC0-licensed packs listed in the app's bundled license
-inventory, plus sounds synthesized in this repository). It is built on no
-third-party app template and shares no assets or code with any other app.
+in Dart for Flutter and the Flame engine. Its code, game design, and course
+layouts are original to this project, and it builds on no third-party app
+template. Its vehicle and interface art is built from Kenney's CC0
+public-domain packs, recolored and arranged for this game, and its sounds
+are CC0 packs plus three sounds synthesized in this repository. Every asset
+and its license is listed in the app's bundled license inventory, and the
+credits screen names the sources.
 
 It shares a genre - one-thumb driving - with other games, so here is what
 makes it its own game, visible from the first session:
