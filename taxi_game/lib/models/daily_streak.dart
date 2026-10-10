@@ -88,6 +88,18 @@ class DailyStreak {
   int? settledRewardFor(String dayKey) =>
       rewardDateKey == dayKey ? lastRewardCoins : null;
 
+  /// True when [dayKey] is a calendar day before [lastDateKey]: a
+  /// completion arriving out of order, from a clock that moved backward.
+  /// The settlement ignores those — they can neither extend the run nor
+  /// pay a backdated bonus, so walking the clock back through past days
+  /// cannot mint a reward at every stop. Unreadable keys are not "before"
+  /// anything; the normal rules apply to them.
+  bool isBeforeLast(String dayKey) {
+    final day = _dayNumber(dayKey);
+    final last = _dayNumber(lastDateKey);
+    return day != null && last != null && day < last;
+  }
+
   /// True until the block holds anything — the shape a save written
   /// before the streak existed loads with. Used once to seed the block
   /// from the daily history (`GameStateService.loadSaveData`); a
@@ -198,7 +210,8 @@ class DailyStreak {
   /// in it, so two consecutive keys are consecutive numbers in every
   /// zone, across every daylight-saving transition. Unreadable keys
   /// count as nothing rather than throwing: one malformed day must not
-  /// lose the streak.
+  /// lose the streak, and a corrupt save's absurd year must not crash a
+  /// UI getter through `DateTime.utc`'s range check.
   static int? _dayNumber(String dateKey) {
     final parts = dateKey.split('-');
     if (parts.length != 3) return null;
@@ -206,8 +219,13 @@ class DailyStreak {
     final month = int.tryParse(parts[1]);
     final day = int.tryParse(parts[2]);
     if (year == null || month == null || day == null) return null;
+    if (year < 1 || year > 9999) return null;
     if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-    return DateTime.utc(year, month, day).millisecondsSinceEpoch ~/
-        Duration.millisecondsPerDay;
+    final parsed = DateTime.utc(year, month, day);
+    // `DateTime.utc` normalizes an impossible date (Feb 30 becomes Mar 2)
+    // instead of rejecting it; a day that moved under normalization was
+    // never a calendar day, so it counts as nothing like the rest.
+    if (parsed.month != month || parsed.day != day) return null;
+    return parsed.millisecondsSinceEpoch ~/ Duration.millisecondsPerDay;
   }
 }

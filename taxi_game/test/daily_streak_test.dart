@@ -68,6 +68,50 @@ void main() {
       expect(streak.current, 1);
       expect(streak.best, 1);
     });
+
+    test('an impossible date is not a day', () {
+      // Feb 30 used to normalize to Mar 2 inside DateTime.utc and extend
+      // a run across the gap it never was.
+      final streak = const DailyStreak()
+          .afterCompletion('2026-02-28')
+          .afterCompletion('2026-02-30')
+          .afterCompletion('2026-03-02');
+
+      expect(streak.current, 1,
+          reason: 'Feb 30 is nothing, so the run restarts at Mar 2');
+    });
+
+    test('an absurd year never throws from a reading', () {
+      // A corrupt save's lastDateKey: 275761 is the first year past
+      // DateTime.utc's representable range, and every reading parses the
+      // key through the same day-number arithmetic.
+      const corrupt = DailyStreak(
+        current: 5,
+        best: 5,
+        lastDateKey: '275761-01-01',
+      );
+
+      expect(corrupt.currentOn('2026-09-01'), 0);
+      expect(corrupt.isBeforeLast('2026-09-01'), isFalse);
+      expect(corrupt.nextRewardOn('2026-09-01'), DailyStreak.rewardCoins(1));
+    });
+
+    test('isBeforeLast names only days before the stored last day', () {
+      const streak = DailyStreak(
+        current: 2,
+        best: 2,
+        lastDateKey: '2026-09-03',
+      );
+
+      expect(streak.isBeforeLast('2026-09-02'), isTrue);
+      expect(streak.isBeforeLast('2026-09-03'), isFalse);
+      expect(streak.isBeforeLast('2026-09-04'), isFalse);
+      expect(const DailyStreak().isBeforeLast('2026-09-02'), isFalse,
+          reason: 'with no run recorded, nothing is before it');
+      expect(streak.isBeforeLast('nonsense'), isFalse);
+      expect(const DailyStreak(lastDateKey: 'nonsense')
+          .isBeforeLast('2026-09-02'), isFalse);
+    });
   });
 
   group('across daylight-saving transitions', () {

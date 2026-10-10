@@ -197,6 +197,140 @@ void main() {
       expect(gameState.settledDailyStreakRewardFor(today), rewardFor(1));
     });
 
+    /// Writes a save straight to storage — the shape a settled day's
+    /// save has when its history write did not land (the split-write
+    /// window, issue #281). [dailyStreak] is the raw JSON block.
+    Future<void> seedSave({
+      required int totalCoins,
+      required Map<String, dynamic> dailyStreak,
+    }) async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        StorageService.saveDataKey,
+        jsonEncode({
+          'currentLevel': 11,
+          'totalCoins': totalCoins,
+          'totalGems': 0,
+          'unlockedVehicles': ['taxi_yellow'],
+          'selectedVehicle': 'taxi_yellow',
+          'achievements': <String, bool>{},
+          'settings': Settings.createDefault().toJson(),
+          'dailyStreak': dailyStreak,
+        }),
+      );
+    }
+
+    test('a day the settlement already counted cannot extend or pay again',
+        () async {
+      // The save counted today and paid its bonus; the history lost the
+      // day (the split-write state the kill test below simulates).
+      final today = DailyShift.todayKey;
+      await seedSave(totalCoins: rewardFor(1), dailyStreak: {
+        'current': 1,
+        'best': 1,
+        'lastDateKey': today,
+        'rewardDateKey': today,
+        'lastRewardCoins': rewardFor(1),
+      });
+
+      final reloaded = GameStateService(storage);
+      await reloaded.loadSaveData();
+      await reloaded.recordDailyResult(resultFor(today, score: 999));
+
+      expect(reloaded.totalCoins, rewardFor(1),
+          reason: 'the settled day pays nothing again');
+      expect(reloaded.dailyStreak, 1, reason: 'and extends nothing again');
+      expect(reloaded.dailyBestStreak, 1);
+      expect(reloaded.dailyHistory, hasLength(1),
+          reason: 'the replay only fills the history back in');
+    });
+
+    test('a counted day with no settled reward pays nothing on replay',
+        () async {
+      // The migration seed's shape: the run counted today, no reward was
+      // ever paid under the old save — the last-counted-day half of the
+      // settlement guard must hold on its own.
+      final today = DailyShift.todayKey;
+      await seedSave(totalCoins: 0, dailyStreak: {
+        'current': 1,
+        'best': 1,
+        'lastDateKey': today,
+      });
+
+      final reloaded = GameStateService(storage);
+      await reloaded.loadSaveData();
+      await reloaded.recordDailyResult(resultFor(today, score: 999));
+
+      expect(reloaded.totalCoins, 0,
+          reason: 'no reward may be invented for an already-counted day');
+      expect(reloaded.dailyStreak, 1);
+    });
+
+    test('a kill between the record\'s two writes cannot undercount or '
+        'pay twice', () async {
+      final yesterday = DailyShift.dateKeyFor(calendarDaysFromNow(-1));
+      final today = DailyShift.todayKey;
+      await gameState.recordDailyResult(resultFor(yesterday));
+
+      // The kill: the first write lands, the second never starts. With
+      // the save written first, that leaves the save ahead of the
+      // history — the settlement record intact, the run not one short.
+      final killing = _KillAtSecondWriteStorage();
+      await killing.init();
+      final killed = GameStateService(killing);
+      await killed.loadSaveData();
+      await expectLater(
+        killed.recordDailyResult(resultFor(today, score: 340)),
+        throwsA(isA<StateError>()),
+      );
+
+      // A fresh stack over the same store sees what survived the kill.
+      final reloaded = GameStateService(storage);
+      await reloaded.loadSaveData();
+      expect(reloaded.dailyStreak, 2,
+          reason: 'the run counted today; it must not read one short');
+      expect(reloaded.dailyBestStreak, 2);
+      expect(reloaded.totalCoins, rewardFor(1) + rewardFor(2),
+          reason: "today's bonus landed with the save");
+      expect(reloaded.dailyResultFor(today), isNull,
+          reason: 'the killed write was the history one');
+
+      // The day replays safely: the history fills in, nothing pays or
+      // extends twice.
+      await reloaded.recordDailyResult(resultFor(today, score: 999));
+      expect(reloaded.dailyStreak, 2);
+      expect(reloaded.dailyBestStreak, 2);
+      expect(reloaded.totalCoins, rewardFor(1) + rewardFor(2));
+      expect(reloaded.dailyResultFor(today)!.score, 999);
+    });
+
+    test('a completion older than the stored run settles nothing', () async {
+      final yesterday = DailyShift.dateKeyFor(calendarDaysFromNow(-1));
+      final today = DailyShift.todayKey;
+      final tomorrow = DailyShift.dateKeyFor(calendarDaysFromNow(1));
+      await gameState.recordDailyResult(resultFor(today));
+      final coinsAfterToday = gameState.totalCoins;
+
+      // The clock moves backward: a past course is completed after
+      // today's. It may not mint a backdated bonus or move the run back.
+      await gameState.recordDailyResult(resultFor(yesterday, score: 500));
+
+      expect(gameState.totalCoins, coinsAfterToday,
+          reason: 'no backdated bonus');
+      expect(gameState.dailyStreak, 1, reason: 'the run still ends today');
+      expect(gameState.dailyBestStreak, 1);
+      expect(gameState.dailyHistory, hasLength(2),
+          reason: 'the shift is still a record — only the settlement '
+              'ignores it');
+
+      // Forward again: the run continues from the stored last day.
+      await gameState.recordDailyResult(resultFor(tomorrow));
+      expect(gameState.dailyStreakOn(tomorrow), 2,
+          reason: 'the run picks up from the day it ended on');
+      expect(gameState.dailyBestStreak, 2);
+      expect(gameState.totalCoins, coinsAfterToday + rewardFor(2));
+    });
+
     test('the run and the settled reward survive a restart', () async {
       final yesterday = DailyShift.dateKeyFor(calendarDaysFromNow(-1));
       final today = DailyShift.todayKey;
@@ -339,4 +473,31 @@ void main() {
       expect(result.completedAtMs, 0);
     });
   });
+}
+
+/// A storage that lets a record's first write land and kills the process
+/// at the second — the shape of a crash between the record's two writes.
+/// The kill is a thrown error the test catches; the durable store keeps
+/// the first write, exactly as a device would.
+class _KillAtSecondWriteStorage extends StorageService {
+  int _writes = 0;
+
+  void _reachWrite() {
+    _writes++;
+    if (_writes == 2) {
+      throw StateError('simulated process kill at the second write');
+    }
+  }
+
+  @override
+  Future<void> saveSaveData(SaveData data) {
+    _reachWrite();
+    return super.saveSaveData(data);
+  }
+
+  @override
+  Future<void> saveDailyHistory(List<DailyResult> results) {
+    _reachWrite();
+    return super.saveDailyHistory(results);
+  }
 }

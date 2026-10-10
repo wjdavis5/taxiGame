@@ -496,19 +496,32 @@ class GameStateService extends ChangeNotifier {
     _settleDailyStreak(result.dateKey);
     notifyListeners();
     _evaluateAchievements();
-    await _storageService.saveDailyHistory(_dailyHistory);
+    // The save lands before the history (issue #281's split-write
+    // window): the streak block and the day's coins are one write, and a
+    // kill between the two leaves the save ahead of the history — the
+    // settlement record intact, the run not one short. The day then
+    // replays safely, because the settlement guards refuse to extend or
+    // pay twice and the replay only fills the history back in. The
+    // history-first order left the opposite split, which the history
+    // guard then made permanent: the run read one short and the day's
+    // bonus could never settle.
     await save();
+    await _storageService.saveDailyHistory(_dailyHistory);
   }
 
   /// Extends the visible streak and settles the day's declared bonus
-  /// (issue #281). At most once per date, twice over: the caller only
-  /// reaches this for the first result of a day, and the block's reward
-  /// date key is the second guard — a date already counted or already
-  /// paid settles nothing, whatever re-runs. The coins ride the same
-  /// in-memory save as the streak, and the caller's [save] persists both
-  /// in one write, so a kill between the two cannot split them.
+  /// (issue #281). At most once per date, three ways over: a completion
+  /// older than the stored run's last day is a clock that moved backward
+  /// and is ignored outright — it can neither extend the run nor pay a
+  /// backdated bonus; the caller only reaches the rest for the first
+  /// result of a day; and the block's reward date key (with the last
+  /// counted day) is the replay guard — a date already counted or
+  /// already paid settles nothing, whatever re-runs. The coins ride the
+  /// same in-memory save as the streak, and the caller's [save] persists
+  /// both in one write, so a kill between the two cannot split them.
   void _settleDailyStreak(String dateKey) {
     final before = _saveData.dailyStreak;
+    if (before.isBeforeLast(dateKey)) return;
     final after = before.afterCompletion(dateKey);
     final alreadySettled = before.lastDateKey == dateKey ||
         before.settledRewardFor(dateKey) != null;
