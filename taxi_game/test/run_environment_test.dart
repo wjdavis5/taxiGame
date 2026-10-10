@@ -612,4 +612,76 @@ void main() {
           reason: 'a clamped taxi still touches a kerbside dropoff');
     });
   });
+
+  group('the road profiles are named districts (issue #280)', () {
+    test('each profile carries its own name and landmark', () {
+      expect(RoadProfile.standard.districtName, 'Midtown');
+      expect(RoadProfile.narrow.districtName, 'Old Town');
+      expect(RoadProfile.avenue.districtName, 'Grand Avenue');
+      expect(
+        {for (final p in RoadProfile.values) p.districtName},
+        hasLength(RoadProfile.values.length),
+        reason: 'the district names are the identity; they must be distinct',
+      );
+      expect(
+        {for (final p in RoadProfile.values) p.landmark},
+        hasLength(RoadProfile.values.length),
+        reason: 'each district raises a different landmark',
+      );
+    });
+
+    test('the district turns over with its geometry segment, not the taper',
+        () {
+      // Seed 0xC0FFEE's pinned segment sequence (golden_seeds_test):
+      // 3 standard → 4 narrow → 9 standard → 10 avenue → 11 narrow.
+      final env = RunEnvironment(seed: 0xC0FFEE);
+      expect(env.roadAt(15999).profile.districtName, 'Midtown');
+      expect(env.roadAt(16000).profile.districtName, 'Old Town',
+          reason: 'the district turns over exactly at the segment line');
+      expect(env.roadAt(39999).profile, RoadProfile.standard);
+      expect(env.roadAt(40000).profile, RoadProfile.avenue);
+      expect(env.roadAt(44000).profile, RoadProfile.narrow);
+    });
+
+    test('one difficulty distance deals three district traffic behaviours',
+        () {
+      // Same difficulty read, three road geometries: every difference
+      // below is the district's own.
+      final env = RunEnvironment(seed: 0xC0FFEE);
+      const d = 20000.0;
+      final standard = env.trafficAt(d, geometryDistance: 39000);
+      final narrow = env.trafficAt(d, geometryDistance: 17400);
+      final avenue = env.trafficAt(d, geometryDistance: 42200);
+
+      expect(narrow.spawnInterval, standard.spawnInterval,
+          reason: 'the wave cadence is the difficulty curve, not the place');
+      expect(avenue.spawnInterval, standard.spawnInterval);
+
+      expect(standard.lanes.length, 2);
+      expect(narrow.lanes.length, 2);
+      expect(avenue.lanes.length, 3,
+          reason: 'the avenue carries a third lane');
+
+      // Old Town keeps Midtown's two-lane two-way deal — same roles, same
+      // per-lane chance; the narrowing is felt as dodging room, not as a
+      // different wave.
+      expect([for (final l in narrow.lanes) l.oncoming],
+          [for (final l in standard.lanes) l.oncoming]);
+      expect([for (final l in narrow.lanes) l.spawnProbability],
+          [for (final l in standard.lanes) l.spawnProbability]);
+
+      // The avenue spreads the same same-direction share over two lanes:
+      // half the two-lane street's chance per lane — thinner traffic, the
+      // boulevard's relief.
+      expect(avenue.lanes[0].oncoming, isTrue);
+      expect(avenue.lanes[1].oncoming, isFalse);
+      expect(avenue.lanes[2].oncoming, isFalse);
+      expect(avenue.lanes[0].spawnProbability,
+          standard.lanes[0].spawnProbability);
+      expect(avenue.lanes[1].spawnProbability,
+          closeTo(standard.lanes[1].spawnProbability / 2, 1e-12));
+      expect(avenue.lanes[2].spawnProbability,
+          closeTo(standard.lanes[1].spawnProbability / 2, 1e-12));
+    });
+  });
 }
