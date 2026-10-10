@@ -32,9 +32,10 @@ class SaveData {
   int endlessBestScore;
 
   /// True once the one-time stick-control hint (issue #37) has been
-  /// dismissed — by the thumb landing on the stick, never by time or by a
-  /// session ending — so the game must never render it again. Only a
-  /// fresh save (or an explicit reset) leaves it false.
+  /// dismissed — by the player demonstrating both control axes (throttle
+  /// and steer) on the stick (issue #267), never by time or by a session
+  /// ending — so the game must never render it again. Only a fresh save
+  /// (or an explicit reset) leaves it false.
   bool controlHintDismissed;
 
   /// True once the save has been offered a bank-or-push choice at least

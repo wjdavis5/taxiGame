@@ -54,8 +54,9 @@ class _GameScreenState extends State<GameScreen> {
 
   /// True when this session's save has never dismissed the stick-control
   /// hint (issue #37): the first game start — level, endless, daily,
-  /// ghost race — then renders the hint until a thumb lands on the stick
-  /// ([TaxiGame.onStickEngaged]). A save that has already dismissed it —
+  /// ghost race — then renders the hint until the player demonstrates
+  /// both control axes (throttle and steer), when [TaxiGame.onStickInput]
+  /// stands it down. A save that has already dismissed it —
   /// every save older than this feature among them — never sees it
   /// again. Decided here rather than inside the game so the hint rides
   /// the [GameWidget]'s own `initialActiveOverlays`: Flame requires a
@@ -154,10 +155,11 @@ class _GameScreenState extends State<GameScreen> {
                 overlayBuilderMap: {
                   'hud': (context, TaxiGame game) => HudOverlay(game: game),
                   // The one-time stick-control hint (issue #37): active from
-                  // the first frame when [showControlHint], removed by the
-                  // first real stick touch. Carries the game so the pill
-                  // can park below the cab's tail wherever the mode's
-                  // camera frames it (issue #177).
+                  // the first frame when [showControlHint], removed once the
+                  // player has both accelerated and steered (issue #267) —
+                  // a landing alone just answers its upper-half cue. Carries
+                  // the game so the pill can park below the cab's tail
+                  // wherever the mode's camera frames it (issue #177).
                   'controlHint': (context, TaxiGame game) =>
                       ControlHintOverlay(game: game),
                   'pauseMenu': (context, TaxiGame game) =>

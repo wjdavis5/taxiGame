@@ -203,9 +203,10 @@ class VirtualStick extends PositionComponent
     _origin = event.canvasPosition.clone();
     _knobOffset = Vector2.zero();
     _apply(StickInput.zero);
-    // A thumb that lands here has found the stick — the first real
-    // input the control hint (issue #37) was waiting for, a tap on the
-    // hint included, since the hint sits inside this same region.
+    // A thumb that lands here has found the stick: it answers the control
+    // hint's upper-half cue (issue #267). The lesson itself (issue #37)
+    // no longer ends on a landing — [TaxiGame.onStickInput] stands it
+    // down once both a throttle and a steer have been fed.
     game.onStickEngaged();
   }
 
