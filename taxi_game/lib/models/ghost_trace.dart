@@ -29,6 +29,13 @@ class GhostTrace {
     this.samplePeriodSeconds = samplePeriod,
   });
 
+  /// The version of the trace format and its recording/replay grid
+  /// (issue #287). The golden-seed tests in test/golden_seeds_test.dart
+  /// pin a recorder run, a playback, and this JSON shape; changing any of
+  /// them must ship as a bump here with the goldens re-pinned in the same
+  /// commit.
+  static const int formatVersion = 1;
+
   /// Seconds of driven time between samples. Stored per trace so an
   /// older trace keeps replaying at its own grid if this constant ever
   /// changes.

@@ -172,6 +172,13 @@ class ConstructionZone {
 class RunEnvironment {
   RunEnvironment({required this.seed});
 
+  /// The version of this generator's output (issue #287). The golden-seed
+  /// tests in test/golden_seeds_test.dart pin the exact city this version
+  /// draws — profiles, weather, works, darkness, traffic. Changing any
+  /// draw, its order, or its arithmetic must ship as a bump here with the
+  /// goldens re-pinned in the same commit.
+  static const int generationVersion = 1;
+
   /// The run seed. Same seed, same city, same sky.
   final int seed;
 
