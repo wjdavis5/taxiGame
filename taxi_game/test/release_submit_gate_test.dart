@@ -808,9 +808,9 @@ void main() {
       () {
         // Two version records and an empty submission list, so one run
         // pins both counts, the multi-record join, and the empty-inventory
-        // rendering. Every assertion below fails against the pre-#94
-        // script: it printed no second-source line on a NONE and its
-        // version line carried no "N record(s):" prefix nor "(none)".
+        // rendering. Every stderr assertion below fails against the
+        // pre-#94 script: it printed no second-source line on a NONE and
+        // its version line carried no "N record(s):" prefix nor "(none)".
         final result = runGate(
           versions: body([
             versionRecord('v1', '1.0.0', 'READY_FOR_SALE'),
