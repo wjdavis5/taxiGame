@@ -646,9 +646,10 @@ void main() {
       // spawning until the taxi is ~650 px from the road top, so the
       // stretch just past the final dropoff is still shaving ground —
       // the completion test earns its shave there. The last ~600 px to
-      // the clamp accepted no new waves and the cab cannot reverse, so
-      // the shave still owed cannot land by then. The verdict is
-      // failure, not a dead end with only MAIN MENU as an exit.
+      // the clamp accept no new waves and the cab cannot reverse, so
+      // only a car already on the road could still be met there — and
+      // the clamp is where the lesson stops waiting for one. The verdict
+      // is failure, not a dead end with only MAIN MENU as an exit.
       final roadTop = game.levelRoadTopY!;
       game.player.position = Vector2(
           TaxiGame.roadCenterX, roadTop + game.player.vehicleSize.y + 1);

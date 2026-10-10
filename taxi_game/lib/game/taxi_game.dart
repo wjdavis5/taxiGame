@@ -1101,9 +1101,9 @@ class TaxiGame extends FlameGame
       // stays live so the shave can still land — the street past the
       // final dropoff still supplies passes for a while: waves keep
       // spawning until the taxi is ~650 px from the road top (the spawn
-      // gate's last accepted point, one body inside the end). The last
-      // ~600 px to the end clamp supply none, and
-      // [_checkForCloseCallLessonEnd] answers that with the verdict.
+      // gate's last accepted point, half a body inside the end). The
+      // last ~600 px to the end clamp accept no new waves, and
+      // [_checkForCloseCallLessonEnd] answers the clamp with the verdict.
       if (_closeCallObjectiveMet) _completeLevel();
     } else if (currentLevel.bankPromptEnabled) {
       // The banking lesson (issue #16): on the levels that teach it, every
@@ -1688,14 +1688,16 @@ class TaxiGame extends FlameGame
 
   /// Fails the close-call lesson once the street has ended with its
   /// required shave still owed (issue #269). By the clamp the street
-  /// has stopped supplying chances: [TrafficSpawner] last accepted a
-  /// wave when the taxi was ~650 px from the road top, a same-direction
-  /// car's path dies at the road top rather than following the cab
-  /// (issue #31), and the clamp leaves no reverse — only a car already
-  /// on the road could still be passed, and the clamp is where the
-  /// lesson stops waiting for one. Without this verdict the run could
-  /// neither complete nor fail in place, and quitting to the menu was
-  /// the only exit. RETRY re-runs the rung, where the traffic is.
+  /// has stopped supplying new chances: [TrafficSpawner] last accepted
+  /// a wave when the taxi was ~650 px from the road top, a
+  /// same-direction car's path ends one body below the road top
+  /// (issue #31), and the clamp leaves no reverse. Only a car already
+  /// on the road could still be met — a slow same-direction car that
+  /// fell behind is culled behind the cab, where it can never be
+  /// shaved — and the clamp is where the lesson stops waiting for one.
+  /// Without this verdict the run could neither complete nor fail in
+  /// place, and quitting to the menu was the only exit. RETRY re-runs
+  /// the rung, where the traffic is.
   void _failLevelForCloseCallMissed() {
     _failLevel(
       LevelFailReason.closeCallMissed,
