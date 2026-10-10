@@ -316,6 +316,14 @@ void main() {
         game.world.children.whereType<CloseCallPop>(),
         hasLength(1),
       );
+      // The first award of the run carries the lesson (issue #269): the
+      // rule the whole close-call economy rests on.
+      final pop = game.world.children.whereType<CloseCallPop>().single;
+      expect(
+        pop.text,
+        'CLOSE CALL +${FareChain.nearMissScore}\n'
+        'SPEED + PROXIMITY FEED THE AT-RISK CHAIN',
+      );
       expect(
         game.world.children.whereType<BurstParticles>(),
         hasLength(1),
@@ -348,6 +356,14 @@ void main() {
       expect(
         game.world.children.whereType<CloseCallPop>(),
         hasLength(2),
+      );
+      // Only the first award of the run carries the lesson (issue #269):
+      // the second shave keeps the plain points line.
+      expect(
+        game.world.children
+            .whereType<CloseCallPop>()
+            .where((pop) => pop.text.contains(CloseCallPop.firstAwardLesson)),
+        hasLength(1),
       );
     });
 
