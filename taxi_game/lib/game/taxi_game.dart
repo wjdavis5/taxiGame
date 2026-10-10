@@ -371,6 +371,24 @@ class TaxiGame extends FlameGame
   /// is late and the HUD reads before the world exists.
   String? currentLevelName;
 
+  /// The loaded rung's close-call requirement (issue #269), mirrored
+  /// out of [currentLevel] the same way [currentLevelName] is: the HUD
+  /// polls [lessonCloseCallOwed] on its short tick, and [currentLevel]
+  /// is late — a poll before the level lands must not touch it. Zero
+  /// outside level mode and on every rung but the lesson's.
+  int _lessonCloseCallsRequired = 0;
+
+  /// Whether the loaded rung still owes the close calls its completion
+  /// waits on (issue #269). False when no level is loaded and on every
+  /// rung but the lesson's, so the HUD's lesson line is level-gated.
+  bool get lessonCloseCallOwed =>
+      _lessonCloseCallsRequired > fareChain.nearMisses;
+
+  /// True once the loaded rung's close-call requirement is met (issue
+  /// #269): a rung with no requirement is met from the start.
+  bool get _closeCallObjectiveMet =>
+      fareChain.nearMisses >= _lessonCloseCallsRequired;
+
   /// Whether a level follows the one on screen (issue #16). Set at every
   /// [loadLevel] from the ladder itself — [GameLevel.ladderLength] — never
   /// from an asset probe (issue #229): the ladder declares its rungs, and
@@ -733,6 +751,8 @@ class TaxiGame extends FlameGame
     _levelCameraLead = null;
     // And no ladder name either: the shift is not a level.
     currentLevelName = null;
+    // The lesson's requirement belongs to a rung, not a shift (issue #269).
+    _lessonCloseCallsRequired = 0;
     passengers.clear();
     passengersDelivered = 0;
     fareChain.reset();
@@ -839,6 +859,7 @@ class TaxiGame extends FlameGame
 
     currentLevel = await levelLoader.loadLevel(levelNumber);
     currentLevelName = currentLevel.name;
+    _lessonCloseCallsRequired = currentLevel.closeCallsRequired;
     debugPrint('[run] level start $levelNumber \'${currentLevel.name}\'');
     _liveRunSeconds = 0;
     _heartbeatSeconds = 0;
@@ -1073,7 +1094,11 @@ class TaxiGame extends FlameGame
     haptics?.dropoff();
 
     if (passengersDelivered >= passengers.length) {
-      _completeLevel();
+      // The close-call lesson (issue #269): the last delivery completes
+      // the rung only once its required shave is in. Until then the
+      // street stays live — traffic keeps spawning — so the player can
+      // still earn the close call the lesson asks for.
+      if (_closeCallObjectiveMet) _completeLevel();
     } else if (currentLevel.bankPromptEnabled) {
       // The banking lesson (issue #16): on the levels that teach it, every
       // dropoff still leaving fares undelivered asks the same timed
@@ -1885,7 +1910,22 @@ class TaxiGame extends FlameGame
       lifetime: 0.35,
       gravity: 40,
     ));
-    world.add(CloseCallPop(position: midPoint, points: points));
+    world.add(CloseCallPop(
+      position: midPoint,
+      points: points,
+      // The first award of a run also says what made it pay (issue #269).
+      firstAward: fareChain.nearMisses == 1,
+    ));
+
+    // The lesson's shave can be the completion (issue #269): when every
+    // fare is already delivered and this pass lands the rung's required
+    // close call, the run settles on the award that taught it.
+    if (!isEndless &&
+        isGameActive &&
+        passengersDelivered >= passengers.length &&
+        _closeCallObjectiveMet) {
+      _completeLevel();
+    }
 
     // Haptic thump plus the OS click (the game ships no audio assets —
     // see [CloseCallFeedback]) under the save's existing settings: the

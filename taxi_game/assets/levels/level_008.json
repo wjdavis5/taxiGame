@@ -1,7 +1,8 @@
 {
   "levelNumber": 8,
-  "name": "Keep the Chain",
+  "name": "Shave the Traffic",
   "difficulty": "hard",
+  "closeCallsRequired": 1,
   "pickupPoints": [
     [315, 300],
     [85, -50],
