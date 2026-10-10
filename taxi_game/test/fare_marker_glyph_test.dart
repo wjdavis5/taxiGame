@@ -85,6 +85,21 @@ void main() {
           reason: 'the crown fills the framing ring, setting the VIP apart '
               'from the bare standard ring');
     });
+
+    test('glyph paths are memoised per (type, radius) (issue #256)', () {
+      for (final type in FareType.values) {
+        expect(identical(fareGlyphPath(type), fareGlyphPath(type)), isTrue,
+            reason: '${type.name} must reuse its cached path');
+        expect(
+            identical(
+                fareGlyphPath(type, radius: 21), fareGlyphPath(type, radius: 21)),
+            isTrue,
+            reason: '${type.name} at a custom radius must cache too');
+        expect(identical(fareGlyphPath(type, radius: 21), fareGlyphPath(type)),
+            isFalse,
+            reason: 'a different radius is a different cached path');
+      }
+    });
   });
 
   group('rendered in greyscale', () {

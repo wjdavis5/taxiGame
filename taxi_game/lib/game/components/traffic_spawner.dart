@@ -23,23 +23,35 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
       : _fixedPattern = pattern,
         _profileOf = null,
         _distanceOf = null,
+        _spawnIntervalOf = null,
         random = random ?? Random();
 
   /// Endless mode (issue #11): density and speed come from a continuous
   /// profile curve evaluated at the run's current distance, and the RNG is
   /// injectable so the same seed reproduces the same traffic exactly.
+  ///
+  /// [spawnIntervalOf] (issue #252) is the cheap scalar companion to
+  /// [profileOf]: the seconds-in-effect spawn interval at a distance,
+  /// computed without materialising the profile. When given, the spawner
+  /// waits on it every frame and only builds the whole profile on the
+  /// frame a wave actually fires; a caller that omits it (a test
+  /// injecting a custom [profileOf]) keeps the old per-frame profile
+  /// read exactly.
   TrafficSpawner.distanceBased({
     required TrafficProfile Function(double distance) profileOf,
     required double Function() distanceOf,
+    double Function(double distance)? spawnIntervalOf,
     Random? random,
   })  : _fixedPattern = null,
         _profileOf = profileOf,
         _distanceOf = distanceOf,
+        _spawnIntervalOf = spawnIntervalOf,
         random = random ?? Random();
 
   final TrafficPattern? _fixedPattern;
   final TrafficProfile Function(double distance)? _profileOf;
   final double Function()? _distanceOf;
+  final double Function(double distance)? _spawnIntervalOf;
 
   /// The RNG driving every spawn decision. Seeded in endless mode.
   final Random random;
@@ -48,6 +60,15 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   bool _isActive = true;
 
   final List<TrafficVehicle> _activeVehicles = [];
+
+  /// The headway pass's snapshot of the street, reused every frame (issue
+  /// #254). The pass needs to walk the traffic list twice (clear the caps,
+  /// then compare every pair), and the old code built a fresh
+  /// `whereType<TrafficVehicle>().toList()` for it on every tick. The set
+  /// of cars is the same — the run world's own traffic children, in child
+  /// order — only the list object is now owned by the spawner and cleared
+  /// and refilled per pass, so the frame loop allocates none.
+  final List<TrafficVehicle> _headwayTraffic = [];
 
   /// The world this run's traffic belongs to, captured on mount (issue
   /// #32). A retired spawner can still get one update after [TaxiGame]
@@ -93,6 +114,20 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     );
   }
 
+  /// Seconds until the next spawn attempt is due (issue #252).
+  ///
+  /// The per-frame wait reads the cheap scalar when the caller supplies
+  /// one — endless mode computes just the difficulty core's interval, not
+  /// the whole profile with its road geometry and lane list — and the
+  /// full profile is evaluated once, only on frames that actually spawn.
+  /// Without a scalar accessor the old per-frame profile read is kept, so
+  /// a caller injecting a custom [profileOf] keeps its exact semantics.
+  double get _spawnInterval {
+    final spawnIntervalOf = _spawnIntervalOf;
+    if (spawnIntervalOf != null) return spawnIntervalOf(_distanceOf!());
+    return _profile.spawnInterval;
+  }
+
   /// Bumper room the headway rule adds to the follower's own body length
   /// before its cap engages (issue #146). One frame at the fleet's
   /// fastest same-role overtake differential — an oncoming sports car
@@ -110,8 +145,9 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
     if (_isActive) {
       _timeSinceLastSpawn += dt;
 
-      // Spawn new vehicles based on interval
-      if (_timeSinceLastSpawn >= _profile.spawnInterval) {
+      // Spawn new vehicles based on interval. The wait is a scalar read
+      // (issue #252); the profile is built once, only when a wave fires.
+      if (_timeSinceLastSpawn >= _spawnInterval) {
         _timeSinceLastSpawn = 0.0;
         _spawnVehicles(_profile);
       }
@@ -151,22 +187,30 @@ class TrafficSpawner extends Component with HasGameReference<TaxiGame> {
   void _capTrafficHeadway() {
     final world = _runWorld;
     if (world == null) return;
-    final traffic = world.children.whereType<TrafficVehicle>().toList();
+    // Refill the spawner's own reused snapshot (issue #254): the nested
+    // pass below indexes the street twice, and a fresh list per frame was
+    // one of the two full-children scans the audit found. World child
+    // order is preserved, so the pass sees the exact list (and pair
+    // order) the old `.whereType().toList()` produced.
+    _headwayTraffic.clear();
+    for (final child in world.children) {
+      if (child is TrafficVehicle) _headwayTraffic.add(child);
+    }
 
     // A fresh cap every frame: a cap that survived its frame would pace
     // a car to traffic that has since merged away or been culled.
-    for (final vehicle in traffic) {
+    for (final vehicle in _headwayTraffic) {
       vehicle.paceLimit = null;
     }
 
-    for (final follower in traffic) {
+    for (final follower in _headwayTraffic) {
       // Unmounted cars were queued this very frame, and a mounted car
       // whose async onLoad (sprite load) has not completed yet has no
       // velocity — either way it has no place in this frame's road, and
       // reading one would pace a whole lane to a standing ghost.
       if (!follower.isMounted || !follower.isLoaded) continue;
       final followerOncoming = follower.velocity.y > 0;
-      for (final leader in traffic) {
+      for (final leader in _headwayTraffic) {
         if (identical(leader, follower)) continue;
         if (!leader.isMounted || !leader.isLoaded) continue;
         // Same role only.

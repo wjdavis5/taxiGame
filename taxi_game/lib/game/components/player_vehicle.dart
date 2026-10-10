@@ -33,6 +33,15 @@ class PlayerVehicle extends PositionComponent
   Vector2 velocity = Vector2.zero();
   bool isAccelerating = false;
 
+  /// Every traffic vehicle this taxi has ever touched, in this run (issue
+  /// #254). The scraped-traffic pace cap used to find its candidates by
+  /// scanning all world children every frame and filtering on
+  /// [TrafficVehicle.contactedPlayer] — a flag only this class ever sets,
+  /// at the touch itself — so a player-owned set is the exact same
+  /// candidate list without materialising the world each tick. Cars leave
+  /// the set when they are unmounted (culled or removed with the world).
+  final Set<TrafficVehicle> _contactedTraffic = {};
+
   /// True while the stick is held in deliberate-brake territory (issue #29);
   /// the falling edge at speed fires the brake squeal (issue #4), and any
   /// throttle in between re-arms it (issue #131) — the latch tracks the
@@ -65,7 +74,15 @@ class PlayerVehicle extends PositionComponent
   /// Logical footprint of the vehicle, from [stats] — each car has its own
   /// body since issue #9. The hitbox is derived from this, never from the
   /// sprite, so swapping the art cannot change collision behaviour.
-  Vector2 get vehicleSize => Vector2(stats.width, stats.height);
+  ///
+  /// One shared vector for the component's life (issue #257): the old
+  /// getter allocated a fresh `Vector2` on every read, and the scraped
+  /// pace cap, the collision judge, and the danger telegraph all read it
+  /// — several allocations per frame at traffic density. No caller
+  /// mutates the vector: every use here and in [TrafficVehicle] either
+  /// reads a component or derives a new vector (`size =` copies, and
+  /// `vehicleSize * n` allocates), so sharing it is safe.
+  late final Vector2 vehicleSize = Vector2(stats.width, stats.height);
 
   /// Pre-loaded sprite to render instead of the bundled one (tests inject a
   /// fake here). When null the sprite is loaded from the bundled PNG.
@@ -244,7 +261,11 @@ class PlayerVehicle extends PositionComponent
   /// reborn; the traffic hitbox went solid for exactly this).
   void _capSpeedToScrapedTraffic() {
     if (!isMounted) return;
-    for (final vehicle in game.world.children.whereType<TrafficVehicle>()) {
+    // Candidates are exactly the cars whose `contactedPlayer` flag this
+    // class set at a touch (issue #254); a car that has left the world is
+    // pruned as it goes. No per-frame world-children scan.
+    _contactedTraffic.removeWhere((vehicle) => !vehicle.isMounted);
+    for (final vehicle in _contactedTraffic) {
       if (!vehicle.contactedPlayer) continue;
       if (vehicle.velocity.y >= 0) continue;
       // Ahead at the episode's start (issues #66, #74 and #80) — the
@@ -428,6 +449,10 @@ class PlayerVehicle extends PositionComponent
     // This episode had its touch: whatever the severity, this vehicle is
     // out of the running for a close call at the pass (issue #23).
     other.contactedPlayer = true;
+
+    // The scraped-pace candidate set (issue #254) is recorded here, the
+    // one place the flag is ever set.
+    _contactedTraffic.add(other);
 
     // Freeze the ahead/behind ruling here, at the start of every
     // contact episode (issues #74 and #80) — on the pre-pushback

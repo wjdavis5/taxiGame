@@ -269,6 +269,17 @@ void main() {
       gameState.selectVehicle('minivan_gray');
     });
 
+    test('vehicleSize is one shared vector, not a per-read allocation '
+        '(issue #257)', () {
+      final car = PlayerVehicle(
+        startPosition: Vector2(TaxiGame.roadCenterX, 0),
+        vehicleId: 'minivan_gray',
+      );
+      expect(identical(car.vehicleSize, car.vehicleSize), isTrue,
+          reason: 'every read must share the one cached body vector');
+      expect(car.vehicleSize, Vector2(48, 72));
+    });
+
     test('the equipped car is the car whose stats are driven', () async {
       final game = await mountGame(TaxiGame(
         levelLoader: LevelLoaderService(),

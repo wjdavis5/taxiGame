@@ -19,6 +19,25 @@ class RoadObstacle extends PositionComponent {
   /// art can overlap a grazing pass without the physics feeling it.
   static final Vector2 coneSize = Vector2(16, 16);
 
+  // Cone paints, shared by every cone (issue #256): the old renderer
+  // allocated four paints per cone per frame for colours that never
+  // change, and nothing mutates these after construction.
+  static final Paint _basePaint = Paint()..color = const Color(0xFFB85C00);
+  static final Paint _bodyPaint = Paint()..color = const Color(0xFFFF7A1A);
+  static final Paint _bandPaint =
+      Paint()..color = Colors.white.withValues(alpha: 0.9);
+  static final Paint _shadowPaint = Paint()
+    ..color = Colors.black.withValues(alpha: 0.25)
+    ..style = PaintingStyle.fill;
+
+  /// The body triangle, built once per cone (issue #256): its geometry is
+  /// a pure function of [size], fixed at construction.
+  late final Path _bodyPath = Path()
+    ..moveTo(size.x / 2, 1)
+    ..lineTo(size.x - 2, size.y - 2)
+    ..lineTo(2, size.y - 2)
+    ..close();
+
   RoadObstacle({required Vector2 position})
       : super(
           position: position,
@@ -46,29 +65,22 @@ class RoadObstacle extends PositionComponent {
     // Base: dark orange square
     canvas.drawRect(
       Rect.fromLTWH(2, 2, size.x - 4, size.y - 4),
-      Paint()..color = const Color(0xFFB85C00),
+      _basePaint,
     );
 
-    // Cone body: a bright orange triangle
-    final body = Path()
-      ..moveTo(size.x / 2, 1)
-      ..lineTo(size.x - 2, size.y - 2)
-      ..lineTo(2, size.y - 2)
-      ..close();
-    canvas.drawPath(body, Paint()..color = const Color(0xFFFF7A1A));
+    // Cone body: a bright orange triangle (the path is cached, issue #256)
+    canvas.drawPath(_bodyPath, _bodyPaint);
 
     // Reflective band
     canvas.drawRect(
       Rect.fromLTWH(4.5, size.y * 0.55, size.x - 9, 2.5),
-      Paint()..color = Colors.white.withValues(alpha: 0.9),
+      _bandPaint,
     );
 
     // Subtle shadow for depth on the road
     canvas.drawOval(
       Rect.fromLTWH(0, size.y - 3, size.x, 3),
-      Paint()
-        ..color = Colors.black.withValues(alpha: 0.25)
-        ..style = PaintingStyle.fill,
+      _shadowPaint,
     );
   }
 }

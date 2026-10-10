@@ -337,6 +337,24 @@ void main() {
       }
     });
 
+    test('the scalar interval is exactly the core\'s interval (issue #252)',
+        () {
+      // The spawner's per-frame wait and the full profile must not drift:
+      // both read the same interval helper at the same pressure, sweep
+      // with and without an environment modifier.
+      for (final modifier in [0.0, 0.05, 0.22]) {
+        for (var d = 0.0; d <= 200000; d += 137.0) {
+          expect(
+              DifficultyCurve.spawnIntervalFor(d,
+                  environmentModifier: modifier),
+              DifficultyCurve.trafficCoreFor(d,
+                      environmentModifier: modifier)
+                  .spawnInterval,
+              reason: 'interval at $d, modifier $modifier');
+        }
+      }
+    });
+
     test('is a pure function: same distance, same profile', () {
       for (final d in [
         0.0,

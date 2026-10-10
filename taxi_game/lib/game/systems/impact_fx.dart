@@ -151,20 +151,31 @@ class ShakeEnvelope {
   /// Advances the envelope and returns the offset (px) to apply this
   /// frame. Zero once the shake has fully decayed.
   Vector2 update(double dt) {
+    final offset = Vector2.zero();
+    updateInto(offset, dt);
+    return offset;
+  }
+
+  /// [update], writing the offset into [out] instead of allocating
+  /// (issue #257) — the frame path calls this with its scratch vector.
+  /// The state changes and RNG draws are exactly [update]'s.
+  void updateInto(Vector2 out, double dt) {
     if (!isActive) {
       reset();
-      return Vector2.zero();
+      out.setZero();
+      return;
     }
     _age += dt;
     final remaining = (1 - _age / _duration).clamp(0.0, 1.0);
     final strength = _magnitude * remaining;
     if (strength <= 0) {
       reset();
-      return Vector2.zero();
+      out.setZero();
+      return;
     }
     final angle = _random.nextDouble() * 2 * math.pi;
     final length = strength * _random.nextDouble();
-    return Vector2(math.cos(angle) * length, math.sin(angle) * length);
+    out.setValues(math.cos(angle) * length, math.sin(angle) * length);
   }
 }
 

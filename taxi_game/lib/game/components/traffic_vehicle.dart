@@ -103,6 +103,15 @@ class TrafficVehicle extends PositionComponent
     speed = baseSpeed * vehicleType.speedMultiplier;
   }
 
+  /// The headlights' shared additive paint (issue #257): one blur-mask
+  /// `Paint` for every car, re-tinted from the run's darkness each render
+  /// — the old code built one per car per night frame. The tint depends
+  /// only on [TaxiGame.darkness] (the same for every car in a frame) and
+  /// rendering never interleaves, so sharing one instance is safe.
+  static final Paint _headlightPaint = Paint()
+    ..blendMode = BlendMode.plus
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+
   // No random factory any more: the spawner used to draw the body type
   // in here, but the issue #87 containment gate has to ask whether the
   // body a spawn actually drew fits the road it will drive — before the
@@ -193,13 +202,14 @@ class TrafficVehicle extends PositionComponent
     final darkness = game.isMounted ? game.darkness : 0.0;
     if (darkness > 0.12) {
       final alpha = 0.55 * ((darkness - 0.12) / 0.88).clamp(0.0, 1.0);
-      final glow = Paint()
-        ..color = const Color(0xFFFFE9B0).withValues(alpha: alpha)
-        ..blendMode = BlendMode.plus
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
-      for (final sideX in [size.x * 0.25, size.x * 0.75]) {
-        canvas.drawCircle(Offset(sideX, 3), 4.5, glow);
-      }
+      _headlightPaint.color =
+          const Color(0xFFFFE9B0).withValues(alpha: alpha);
+      // Both front corners, drawn explicitly (issue #257): the old
+      // `for (final sideX in [...])` built a list per car per frame.
+      canvas.drawCircle(
+          Offset(size.x * 0.25, 3), 4.5, _headlightPaint);
+      canvas.drawCircle(
+          Offset(size.x * 0.75, 3), 4.5, _headlightPaint);
     }
 
     super.render(canvas);
@@ -266,8 +276,11 @@ class TrafficVehicle extends PositionComponent
       position += velocity * dt;
     }
 
-    // Check if vehicle is off screen (below player view)
-    if (position.y > game.camera.viewfinder.position.y + 1000) {
+    // Check if vehicle is off screen (below player view). One camera read
+    // per car (issue #257): the viewfinder getter clones a vector, and
+    // the game publishes the tick's value once for everyone.
+    final cameraY = game.cameraY;
+    if (position.y > cameraY + 1000) {
       shouldRemove = true;
       removeFromParent();
       return;
@@ -281,7 +294,7 @@ class TrafficVehicle extends PositionComponent
     // The view is ±400 px, so 1,000 px clears it with the same margin
     // the behind cull keeps below.
     if (game.environment != null &&
-        position.y < game.camera.viewfinder.position.y - 1000) {
+        position.y < cameraY - 1000) {
       shouldRemove = true;
       removeFromParent();
       return;

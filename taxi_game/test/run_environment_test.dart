@@ -31,6 +31,18 @@ void main() {
       }
     });
 
+    test('the scalar spawn interval is exactly the profile interval '
+        '(issue #252)', () {
+      final env = RunEnvironment(seed: 42);
+      // A sweep crossing weather segments, dusk, and the ramp: the
+      // spawner's per-frame scalar must agree bit-for-bit with the
+      // interval the whole profile would carry at the same distance.
+      for (var d = 0.0; d <= 200000; d += 137.0) {
+        expect(env.spawnIntervalAt(d), env.trafficAt(d).spawnInterval,
+            reason: 'interval at $d');
+      }
+    });
+
     test('querying far ahead changes nothing near (pure functions, no '
         'state)', () {
       final a = RunEnvironment(seed: 7);

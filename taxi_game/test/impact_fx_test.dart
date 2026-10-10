@@ -151,6 +151,27 @@ void main() {
       }
     });
 
+    test('updateInto writes exactly what update returns (issue #257)', () {
+      final a = ShakeEnvelope(random: math.Random(11))
+        ..trigger(8, duration: 0.3);
+      final b = ShakeEnvelope(random: math.Random(11))
+        ..trigger(8, duration: 0.3);
+
+      final out = Vector2.zero();
+      for (var i = 0; i < 30; i++) {
+        final expected = a.update(1 / 60);
+        b.updateInto(out, 1 / 60);
+        expect(out.x, expected.x, reason: 'frame $i x');
+        expect(out.y, expected.y, reason: 'frame $i y');
+      }
+
+      // Inactive, the destination is zeroed like update's return was.
+      out.setValues(9, 9);
+      b.updateInto(out, 1 / 60);
+      expect(out, Vector2.zero());
+      expect(b.isActive, isFalse);
+    });
+
     test('a zero-magnitude trigger is ignored, and reset clears everything',
         () {
       final shake = ShakeEnvelope(random: math.Random(3));

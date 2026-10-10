@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
@@ -56,6 +57,29 @@ class RoadSegment extends PositionComponent {
   /// chunks stay cheap.
   static const double _rowStep = 40.0;
 
+  /// The chunk's whole drawing, recorded once (issue #250).
+  ///
+  /// The street is a pure function of [distanceAtTop], [length], and the
+  /// run [environment]: the endless geometry rows sample the road at the
+  /// same distances and cast the same `Path`s and `Paint`s every frame,
+  /// and the fixed level street is entirely static. Rebuilding that
+  /// (~150-200 short-lived objects and ~15 native `Path`s per chunk per
+  /// frame — the largest steady-state render cost the frame-hygiene
+  /// audit found) bought nothing: [distanceAtTop] cannot change while a
+  /// chunk lives. Endless chunks pin it at construction ([_topDistance]);
+  /// a level-mode segment reads `-position.y`, and nothing ever moves
+  /// the level's one segment (the world fold is endless-only and moves
+  /// world children, not a segment's pinned geometry). So the drawing is
+  /// recorded in local coordinates in [onLoad] and replayed in [render];
+  /// `drawPicture` under the component's transform paints exactly the
+  /// recorded ops.
+  ///
+  /// Never disposed: the raster thread may still hold the picture from
+  /// the last frame it was drawn in, and a removed chunk's picture is
+  /// reachable only until the GC finalises it (chunks turn over once per
+  /// 800 px, so the steady-state count stays tiny).
+  ui.Picture? _roadPicture;
+
   /// A zebra crossing's bars: three of them, this tall, separated by this
   /// gap, wherever a crossing paints — the level street's end, and both
   /// approaches of an endless junction. Class-level because the junction
@@ -80,17 +104,28 @@ class RoadSegment extends PositionComponent {
 
     size = Vector2(200, length);
     anchor = Anchor.topCenter;
+
+    // Record the street once (issue #250). Built here, after [size] is
+    // set, because both renderers read it.
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    if (environment != null) {
+      _renderEnvironmentRoad(canvas);
+    } else {
+      _renderFixedRoad(canvas);
+    }
+    _roadPicture = recorder.endRecording();
   }
 
   @override
   void render(Canvas canvas) {
     super.render(canvas);
 
-    if (environment != null) {
-      _renderEnvironmentRoad(canvas);
-    } else {
-      _renderFixedRoad(canvas);
-    }
+    // Blit the drawing recorded in [onLoad] (issue #250). The picture
+    // was recorded in this component's local space with an identity
+    // transform, so replaying it under the live canvas transform lands
+    // every draw exactly where the old per-frame renderer put it.
+    canvas.drawPicture(_roadPicture!);
   }
 
   // --- The classic fixed street (level mode) ------------------------------
