@@ -43,9 +43,16 @@ void main() {
   final medians = <String, int>{};
   final shiftStats = <String,
       ({double meanKm, double medianKm, double medianDrivenMinutes})>{};
+  final profileRuns = <String, List<SimulatedRun>>{};
+  final tableLines = <String>[];
 
   test('coins per shift, by skill level (the tuning table)', () {
-    print('Endless coins per shift — $runCount seeds '
+    void emit(String line) {
+      print(line);
+      tableLines.add(line);
+    }
+
+    emit('Endless coins per shift — $runCount seeds '
         '(seeds $firstSeed..${firstSeed + runCount - 1}), starter cab\n');
 
     for (final profile in const [
@@ -87,53 +94,89 @@ void main() {
 
       final median = pct(totals, 0.5);
       medians[label] = median;
+      profileRuns[label] = runs;
       shiftStats[label] = (
         meanKm: meanKm,
         medianKm: medianKm,
         medianDrivenMinutes: medianDrivenMinutes,
       );
 
-      print('$label driver '
+      emit('$label driver '
           '(reaction ${profile.reactionInterval}s, '
           'misjudge ${profile.misjudgeRate}, '
           'lookahead ${profile.lookahead}s)');
-      print('  median shift       : ${medianKm.toStringAsFixed(1)} km, '
+      emit('  median shift       : ${medianKm.toStringAsFixed(1)} km, '
           '${medianDrivenMinutes.toStringAsFixed(1)} min driven, '
           '${pct(fares, 0.5)} fares delivered, best chain x${pct(chains, 0.5)}');
-      print('  mean shift         : ${meanKm.toStringAsFixed(1)} km');
-      print('  fares-only floor   : '
+      emit('  mean shift         : ${meanKm.toStringAsFixed(1)} km');
+      emit('  fares-only floor   : '
           'p25 ${pct(floors, 0.25)}  median ${pct(floors, 0.5)}  '
           'p75 ${pct(floors, 0.75)}');
-      print('  brink-banked score : '
+      emit('  brink-banked score : '
           'p25 ${pct(banks, 0.25)}  median ${pct(banks, 0.5)}  '
           'p75 ${pct(banks, 0.75)}');
-      print('  shift total        : '
+      emit('  shift total        : '
           'p25 ${pct(totals, 0.25)}  median $median  '
           'p75 ${pct(totals, 0.75)}');
-      print('');
+      emit('');
     }
 
-    print('Shift total = fares-only floor + brink-banked chain score (1:1). '
+    emit('Shift total = fares-only floor + brink-banked chain score (1:1). '
         'Perfect-foresight banking is the ceiling; a real player\'s wallet '
         'lands between the floor and the ceiling.');
   }, timeout: const Timeout(Duration(minutes: 3)));
 
-  test('the table carries a labelled mean and true medians per profile', () {
-    // The printed fields, pinned so a later edit cannot silently drop the
-    // median or label the mean as one. The mean and median need not agree
-    // (early wrecks and capped survivors pull opposite ways); both must
-    // be real shift-scale numbers.
+  test('the table reports a labelled mean and true medians per profile', () {
     expect(shiftStats.keys, containsAll(['new', 'median', 'good']));
-    for (final MapEntry(key: label, value: stats) in shiftStats.entries) {
-      expect(stats.medianKm, greaterThan(0.0), reason: label);
+    expect(profileRuns.keys, containsAll(['new', 'median', 'good']));
+
+    // The reported values must equal an independent recomputation from
+    // the raw runs — sorting and taking the middle is the definition — so
+    // a mean, max, min, or unsorted statistic fails here, for distance
+    // and driven time alike. medianDrivenMinutes is the sorted middle of
+    // drivenSeconds, not the mean.
+    for (final label in ['new', 'median', 'good']) {
+      final runs = profileRuns[label]!;
+      final stats = shiftStats[label]!;
+      final distances = [for (final run in runs) run.distancePx]..sort();
+      final driven = [for (final run in runs) run.drivenSeconds]..sort();
+      final mid = runs.length ~/ 2;
+      double middle(List<double> sorted) => sorted.length.isOdd
+          ? sorted[mid]
+          : (sorted[mid - 1] + sorted[mid]) / 2;
+
+      expect(stats.medianKm, middle(distances) / 10000, reason: label);
       expect(
-        stats.medianKm,
-        lessThanOrEqualTo(RunLengthSimulator.maxDistancePx / 10000),
+        stats.meanKm,
+        runs.fold(0.0, (sum, run) => sum + run.distancePx) /
+            runs.length /
+            10000,
         reason: label,
       );
-      expect(stats.meanKm, greaterThan(0.0), reason: label);
-      expect(stats.medianDrivenMinutes, greaterThan(0.0), reason: label);
+      expect(stats.medianDrivenMinutes, middle(driven) / 60, reason: label);
     }
+
+    // Mean and median genuinely differ for these profiles, so swapping
+    // the two statistics or reporting one as the other cannot pass.
+    expect(shiftStats['new']!.medianKm, isNot(shiftStats['new']!.meanKm));
+    expect(shiftStats['good']!.medianKm, isNot(shiftStats['good']!.meanKm));
+
+    // The emitted table itself, pinned: labels and the deterministic
+    // 101-seed batch's values. Re-measure these literals when the
+    // simulator is retuned.
+    final table = tableLines.join('\n');
+    expect(
+      table,
+      contains('  median shift       : 3.0 km, 3.9 min driven, '
+          '19 fares delivered, best chain x17'),
+    );
+    expect(table, contains('  mean shift         : 2.9 km'));
+    expect(
+      table,
+      contains('  median shift       : 5.7 km, 11.4 min driven, '
+          '35 fares delivered, best chain x16'),
+    );
+    expect(table, contains('  mean shift         : 6.2 km'));
   });
 
   test('a first-session driver out-earns nothing: new < median', () {
