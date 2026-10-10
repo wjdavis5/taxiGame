@@ -791,8 +791,14 @@ void main() {
         expect((result.stdout as String).trim(), 'REVIEW_IN_FLIGHT');
         // The inventory that #93's postmortem was missing: what the list
         // DID contain goes to stderr even though the verdict comes from the
-        // second source.
-        expect(result.stderr, contains('1.0.0=WAITING_FOR_REVIEW'));
+        // second source. The anchor spans label, count, and the record's
+        // own string/state, so the pre-#94 line cannot satisfy it.
+        expect(
+            result.stderr,
+            contains('appStoreVersions for app 6804508589 looking for '
+                '1.0.1: 1 record(s): 1.0.0=WAITING_FOR_REVIEW'),
+            reason: 'the version inventory line must name what the list did '
+                'contain, so the no-match answer is attributable');
       },
       skip: skipWithoutRuby,
     );
@@ -820,9 +826,13 @@ void main() {
                 'wrong-looking NONE is diagnosable from the CI log');
         expect(
             result.stderr,
-            contains('1.0.0=READY_FOR_SALE, 1.0.2=PREPARE_FOR_SUBMISSION'),
-            reason: 'every record Apple returned must be listed, joined, not '
-                'just the ones the verdict used');
+            contains('appStoreVersions for app 6804508589 looking for '
+                '1.0.1: 2 record(s): '
+                '1.0.0=READY_FOR_SALE, 1.0.2=PREPARE_FOR_SUBMISSION'),
+            reason: 'the whole version inventory line is pinned — its label, '
+                'the asked version, the record count, and every '
+                'versionString/state joined — so a swapped label or a '
+                'partial line cannot pass');
         expect(result.stderr, contains('reviewSubmissions for app'),
             reason: 'NONE also rests on the second source, so its answer '
                 'must be in the log too');
