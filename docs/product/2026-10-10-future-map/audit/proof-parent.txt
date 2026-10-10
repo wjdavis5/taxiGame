@@ -1,0 +1,105 @@
+Resolving dependencies...
+Downloading packages...
+  async 2.13.0 (2.13.1 available)
+  clock 1.1.2 (1.1.3 available)
+  ffi 2.1.4 (2.2.0 available)
+  flame 1.34.0 (1.38.2 available)
+  flame_audio 2.11.12 (2.12.2 available)
+  flutter_lints 3.0.2 (6.0.0 available)
+  flutter_svg 2.2.3 (2.3.0 available)
+  lints 3.0.0 (6.1.0 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  objective_c 9.1.0 (9.6.2 available)
+  ordered_set 8.0.0 (8.0.1 available)
+  path_provider 2.1.5 (2.1.6 available)
+  path_provider_android 2.2.22 (2.3.1 available)
+  path_provider_foundation 2.5.0 (retracted, 2.6.0 available)
+  path_provider_linux 2.2.1 (2.2.2 available)
+  path_provider_platform_interface 2.1.2 (2.1.3 available)
+  petitparser 7.0.1 (7.1.0 available)
+  platform 3.1.6 (3.2.0 available)
+  pub_semver 2.2.0 (2.2.1 available)
+  shared_preferences 2.5.3 (2.5.6 available)
+  shared_preferences_android 2.4.17 (2.4.28 available)
+  shared_preferences_foundation 2.5.6 (2.5.7 available)
+  shared_preferences_platform_interface 2.4.1 (2.4.2 available)
+  source_span 1.10.1 (1.10.2 available)
+  stack_trace 1.12.1 (1.12.2 available)
+  test_api 0.7.12 (0.7.15 available)
+  vector_graphics 1.1.19 (1.2.3 available)
+  vector_graphics_compiler 1.1.19 (1.3.0 available)
+  vm_service 15.0.2 (15.3.0 available)
+  xml 6.6.1 (7.1.0 available)
+Got dependencies!
+30 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+00:00 +0: loading C:/git/repos/taxiGame-verify-parent/taxi_game/test/background_cache_test.dart
+00:00 +0: crossing the range and returning repaints identical bytes
+00:00 +1: a small darkness step matches a fresh build at the same value
+00:00 +1 -1: a small darkness step matches a fresh build at the same value [E]
+  Expected: [
+              91,
+              137,
+              167,
+              255,
+              89,
+              136,
+              166,
+              255,
+              89,
+              136,
+              166,
+              255,
+              89,
+              136,
+              166,
+              255,
+              89,
+              136,
+              166,
+              255,
+              89,
+              136,
+              166,
+              255,
+              ...
+            ]
+    Actual: [
+              90,
+              137,
+              167,
+              255,
+              89,
+              136,
+              166,
+              255,
+              89,
+              136,
+              166,
+              255,
+              89,
+              136,
+              166,
+              255,
+              89,
+              136,
+              166,
+              255,
+              89,
+              136,
+              166,
+              255,
+              ...
+            ]
+     Which: at location [0] is <90> instead of <91>
+  a paint reused from another darkness must never leak
+  
+  package:matcher                                     expect
+  package:flutter_test/src/widget_tester.dart 473:18  expect
+  test\background_cache_test.dart 57:5                main.<fn>
+  
+00:00 +1 -1: the sky still spans midday to midnight
+00:00 +2 -1: Some tests failed.
+
+Failing tests:
+  C:/git/repos/taxiGame-verify-parent/taxi_game/test/background_cache_test.dart: a small darkness step matches a fresh build at the same value
