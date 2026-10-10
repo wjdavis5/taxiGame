@@ -146,30 +146,32 @@ void main() {
       }
     });
 
-    test('RunLengthEstimate computes the median of its input', () {
+    test('RunLengthEstimate computes the medians of its input', () {
       final odd = RunLengthEstimate.compute([
         for (var i = 0; i < 5; i++)
           SimulatedRun(
             seed: i,
             distancePx: (5 - i) * 1000.0,
-            drivenSeconds: 1,
+            drivenSeconds: (5 - i) * 60.0,
             crashDistancesPx: const [],
             survived: false,
           ),
       ]);
       expect(odd.medianDistancePx, 3000.0);
+      expect(odd.medianDrivenSeconds, 180.0);
 
       final even = RunLengthEstimate.compute([
         for (var i = 0; i < 4; i++)
           SimulatedRun(
             seed: i,
             distancePx: (i + 1) * 1000.0,
-            drivenSeconds: 1,
+            drivenSeconds: (i + 1) * 60.0,
             crashDistancesPx: const [],
             survived: false,
           ),
       ]);
       expect(even.medianDistancePx, 2500.0);
+      expect(even.medianDrivenSeconds, 150.0);
     });
   });
 
