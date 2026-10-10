@@ -31,9 +31,10 @@ class GhostTrace {
 
   /// The version of the trace format and its recording/replay grid
   /// (issue #287). The golden-seed tests in test/golden_seeds_test.dart
-  /// pin a recorder run, a playback, and this JSON shape; changing any of
-  /// them must ship as a bump here with the goldens re-pinned in the same
-  /// commit.
+  /// pin a recorder run, a playback, and this JSON shape: changed behavior
+  /// fails those goldens, and a bump here without re-pinned goldens fails
+  /// their version assertion. A re-pin with no bump passes — the bump is
+  /// the deliberate-change signal, enforced by review, not by these tests.
   static const int formatVersion = 1;
 
   /// Seconds of driven time between samples. Stored per trace so an

@@ -64,11 +64,10 @@ class EndlessCourse {
 
   /// The version of this generator's output (issue #287). The golden-seed
   /// tests in test/golden_seeds_test.dart pin the exact fares this version
-  /// deals; any change to the draws, their order, or the slot arithmetic
-  /// changes those goldens, so it must ship as a bump here with the
-  /// goldens re-pinned in the same commit — a deliberate, reviewable act.
-  /// A bump without re-pinned goldens fails the same tests the other way
-  /// round, so neither half can land silently.
+  /// deals: changed output fails those goldens, and a bump here without
+  /// re-pinned goldens fails their version assertion. A re-pin with no
+  /// bump passes — the bump is the deliberate-change signal, enforced by
+  /// review, not by these tests.
   static const int generationVersion = 1;
 
   /// The run seed. The same seed always yields the same course.
