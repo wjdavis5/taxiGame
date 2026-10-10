@@ -25,6 +25,7 @@ import 'components/speed_lines.dart';
 import 'components/virtual_stick.dart';
 import 'levels/level.dart';
 import '../models/passenger_data.dart';
+import '../models/fare_type.dart';
 import '../models/run_record.dart';
 import '../models/daily_result.dart';
 import 'systems/collision_rules.dart';
@@ -1294,6 +1295,10 @@ class TaxiGame extends FlameGame
   void _finalizeRunSummary(ShiftOutcome outcome) {
     final previousBest = gameState.endlessBestScore;
     final isPersonalBest = gameState.recordEndlessScore(fareChain.score);
+    // The per-kind answers the offer bar collected (issue #279): the
+    // settled record keeps how each contract was answered, keyed by the
+    // kind names storage uses.
+    final fareKinds = fareController;
     gameState.recordEndlessRun(RunRecord(
       endedAtMs: DateTime.now().millisecondsSinceEpoch,
       distancePx: runDistance,
@@ -1305,6 +1310,8 @@ class TaxiGame extends FlameGame
       lifeLossDistancesPx: List.of(_lifeLossDistancesPx),
       banked: outcome == ShiftOutcome.banked,
       durationSeconds: _runDrivenSeconds,
+      acceptedByKind: _fareKindCounts(fareKinds?.acceptedByKind),
+      declinedByKind: _fareKindCounts(fareKinds?.declinedByKind),
     ));
 
     // A finished daily shift settles the day's one attempt (issue #19):
@@ -2348,4 +2355,12 @@ class TaxiGame extends FlameGame
 /// rebuilds it with each level anyway.
 class _LevelCameraLead extends PositionComponent {
   _LevelCameraLead(Vector2 position) : super(position: position.clone());
+}
+
+/// The per-kind fare counts a [RunRecord] stores, keyed by
+/// `FareType.name` (issue #279). Null — a level has no fare controller —
+/// reads as no counts at all.
+Map<String, int> _fareKindCounts(Map<FareType, int>? counts) {
+  if (counts == null) return const {};
+  return {for (final entry in counts.entries) entry.key.name: entry.value};
 }

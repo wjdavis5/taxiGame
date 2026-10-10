@@ -41,6 +41,13 @@ class LifetimeRunTotals {
   /// Drive time across every shift, in seconds.
   double totalDurationSeconds;
 
+  /// Accepted and declined fare counts by kind (issue #279), keyed by
+  /// `FareType.name` — the same keys [RunRecord] stores. Folded like the
+  /// six counters above, so the per-kind answer history survives the
+  /// window trim exactly as the totals do.
+  Map<String, int> acceptedFaresByKind;
+  Map<String, int> declinedFaresByKind;
+
   LifetimeRunTotals({
     this.shiftsEnded = 0,
     this.totalScore = 0,
@@ -48,7 +55,10 @@ class LifetimeRunTotals {
     this.totalFares = 0,
     this.totalLivesLost = 0,
     this.totalDurationSeconds = 0.0,
-  });
+    Map<String, int>? acceptedFaresByKind,
+    Map<String, int>? declinedFaresByKind,
+  })  : acceptedFaresByKind = acceptedFaresByKind ?? <String, int>{},
+        declinedFaresByKind = declinedFaresByKind ?? <String, int>{};
 
   /// The lifetime distance in metres, on the same px scale
   /// [RunSummary.pixelsPerMetre] and the HUD's distance badge use — one
@@ -67,6 +77,8 @@ class LifetimeRunTotals {
     totalFares += record.faresDelivered;
     totalLivesLost += record.livesLost;
     totalDurationSeconds += record.durationSeconds;
+    _foldCounts(acceptedFaresByKind, record.acceptedByKind);
+    _foldCounts(declinedFaresByKind, record.declinedByKind);
   }
 
   /// The one-time migration seed (issue #183), in the clean-bank
@@ -111,6 +123,12 @@ class LifetimeRunTotals {
       totalDurationSeconds = windowDurationSeconds;
       seeded = true;
     }
+    if (_seedCounts(acceptedFaresByKind, window, (r) => r.acceptedByKind)) {
+      seeded = true;
+    }
+    if (_seedCounts(declinedFaresByKind, window, (r) => r.declinedByKind)) {
+      seeded = true;
+    }
     return seeded;
   }
 
@@ -125,6 +143,8 @@ class LifetimeRunTotals {
       totalLivesLost: (json['totalLivesLost'] as num?)?.toInt() ?? 0,
       totalDurationSeconds:
           (json['totalDurationSeconds'] as num?)?.toDouble() ?? 0.0,
+      acceptedFaresByKind: _countsFromJson(json['acceptedFaresByKind']),
+      declinedFaresByKind: _countsFromJson(json['declinedFaresByKind']),
     );
   }
 
@@ -137,6 +157,50 @@ class LifetimeRunTotals {
       'totalFares': totalFares,
       'totalLivesLost': totalLivesLost,
       'totalDurationSeconds': totalDurationSeconds,
+      'acceptedFaresByKind': acceptedFaresByKind,
+      'declinedFaresByKind': declinedFaresByKind,
     };
   }
+
+  /// Adds one record's per-kind counts into [into] (issue #279).
+  static void _foldCounts(Map<String, int> into, Map<String, int> from) {
+    from.forEach((kind, count) {
+      into[kind] = (into[kind] ?? 0) + count;
+    });
+  }
+
+  /// Seeds one per-kind count map from the window, per key: the stored
+  /// number wins unless the window holds a larger one — the same
+  /// "nothing falls" rule as every counter above. Returns true when any
+  /// key moved.
+  static bool _seedCounts(
+    Map<String, int> stored,
+    List<RunRecord> window,
+    Map<String, int> Function(RunRecord) countsOf,
+  ) {
+    final windowCounts = <String, int>{};
+    for (final record in window) {
+      _foldCounts(windowCounts, countsOf(record));
+    }
+    var moved = false;
+    windowCounts.forEach((kind, count) {
+      if (count > (stored[kind] ?? 0)) {
+        stored[kind] = count;
+        moved = true;
+      }
+    });
+    return moved;
+  }
+}
+
+/// Decodes a stored per-kind count map (issue #279): entries that are
+/// not name-to-number pairs are dropped rather than thrown, the same
+/// forgiving rule the counters above follow.
+Map<String, int> _countsFromJson(Object? json) {
+  if (json is! Map) return const {};
+  final counts = <String, int>{};
+  json.forEach((key, value) {
+    if (key is String && value is num) counts[key] = value.toInt();
+  });
+  return counts;
 }

@@ -16,6 +16,8 @@ void main() {
         banked: false,
         durationSeconds: 214.5,
         nearMisses: 11,
+        acceptedByKind: {'standard': 5, 'vip': 2},
+        declinedByKind: {'vip': 1, 'awkward': 3},
       );
 
   group('RunRecord JSON round-trip', () {
@@ -35,6 +37,9 @@ void main() {
       expect(restored.lifeLossDistancesPx, [3000.0, 9800.25]);
       expect(restored.banked, isFalse);
       expect(restored.durationSeconds, 214.5);
+      expect(restored.acceptedByKind, {'standard': 5, 'vip': 2},
+          reason: 'the per-kind contract answers survive (issue #279)');
+      expect(restored.declinedByKind, {'vip': 1, 'awkward': 3});
     });
 
     test('a clean banked run round-trips too', () {
@@ -82,6 +87,9 @@ void main() {
       expect(record.lifeLossDistancesPx, isEmpty);
       expect(record.banked, isFalse);
       expect(record.durationSeconds, 0.0);
+      expect(record.acceptedByKind, isEmpty,
+          reason: 'records older than issue #279 kept no kind counts');
+      expect(record.declinedByKind, isEmpty);
     });
   });
 }
