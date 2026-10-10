@@ -50,12 +50,11 @@ This workstream owns uniqueness and submission. It turns the shipped differentia
 - **Priority.** P0
 - **Evidence.** `review/uniqueness-and-submission.md` finding 2.2. The current target list appears in `taxi_game/tool/screenshot_entry.dart` lines 111-117. The image requirements appear in `CLAUDE.md` lines 44-82.
 
-### Replace the stock vehicle set with original art `[RS]`
+### Author an original hero cab, stage the traffic fleet after `[RS]`
 
-- **Acceptance.** Every player and traffic vehicle sprite in the submitted build uses reproducible project-original source art, the asset inventory records provenance, and the two flagship screenshot states use the new vehicles.
-- **Size.** L
-- **Priority.** P0
-- **Evidence.** `review/uniqueness-and-submission.md` finding 3.1 identifies fifteen Kenney vehicle sprites and the stock default cab as the strongest remaining clone-read signal. `review/product-audit.md` sections 1.2-1.3 inventory the player and traffic fleets.
+- **Acceptance.** Stage one, for the submitted build: the default hero cab uses project-original art produced by a deterministic in-repo pipeline, the asset inventory records provenance, and the two flagship screenshot states use it. Stage two, tracked separately: every traffic vehicle sprite migrates to the same standard.
+- **Size.** L. **Priority.** P0 for stage one, P1 for stage two.
+- **Evidence.** `review/uniqueness-and-submission.md` finding 3.1 identifies fifteen Kenney vehicle sprites and the stock default cab as the strongest remaining clone-read signal. The current pipeline only recolors and pads the Kenney pack, so stage one is art production, not a code change, and it needs an art owner.
 
 ### Brand the first screen and state the flagship rules `[FS]` `[RS]`
 
@@ -64,7 +63,7 @@ This workstream owns uniqueness and submission. It turns the shipped differentia
 - **Priority.** P0
 - **Evidence.** `review/uniqueness-and-submission.md` findings 1.6, 2.4, and 3.2. `review/competitors.md` section 2 item 7 says presentation identity must be visible in a screenshot.
 
-**Sequencing.** Correct the claims first because #212 must not send the current text. The visual shell and original vehicles can proceed together. Build screenshot states in parallel, but take the final images only after the visual work lands. The operator then applies the listing, sends the response, clears or replaces the rejected submission, and resubmits through #212. The operator must verify the resulting App Store state manually while #94 remains open. All four candidates are on the resubmission critical path.
+**Sequencing.** Correct the claims first because #212 must not send the current text. The visual shell and the hero cab can proceed together. Build screenshot states in parallel, but take the final images only after the visual work lands. The traffic fleet migrates after the submission. The operator then applies the listing, sends the response, clears or replaces the rejected submission, and resubmits through #212. The operator must verify the resulting App Store state manually while #94 remains open. The category candidates here besides the fleet are on the resubmission critical path.
 
 ## Workstream 2. Win the first minute
 
