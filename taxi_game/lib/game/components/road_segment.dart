@@ -5,6 +5,7 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 import '../systems/run_environment.dart';
+import 'district_palette.dart';
 
 /// Road segment component that renders the road.
 ///
@@ -266,18 +267,53 @@ class RoadSegment extends PositionComponent {
       leftLocalX: road.leftX - boxLeft,
       width: road.width,
       laneCount: road.laneCount,
+      profile: road.profile,
     );
+  }
+
+  /// Overpaints the district bands of a chunk that crosses a district
+  /// boundary (issue #280): each row interval is filled with its own
+  /// profile's colour, clipped to [shape]. A single-district chunk skips
+  /// the pass entirely — its one colour is already laid down, so the
+  /// classic street's recorded picture is byte-for-byte the old one.
+  void _overpaintDistrictBands(
+    Canvas canvas,
+    List<_RoadRow> rows,
+    Path shape,
+    Color Function(_RoadRow) colorOf,
+    double leftLocal,
+    double rightLocal,
+  ) {
+    if (rows.every((row) => row.profile == rows.first.profile)) return;
+    canvas.save();
+    canvas.clipPath(shape);
+    for (var i = 0; i + 1 < rows.length; i++) {
+      final a = rows[i];
+      final b = rows[i + 1];
+      canvas.drawRect(
+        Rect.fromLTRB(leftLocal, a.localY, rightLocal, b.localY),
+        Paint()..color = colorOf(a),
+      );
+    }
+    canvas.restore();
   }
 
   void _drawSidewalks(Canvas canvas, List<_RoadRow> rows, RunEnvironment env) {
     final distance = distanceAtTop - length / 2;
     final rain = env.rainIntensityAt(distance);
-    var color = const Color(0xFFBDBDBD);
-    if (rain > 0) {
-      color = Color.lerp(color, const Color(0xFF6E7A86), rain * 0.5)!;
+    // The district's dry kerb, dimmed toward the shared wet tint while
+    // the rain lasts (issue #24) — one rule for every district, so a
+    // soaked old-town walk reads as wet stone, not as a different place.
+    Color colorOf(_RoadRow row) {
+      var color = DistrictPalette.of(row.profile).sidewalk;
+      if (rain > 0) {
+        color = Color.lerp(color, DistrictPalette.wetSidewalk, rain * 0.5)!;
+      }
+      return color;
     }
+
     final sidewalkPaint = Paint()
-      ..color = color
+      ..color = colorOf(rows.first)
       ..style = PaintingStyle.fill;
 
     final left = Path()..fillType = PathFillType.nonZero;
@@ -302,6 +338,12 @@ class RoadSegment extends PositionComponent {
     right.close();
     canvas.drawPath(left, sidewalkPaint);
     canvas.drawPath(right, sidewalkPaint);
+
+    final boxLeft = RunEnvironment.roadCenterX - size.x / 2;
+    final bandLeft = -boxLeft;
+    final bandRight = 2 * RunEnvironment.roadCenterX - boxLeft;
+    _overpaintDistrictBands(canvas, rows, left, colorOf, bandLeft, bandRight);
+    _overpaintDistrictBands(canvas, rows, right, colorOf, bandLeft, bandRight);
   }
 
   void _drawSurface(Canvas canvas, List<_RoadRow> rows, RunEnvironment env) {
@@ -317,10 +359,23 @@ class RoadSegment extends PositionComponent {
     }
     roadPath.close();
 
+    // The chunk opens on the district its first row belongs to; a chunk
+    // that crosses a boundary overpaints the far side row by row, so the
+    // surface changes where the road's own segment does (issue #280).
     final roadPaint = Paint()
-      ..color = const Color(0xFF404040)
+      ..color = DistrictPalette.of(rows.first.profile).surface
       ..style = PaintingStyle.fill;
     canvas.drawPath(roadPath, roadPaint);
+
+    final boxLeft = RunEnvironment.roadCenterX - size.x / 2;
+    _overpaintDistrictBands(
+      canvas,
+      rows,
+      roadPath,
+      (row) => DistrictPalette.of(row.profile).surface,
+      -boxLeft,
+      2 * RunEnvironment.roadCenterX - boxLeft,
+    );
 
     // A wet street reads darker and cooler while the rain lasts (issue
     // #24): the same cue that tells the player their grip is gone.
@@ -338,7 +393,6 @@ class RoadSegment extends PositionComponent {
 
   void _drawLaneBoundaries(Canvas canvas, List<_RoadRow> rows) {
     final paint = Paint()
-      ..color = Colors.white
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
 
@@ -351,6 +405,7 @@ class RoadSegment extends PositionComponent {
         final a = _rowAt(rows, y);
         final b = _rowAt(rows, dashEnd);
         if (a.laneCount <= lane || b.laneCount <= lane) continue;
+        paint.color = DistrictPalette.of(a.profile).marking;
         canvas.drawLine(
           Offset(a.leftLocalX + a.width * lane / a.laneCount, y),
           Offset(b.leftLocalX + b.width * lane / b.laneCount, dashEnd),
@@ -362,23 +417,24 @@ class RoadSegment extends PositionComponent {
 
   void _drawEdges(Canvas canvas, List<_RoadRow> rows) {
     final edgePaint = Paint()
-      ..color = Colors.white
       ..strokeWidth = 3
       ..style = PaintingStyle.stroke;
 
-    final left = Path();
-    final right = Path();
-    for (var i = 0; i < rows.length; i++) {
-      final row = rows[i];
-      if (i == 0) {
-        left.moveTo(row.leftLocalX, row.localY);
-        right.moveTo(row.leftLocalX + row.width, row.localY);
-      }
-      left.lineTo(row.leftLocalX, row.localY);
-      right.lineTo(row.leftLocalX + row.width, row.localY);
+    for (var i = 0; i + 1 < rows.length; i++) {
+      final a = rows[i];
+      final b = rows[i + 1];
+      edgePaint.color = DistrictPalette.of(a.profile).marking;
+      canvas.drawLine(
+        Offset(a.leftLocalX, a.localY),
+        Offset(b.leftLocalX, b.localY),
+        edgePaint,
+      );
+      canvas.drawLine(
+        Offset(a.leftLocalX + a.width, a.localY),
+        Offset(b.leftLocalX + b.width, b.localY),
+        edgePaint,
+      );
     }
-    canvas.drawPath(left, edgePaint);
-    canvas.drawPath(right, edgePaint);
   }
 
   void _drawIntersections(Canvas canvas, RunEnvironment env,
@@ -388,9 +444,7 @@ class RoadSegment extends PositionComponent {
     // (issue #30), where raw −position.y would lose a fold per boundary.
     final from = distanceAtTop - length;
     final to = distanceAtTop;
-    final asphalt = Paint()
-      ..color = const Color(0xFF4A4A4A)
-      ..style = PaintingStyle.fill;
+    final asphalt = Paint()..style = PaintingStyle.fill;
 
     final firstBand = (from / RunEnvironment.intersectionSpacing).floor();
     final lastBand = (to / RunEnvironment.intersectionSpacing).floor();
@@ -428,6 +482,10 @@ class RoadSegment extends PositionComponent {
           (centerDistance + RunEnvironment.intersectionHalfBand);
       final bandBottomLocal = distanceAtTop -
           (centerDistance - RunEnvironment.intersectionHalfBand);
+      // The junction wears the district it stands in (issue #280).
+      asphalt.color = DistrictPalette.of(
+              env.roadAt(centerDistance).profile)
+          .intersection;
       canvas.drawRect(
         Rect.fromLTRB(-boxLeft, bandTopLocal, 2 * centerX - boxLeft,
             bandBottomLocal),
@@ -520,10 +578,14 @@ class _RoadRow {
     required this.leftLocalX,
     required this.width,
     required this.laneCount,
+    required this.profile,
   });
 
   final double localY;
   final double leftLocalX;
   final double width;
   final int laneCount;
+
+  /// The district this slice of road belongs to (issue #280).
+  final RoadProfile profile;
 }
