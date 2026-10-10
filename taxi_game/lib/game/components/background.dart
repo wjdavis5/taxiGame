@@ -12,22 +12,14 @@ import 'package:flutter/material.dart';
 /// Everything the component paints is cached (issue #251). The sky's
 /// gradient shader is a native object and the stars, buildings, and lit
 /// windows are fixed geometry; all of it is a pure function of the one
-/// input, [darkness]. So the paints are rebuilt only once [darkness] has
-/// moved past [_rebuildEpsilon], and the geometry is laid out once in
-/// [onLoad]. While the day holds (darkness pinned at 0 — all of level
-/// mode, and any parked cab) a frame now allocates nothing at all.
+/// input, [darkness]. So the paints are rebuilt whenever [darkness]
+/// changes at all, byte-identical to the old per-frame recompute, and the
+/// geometry is laid out once in [onLoad]. While the day holds (darkness
+/// pinned at 0, which covers all of level mode and any parked cab) a
+/// frame now allocates nothing at all.
 class Background extends PositionComponent {
   /// 0..1 — 0 is midday, 1 is the depth of night.
   double darkness = 0;
-
-  /// How far [darkness] must move before the cached paints are rebuilt.
-  ///
-  /// At 1/1000 the largest per-channel drift across every lerp below is
-  /// a fraction of one 8-bit level, so a frame that reuses the cache is
-  /// visually indistinguishable from one that rebuilt it; the win is
-  /// that stretches where darkness sits still (or crawls) rebuild
-  /// nothing.
-  static const double _rebuildEpsilon = 1e-3;
 
   /// The darkness the cached paints were built from; NaN before the
   /// first build, so the first [render] always paints.
@@ -114,12 +106,13 @@ class Background extends PositionComponent {
     }
   }
 
-  /// Rebuilds the cached paints when [darkness] has moved enough to
-  /// matter (issue #251). Every colour below is byte-for-byte what the
-  /// old per-frame renderer computed at the same darkness; only the
-  /// moment of computation moved.
+  /// Rebuilds the cached paints whenever [darkness] changes (issue #251).
+  /// Every colour below is byte-for-byte what the old per-frame renderer
+  /// computed at the same darkness; only the moment of computation moved.
+  /// Any epsilon here would reuse a paint from a different darkness, so
+  /// the guard is exact equality.
   void _syncPaints() {
-    if ((darkness - _shadedDarkness).abs() <= _rebuildEpsilon) return;
+    if (darkness == _shadedDarkness) return;
     _shadedDarkness = darkness;
 
     final topColor = Color.lerp(

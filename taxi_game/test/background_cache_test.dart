@@ -6,9 +6,9 @@ import 'package:taxi_game/game/components/background.dart';
 
 /// The background's cached shading must be pixel-identical to a fresh
 /// build at the same darkness (issue #251). The cache only skips work
-/// when [Background.darkness] moves less than its rebuild epsilon; these
-/// probes drive darkness across the whole range and compare raw RGBA, so
-/// a stale paint or a botched rebuild shows up as differing bytes.
+/// when [Background.darkness] is unchanged; these probes drive darkness
+/// across the whole range and compare raw RGBA, so a stale paint or a
+/// botched rebuild shows up as differing bytes.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -45,13 +45,17 @@ void main() {
         reason: 'a rebuilt cache must equal a freshly built one');
   });
 
-  test('a darkness wiggle inside the epsilon reuses the cache', () async {
+  test('a small darkness step matches a fresh build at the same value',
+      () async {
     final bg = await loaded();
-    final a = await renderAt(bg, 0.37);
-    final b = await renderAt(bg, 0.37 + 5e-4);
+    await renderAt(bg, 0.37);
+    final stepped = await renderAt(bg, 0.3705);
 
-    expect(b, a,
-        reason: 'half an epsilon of drift must not repaint different pixels');
+    final freshBg = await loaded();
+    final fresh = await renderAt(freshBg, 0.3705);
+
+    expect(stepped, fresh,
+        reason: 'a paint reused from another darkness must never leak');
   });
 
   test('the sky still spans midday to midnight', () async {
