@@ -3,17 +3,15 @@ import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/game/vehicle_sprites.dart';
 
 void main() {
-  // The economy basis the ladder is priced against (issue #34), measured
-  // by `test/economy_simulation_test.dart` over its standard 101-seed
-  // batch: a first-session shift carries 1,240–1,428 coins of fares alone
-  // (p25–p75 of the "new" driver stand-in) before banking, and a
-  // competent one 1,250–1,660; banking the chain score 1:1 pays on top.
-  // The ladder targets the conservative wallet those floors imply —
+  // The pricing-policy basis (issue #34): the ladder targets the
+  // conservative wallet the economy instrument's fare floors imply —
   // about 2,000 coins a shift for a new player, 2,500 for a median one —
-  // so the numbers below are tuning constants, not measurements: the
-  // targets the issue sets (first car in 2-3 shifts, mid fleet in about
-  // a week of dailies, The Executive a real grind) expressed in shift
-  // earnings.
+  // so the numbers below are tuning constants, not measurements of the
+  // current batch. `test/economy_simulation_test.dart` prints the live
+  // per-profile table; the targets the issue sets (first car in 2-3
+  // shifts, mid fleet in about a week of dailies, The Executive a real
+  // grind) are expressed in shift earnings below. Re-pricing waits on
+  // issue #277.
   const newPlayerShiftCoins = 2000;
   const medianPlayerShiftCoins = 2500;
 
