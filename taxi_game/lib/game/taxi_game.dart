@@ -747,8 +747,12 @@ class TaxiGame extends FlameGame
       startPosition: Vector2(roadCenterX, 0),
       vehicleId: gameState.selectedVehicle,
     )..game = this;
-    world.add(player);
-    _playerReady = true;
+    // The cab's sprite load belongs to the run's own load (issue #265):
+    // GameWidget holds its loading state on this future, and it must not
+    // complete onto a road without the car. Captured, not awaited here:
+    // the run's synchronous setup — `isGameActive` included — must land
+    // in the tick it always did, because lifecycle events read it.
+    final playerLoad = world.add(player);
 
     // Camera: locked horizontally on the road, follows the taxi vertically.
     camera.viewfinder.position = Vector2(roadCenterX, 0);
@@ -777,6 +781,9 @@ class TaxiGame extends FlameGame
     world.add(fareController!);
 
     isGameActive = true;
+
+    await playerLoad;
+    _playerReady = true;
   }
 
   /// Loads the given level, replacing whatever was on screen before.
@@ -880,8 +887,12 @@ class TaxiGame extends FlameGame
       startPosition: Vector2(roadCenterX, playerStartY),
       vehicleId: gameState.selectedVehicle,
     )..game = this;
-    world.add(player);
-    _playerReady = true;
+    // The cab's sprite load belongs to the level's own load (issue #265):
+    // GameWidget holds its loading state on this future, and it must not
+    // complete onto a road without the car. Captured, not awaited here:
+    // the level's synchronous setup — `isGameActive` included — must
+    // land in the tick it always did, because lifecycle events read it.
+    final playerLoad = world.add(player);
 
     // Camera: locked horizontally on the road, follows the taxi vertically
     // — through the lead (issue #45), a point [levelCameraLead] up the
@@ -901,6 +912,9 @@ class TaxiGame extends FlameGame
     _createPassengers();
 
     isGameActive = true;
+
+    await playerLoad;
+    _playerReady = true;
   }
 
   void _createPassengers() {
