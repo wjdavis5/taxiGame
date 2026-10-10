@@ -43,6 +43,12 @@ import 'package:flutter_test/flutter_test.dart';
 /// and human-rejected trains stay open: those are exactly the states
 /// whose remedies arrive as new builds.
 ///
+/// #94's false NONE left nothing to diagnose with: the run that answered
+/// NONE over a live review logged neither query's answer. The script now
+/// logs both inventories — each record count and every record's own
+/// identifiers — to stderr on every path that reaches a verdict, so a
+/// wrong one can be attributed from the CI log alone.
+///
 /// The gate lives in YAML and Ruby, so these tests pin its contract two
 /// ways: text assertions over the workflow and the script (the exact set
 /// of Apple states that may submit, the ordering of the decision branches,
@@ -801,9 +807,64 @@ void main() {
 
         expect(result.exitCode, 0);
         expect((result.stdout as String).trim(), 'NONE');
+        // Issue #94: a NONE must be checkable against what both queries
+        // actually returned — the build-1074 run answered NONE with no
+        // record of either answer, so the wrong one could not be named.
+        expect(result.stderr, contains('appStoreVersions for app'));
         expect(result.stderr, contains('1.0.0=READY_FOR_SALE'),
-            reason: 'the no-match path must log the returned inventory so a '
-                'wrong-looking NONE is diagnosable from the CI log');
+            reason: 'the no-match path must log the version count and every '
+                'versionString/state it saw, so a wrong-looking NONE is '
+                'diagnosable from the CI log');
+        expect(result.stderr, contains('reviewSubmissions for app'),
+            reason: 'NONE also rests on the second source, so its answer '
+                'must be in the log too');
+        expect(result.stderr, contains('s1=COMPLETE'));
+      },
+      skip: skipWithoutRuby,
+    );
+
+    test(
+      'every verdict logs both ASC answers, so a wrong one is attributable '
+      '(issue #94)',
+      () {
+        // The blocking verdicts always named the second source, but a
+        // version record that matched vanished from stderr whenever a
+        // submission verdict won, and a submission answer that cleared the
+        // version (all COMPLETE) left no trace at all. Each decision path
+        // now carries both inventories, so the answer behind a wrong
+        // verdict can be named from the CI log alone.
+        final flight = runGate(
+          versions: body([versionRecord('v1', '1.0.1', 'WAITING_FOR_REVIEW')]),
+          submissions: body([submissionRecord('s1', 'WAITING_FOR_REVIEW')]),
+        );
+        expect(flight.exitCode, 0);
+        expect((flight.stdout as String).trim(), 'REVIEW_IN_FLIGHT');
+        expect(flight.stderr, contains('1.0.1=WAITING_FOR_REVIEW'),
+            reason: 'the version record that matched must survive the '
+                'submission verdict in the log');
+        expect(flight.stderr, contains('s1=WAITING_FOR_REVIEW'));
+
+        final editable = runGate(
+          versions: body([
+            versionRecord('v1', '1.0.1', 'PREPARE_FOR_SUBMISSION'),
+          ]),
+          submissions: body([submissionRecord('s1', 'COMPLETE')]),
+        );
+        expect(editable.exitCode, 0);
+        expect((editable.stdout as String).trim(), 'PREPARE_FOR_SUBMISSION');
+        expect(editable.stderr, contains('1.0.1=PREPARE_FOR_SUBMISSION'));
+        expect(editable.stderr, contains('s1=COMPLETE'),
+            reason: 'an all-COMPLETE second source is still an answer the '
+                'verdict rests on');
+
+        final stuck = runGate(
+          versions: body([versionRecord('v1', '1.0.1', 'REJECTED')]),
+          submissions: body([submissionRecord('s1', 'UNRESOLVED_ISSUES')]),
+        );
+        expect(stuck.exitCode, 0);
+        expect((stuck.stdout as String).trim(), 'REVIEW_STUCK');
+        expect(stuck.stderr, contains('1.0.1=REJECTED'));
+        expect(stuck.stderr, contains('s1=UNRESOLVED_ISSUES'));
       },
       skip: skipWithoutRuby,
     );
@@ -925,6 +986,71 @@ void main() {
               reason: 'body $broken — the failure must name the broken '
                   'shape');
         }
+      },
+      skip: skipWithoutRuby,
+    );
+
+    test(
+      'a missing or null data array on the version list fails the run too',
+      () {
+        // The first source gets the same guard the second one already has
+        // (PR #100): `['data']` read as nil is not an inventory, and a
+        // NONE decided from it would repeat #93 — so the shape must be
+        // refused by name, never read as "no version yet".
+        for (final broken in ['{"data": null}', '{}']) {
+          final result = runGate(
+            versions: broken,
+            submissions: body([submissionRecord('s1', 'COMPLETE')]),
+          );
+
+          expect(result.exitCode, 1, reason: 'body $broken');
+          expect(result.stdout, isNot(contains('NONE')), reason: 'body $broken');
+          expect(result.stderr, contains('no data array'),
+              reason: 'body $broken — the failure must name the broken '
+                  'shape');
+        }
+      },
+      skip: skipWithoutRuby,
+    );
+
+    test(
+      'a page-limit-sized appStoreVersions answer fails closed, never '
+      'matched client-side',
+      () {
+        // PAGE_LIMIT is the ceiling Apple's spec puts on limit, so an
+        // answer that size may be truncated — matching against it could
+        // miss the version and repeat #93's false NONE. The guard turns
+        // that into a red run; this pins it.
+        final result = runGate(
+          versions: body(List.generate(200,
+              (i) => versionRecord('v$i', '1.0.$i', 'PREPARE_FOR_SUBMISSION'))),
+          submissions: body([submissionRecord('s1', 'COMPLETE')]),
+        );
+
+        expect(result.exitCode, 1);
+        expect(result.stdout, isNot(contains('NONE')));
+        expect(result.stderr, contains('the page limit'),
+            reason: 'the failure must say why the answer was refused');
+        expect(result.stderr, contains('200'));
+      },
+      skip: skipWithoutRuby,
+    );
+
+    test(
+      'a page-limit-sized reviewSubmissions answer fails closed too',
+      () {
+        final result = runGate(
+          versions: body([versionRecord('v1', '1.0.0', 'READY_FOR_SALE')]),
+          submissions: body(
+              List.generate(200, (i) => submissionRecord('s$i', 'COMPLETE'))),
+        );
+
+        expect(result.exitCode, 1);
+        expect(result.stdout, isNot(contains('NONE')));
+        expect(result.stderr, contains('the page limit'),
+            reason: 'a possibly-truncated second source cannot certify that '
+                'nothing is in flight');
+        expect(result.stderr, contains('200'));
       },
       skip: skipWithoutRuby,
     );
