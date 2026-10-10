@@ -45,6 +45,12 @@ class SaveData {
   /// designed. Same convention as [controlHintDismissed]: only a fresh
   /// save (or an explicit reset) leaves it false.
   bool bankPromptSeen;
+
+  /// True once the one-time fare-contract explanation (issue #279) has
+  /// been given: the first special fare kind that waits on a kerb is
+  /// explained while it waits. Same convention as [bankPromptSeen]:
+  /// only a fresh save (or an explicit reset) leaves it false.
+  bool fareContractSeen;
   Settings settings;
 
   SaveData({
@@ -57,6 +63,7 @@ class SaveData {
     this.endlessBestScore = 0,
     this.controlHintDismissed = false,
     this.bankPromptSeen = false,
+    this.fareContractSeen = false,
     PersonalBests? personalBests,
     LifetimeRunTotals? lifetimeRunTotals,
     required this.settings,
@@ -115,6 +122,10 @@ class SaveData {
       // the control-hint flag above it. Fresh saves carry the key with
       // false, which round-trips below.
       bankPromptSeen: (json['bankPromptSeen'] as bool?) ?? true,
+      // Saves written before the fare-contract explanation existed have
+      // already met a special fare — a missing key reads as seen, the
+      // same rule as the two flags above. Fresh saves carry false.
+      fareContractSeen: (json['fareContractSeen'] as bool?) ?? true,
       settings: Settings.fromJson(json['settings'] as Map<String, dynamic>),
     );
   }
@@ -131,6 +142,7 @@ class SaveData {
       'endlessBestScore': endlessBestScore,
       'controlHintDismissed': controlHintDismissed,
       'bankPromptSeen': bankPromptSeen,
+      'fareContractSeen': fareContractSeen,
       'personalBests': personalBests.toJson(),
       'lifetimeRunTotals': lifetimeRunTotals.toJson(),
       'settings': settings.toJson(),

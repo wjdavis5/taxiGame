@@ -53,6 +53,31 @@ void main() {
       expect(FareType.awkward.chainStepBonus, 0);
     });
 
+    test('a special offer states its payout and its cost', () {
+      expect(FareType.vip.offerPayout(150), 'VIP \u00b7 PAYS 150 c');
+      expect(FareType.vip.offerCost, 'COST TIGHT CLOCK');
+      expect(FareType.longHaul.offerPayout(60),
+          'LONG HAUL \u00b7 PAYS 60 c +3 CHAIN');
+      expect(FareType.longHaul.offerCost, 'COST LONG RIDE');
+      expect(FareType.awkward.offerPayout(75), 'FAR SIDE \u00b7 PAYS 75 c');
+      expect(FareType.awkward.offerCost, 'COST FAR-SIDE DROP');
+      expect(FareType.standard.offerPayout(50), 'FARE \u00b7 PAYS 50 c');
+      expect(FareType.standard.offerCost, isNull,
+          reason: 'the everyday ride asks nothing beyond the drive');
+    });
+
+    test('each special kind carries a short contract brief', () {
+      for (final kind in [FareType.vip, FareType.longHaul, FareType.awkward]) {
+        expect(kind.contractBrief, isNotEmpty, reason: kind.name);
+        expect(kind.contractBrief, contains('SKIP'),
+            reason: 'the brief names both answers (${kind.name})');
+      }
+      expect(FareType.standard.contractBrief, isEmpty,
+          reason: 'the everyday ride has no contract to explain');
+      expect(FareType.longHaul.contractBrief, contains('+3 CHAIN'),
+          reason: 'the brief quotes the rule, not a hand-copied number');
+    });
+
     test('the draw is deterministic given the same generator seed', () {
       final a = FareType.draw(math.Random(2026));
       final b = FareType.draw(math.Random(2026));
@@ -398,6 +423,16 @@ void main() {
       await drain();
     }
 
+    /// Delivers [fare] by teleporting the taxi to its kerbs, the way the
+    /// endless-run tests do. Assumes the fare's zones are mounted.
+    void deliverFare(TaxiGame game, EndlessFare fare) {
+      game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+      game.update(1 / 60);
+      expect(game.player.hasPassenger, isTrue, reason: 'passenger boarded');
+      game.player.position = Vector2(fare.dropoff.x, fare.dropoff.y + 30);
+      game.update(1 / 60);
+    }
+
     test('the course\'s kinds reach the street, labelled', () async {
       final game = await mountGame(endlessGame(42));
       await tickAndSettle(game);
@@ -506,6 +541,65 @@ void main() {
       expect(game.fareController!.faresMissed, greaterThanOrEqualTo(1));
     });
 
+    test('declining counts against the fare kind, not the totals alone',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final kind = game.currentFareOffer!.fareType;
+      expect(game.declineCurrentOffer(), isTrue);
+
+      expect(game.fareController!.declinedByKind[kind], 1);
+      expect(game.fareController!.acceptedByKind[kind], 0);
+      for (final other in FareType.values.where((t) => t != kind)) {
+        expect(game.fareController!.declinedByKind[other], 0,
+            reason: '${other.name} was never on offer');
+      }
+    });
+
+    test('boarding counts as accepting that kind', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final fare = game.course!.fare(0);
+      deliverFare(game, fare);
+
+      expect(game.fareController!.acceptedByKind[fare.fareType], 1);
+      expect(game.fareController!.declinedByKind[fare.fareType], 0);
+    });
+
+    test('a settled record keeps the accepted and declined counts by kind',
+        () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+
+      final declinedKind = game.currentFareOffer!.fareType;
+      expect(game.declineCurrentOffer(), isTrue);
+
+      // Drive up to the next fare so its zones mount, then deliver it:
+      // the record should carry both answers. The extra tick lets the
+      // spawned zone run its own collision update.
+      final accepted = game.course!.fare(1);
+      game.player.position =
+          Vector2(accepted.pickup.x, accepted.pickup.y + 30);
+      await tickAndSettle(game);
+      game.update(1 / 60);
+      await drain();
+      expect(game.player.hasPassenger, isTrue,
+          reason: 'the next fare boarded after the teleport');
+      game.player.position =
+          Vector2(accepted.dropoff.x, accepted.dropoff.y + 30);
+      game.update(1 / 60);
+      await drain();
+
+      game.fareChain.score = 120;
+      game.bankFromPause();
+
+      final record = gameState.runHistory.last;
+      expect(record.declinedByKind[declinedKind.name], 1);
+      expect(record.acceptedByKind[accepted.fareType.name], 1);
+    });
+
     test('the tutorial ladder stays all-standard', () async {
       final game = await mountGame(TaxiGame(
         levelLoader: LevelLoaderService(),
@@ -547,10 +641,16 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 150));
 
-      // The offer bar shows the waiting fare's pitch and the decline.
+      // The offer bar states the contract and the decline.
       final offer = game.currentFareOffer!;
-      expect(find.text(offer.fareType.offerBlurb(offer.reward)),
+      expect(find.byKey(const ValueKey('offer_payout_text')), findsOneWidget);
+      expect(find.text(offer.fareType.offerPayout(offer.reward)),
           findsOneWidget);
+      final cost = offer.fareType.offerCost;
+      if (cost != null) {
+        expect(find.byKey(const ValueKey('offer_cost_text')), findsOneWidget);
+        expect(find.text(cost), findsOneWidget);
+      }
       expect(find.byKey(const ValueKey('decline_fare_button')),
           findsOneWidget);
 
@@ -561,6 +661,70 @@ void main() {
       expect(find.byKey(const ValueKey('decline_fare_button')), findsNothing);
       expect(game.fareController!.faresDeclined, 1);
       expect(game.currentFareOffer, isNull);
+    });
+
+    testWidgets('a special offer states payout and cost before the skip',
+        (tester) async {
+      final seed = firstSeedDealing(FareType.vip);
+      late TaxiGame game;
+      await tester.runAsync(() async {
+        game = await mountGame(endlessGame(seed));
+        await tickAndSettle(game);
+      });
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<GameStateService>.value(
+          value: gameState,
+          child: MaterialApp(
+            home: Scaffold(body: HudOverlay(game: game)),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150));
+
+      final offer = game.currentFareOffer!;
+      expect(offer.fareType, FareType.vip);
+      expect(find.text('VIP \u00b7 PAYS ${offer.reward} c'), findsOneWidget,
+          reason: 'the payout is on the bar before the kerb');
+      expect(find.text('COST TIGHT CLOCK'), findsOneWidget,
+          reason: 'the tight clock is the VIP contract\'s stated cost');
+    });
+
+    testWidgets('the first special fare explains the contract once',
+        (tester) async {
+      final seed = firstSeedDealing(FareType.vip);
+      late TaxiGame game;
+      await tester.runAsync(() async {
+        game = await mountGame(endlessGame(seed));
+        await tickAndSettle(game);
+      });
+      expect(gameState.fareContractSeen, isFalse,
+          reason: 'a fresh save has not met a contract yet');
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<GameStateService>.value(
+          value: gameState,
+          child: MaterialApp(
+            home: Scaffold(body: HudOverlay(game: game)),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150)); // poll tick
+
+      final offer = game.currentFareOffer!;
+      expect(find.byKey(const ValueKey('fare_contract_brief')),
+          findsOneWidget);
+      expect(find.text(offer.fareType.contractBrief), findsOneWidget,
+          reason: 'the first encounter gets the short explanation');
+
+      // The explanation belongs to the encounter: once the offer is
+      // answered the save is marked and the brief never returns.
+      await tester.tap(find.byKey(const ValueKey('decline_fare_button')));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(gameState.fareContractSeen, isTrue,
+          reason: 'the encounter is spent and persisted');
+      expect(find.byKey(const ValueKey('fare_contract_brief')),
+          findsNothing);
     });
 
     testWidgets('level mode shows no offer bar', (tester) async {
@@ -602,4 +766,14 @@ bool slotHostsJunction(int index) {
     if (center + reach > from && center - reach < to) return true;
   }
   return false;
+}
+
+/// The first seed whose opening fare is [kind] — the widget tests need a
+/// real special contract waiting at the start line, and the kinds are
+/// drawn from the seed, so the seed is found rather than assumed.
+int firstSeedDealing(FareType kind) {
+  for (var seed = 1; seed < 5000; seed++) {
+    if (EndlessCourse(seed: seed).fare(0).fareType == kind) return seed;
+  }
+  throw StateError('no seed in range dealt a ${kind.name} opening fare');
 }

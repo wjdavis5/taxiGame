@@ -89,15 +89,43 @@ enum FareType {
         FareType.awkward => 'FAR SIDE',
       };
 
-  /// The one-line pitch the HUD's offer bar shows while this fare waits on
-  /// the kerb, priced at [rewardCoins] coins. [chainStepBonus] feeds the
-  /// long-haul's line so the pitch never drifts from the rule.
-  String offerBlurb(int rewardCoins) => switch (this) {
-        FareType.standard => 'FARE \u00b7 $rewardCoins c',
-        FareType.vip => 'VIP \u00b7 $rewardCoins c \u00b7 TIGHT CLOCK',
+  /// The offer's payout line (issue #279): the kind's name and what the
+  /// fare pays — the coin figure the meter settles at, plus the
+  /// long-haul's chain steps, so the pay is stated before the kerb.
+  /// [chainStepBonus] feeds the long-haul's line so the payout never
+  /// drifts from the rule.
+  String offerPayout(int rewardCoins) => switch (this) {
+        FareType.standard => 'FARE \u00b7 PAYS $rewardCoins c',
+        FareType.vip => 'VIP \u00b7 PAYS $rewardCoins c',
         FareType.longHaul =>
-          'LONG HAUL \u00b7 $rewardCoins c \u00b7 +${chainStepBonus + 1} CHAIN',
-        FareType.awkward => 'FAR SIDE \u00b7 $rewardCoins c',
+          'LONG HAUL \u00b7 PAYS $rewardCoins c +${chainStepBonus + 1} CHAIN',
+        FareType.awkward => 'FAR SIDE \u00b7 PAYS $rewardCoins c',
+      };
+
+  /// The offer's cost line (issue #279): what the contract asks of the
+  /// player in exchange for the payout — the risk half of the decision
+  /// the offer bar exists to state. Null for the everyday ride, which
+  /// asks for nothing beyond the drive.
+  String? get offerCost => switch (this) {
+        FareType.standard => null,
+        FareType.vip => 'COST TIGHT CLOCK',
+        FareType.longHaul => 'COST LONG RIDE',
+        FareType.awkward => 'COST FAR-SIDE DROP',
+      };
+
+  /// The short explanation of the contract shown the first time a
+  /// special kind waits on a kerb (issue #279): what the kind is and
+  /// what the two answers mean, without stopping the drive. Empty for
+  /// the everyday ride, which has no contract to explain.
+  String get contractBrief => switch (this) {
+        FareType.standard => '',
+        FareType.vip =>
+          'VIP: TRIPLE PAY, TIGHT CLOCK \u2014 TAKE IT OR SKIP.',
+        FareType.longHaul =>
+          'LONG HAUL: A WHOLE-SLOT DRIVE PAYS +${chainStepBonus + 1} '
+              'CHAIN \u2014 TAKE IT OR SKIP.',
+        FareType.awkward =>
+          'FAR SIDE: CROSS THE ROAD ON A SHORT CLOCK \u2014 TAKE IT OR SKIP.',
       };
 
   /// How often each kind turns up. One fare in ten is a VIP, one a
