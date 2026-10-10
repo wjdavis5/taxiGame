@@ -800,25 +800,35 @@ void main() {
     test(
       'NONE only prints when the second source agrees nothing is in flight',
       () {
+        // Two version records and an empty submission list, so one run
+        // pins both counts, the multi-record join, and the empty-inventory
+        // rendering. Every assertion below fails against the pre-#94
+        // script: it printed no second-source line on a NONE and its
+        // version line carried no "N record(s):" prefix nor "(none)".
         final result = runGate(
-          versions: body([versionRecord('v1', '1.0.0', 'READY_FOR_SALE')]),
-          submissions: body([submissionRecord('s1', 'COMPLETE')]),
+          versions: body([
+            versionRecord('v1', '1.0.0', 'READY_FOR_SALE'),
+            versionRecord('v2', '1.0.2', 'PREPARE_FOR_SUBMISSION'),
+          ]),
+          submissions: body([]),
         );
 
         expect(result.exitCode, 0);
         expect((result.stdout as String).trim(), 'NONE');
-        // Issue #94: a NONE must be checkable against what both queries
-        // actually returned — the build-1074 run answered NONE with no
-        // record of either answer, so the wrong one could not be named.
-        expect(result.stderr, contains('appStoreVersions for app'));
-        expect(result.stderr, contains('1.0.0=READY_FOR_SALE'),
-            reason: 'the no-match path must log the version count and every '
-                'versionString/state it saw, so a wrong-looking NONE is '
-                'diagnosable from the CI log');
+        expect(result.stderr, contains('2 record(s):'),
+            reason: 'the version inventory must state its record count, so a '
+                'wrong-looking NONE is diagnosable from the CI log');
+        expect(
+            result.stderr,
+            contains('1.0.0=READY_FOR_SALE, 1.0.2=PREPARE_FOR_SUBMISSION'),
+            reason: 'every record Apple returned must be listed, joined, not '
+                'just the ones the verdict used');
         expect(result.stderr, contains('reviewSubmissions for app'),
             reason: 'NONE also rests on the second source, so its answer '
                 'must be in the log too');
-        expect(result.stderr, contains('s1=COMPLETE'));
+        expect(result.stderr, contains('0 record(s): (none)'),
+            reason: 'an empty second source is still an answer, and it must '
+                'render as the explicit (none)');
       },
       skip: skipWithoutRuby,
     );
@@ -924,10 +934,12 @@ void main() {
 
         expect(result.exitCode, 0);
         expect((result.stdout as String).trim(), 'REVIEW_IN_FLIGHT');
-        expect(result.stderr, contains('COMPLETING'));
-        expect(result.stderr, contains('UNKNOWN'),
-            reason: 'a record with no state attribute must be reported as '
-                'UNKNOWN, not silently skipped');
+        expect(
+            result.stderr,
+            contains('s1=COMPLETE, s2=COMPLETING, s3=UNKNOWN'),
+            reason: 'the whole submission inventory is listed, joined — '
+                'COMPLETING and a record with no state attribute (UNKNOWN) '
+                'must both be visible, never silently skipped');
       },
       skip: skipWithoutRuby,
     );
