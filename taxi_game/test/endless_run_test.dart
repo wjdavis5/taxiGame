@@ -1612,6 +1612,55 @@ void main() {
       expect(find.text('100.0 km'), findsOneWidget);
     });
   });
+
+  group('the seeded spawner stream (issue #287)', () {
+    // The spawner's RNG — math.Random(seed ^ 0x5EEDCAB5) in
+    // taxi_game.dart — is the one seeded stream no pure generator owns: a
+    // changed draw order rewrites the traffic every stored ghost raced,
+    // with no course or environment golden failing. This drives the real,
+    // mounted game to the first accepted spawn of the daily seed and the
+    // golden endless seed, and pins the frame it arrived on, the drawn
+    // body, its base speed, and its spawn lane.
+    Future<(int, List<(String, double, double, double)>)> firstSpawn(
+        int seed) async {
+      final game = await mountGame(endlessGame(seed));
+      game.player.children.whereType<RectangleHitbox>().single.collisionType =
+          CollisionType.inactive;
+      await preloadSprites(game);
+      var ticks = 0;
+      while (game.trafficSpawner.activeVehicleCount == 0 && ticks < 1800) {
+        game.update(1 / 60);
+        await drain();
+        ticks++;
+      }
+      await tickAndSettle(game);
+      final cars = game.world.children.whereType<TrafficVehicle>().toList()
+        ..sort((a, b) => a.position.x.compareTo(b.position.x));
+      return (
+        ticks,
+        [
+          for (final car in cars)
+            (
+              car.vehicleType.name,
+              car.baseSpeed,
+              car.path.first.x,
+              car.path.first.y,
+            ),
+        ],
+      );
+    }
+
+    test('the daily seed and the endless golden seed deal these first waves',
+        () async {
+      final daily = await firstSpawn(831957206);
+      expect(daily.$1, 482, reason: 'the daily seed\'s first spawn frame');
+      expect(daily.$2, [('bus', 107.96798351205479, 150.0, -500.0)]);
+
+      final endless = await firstSpawn(0xC0FFEE);
+      expect(endless.$1, 723, reason: 'the endless seed\'s first spawn frame');
+      expect(endless.$2, [('sportsCar', 109.44119680688586, 150.0, -500.0)]);
+    });
+  });
 }
 
 /// A fingerprint of everything that defines the run's state at one instant:

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
+import 'package:taxi_game/game/systems/difficulty_curve.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
 import 'package:taxi_game/game/systems/ghost_replay.dart';
 import 'package:taxi_game/game/systems/run_environment.dart';
@@ -21,7 +22,9 @@ import 'package:taxi_game/models/ghost_trace.dart';
 /// in the first group. The workflow is: bump the constant, re-pin the
 /// literals below from the new output, land both in one commit. A silent
 /// output change fails the literals; a bump without re-pinned goldens fails
-/// the version assertions. Either half alone is caught.
+/// the version assertions. What no test here can catch is a re-pin with no
+/// bump — the bump is the deliberate-change signal, enforced by review,
+/// not by this file.
 ///
 /// The literals are frozen values, not snapshots: a failure means the
 /// generator changed, and the fix is a version bump plus re-pinned goldens
@@ -46,8 +49,10 @@ void main() {
   group('golden course (seed 0xC0FFEE)', () {
     // index: (pickup.x, pickup.y, dropoff.x, dropoff.y, reward, kind,
     //         pickupDistance, dropoffDistance).
-    // Covers both kerbs, every fare kind, and the junction-nudged slot 32
-    // (its whole drawn inset range sits inside the 45,000 px junction).
+    // Covers both kerbs, every fare kind, the junction-nudged pickup in
+    // slot 32 (its whole drawn inset range sits inside the 45,000 px
+    // junction), and the junction-nudged dropoffs in slots 25 (far edge)
+    // and 57 (near edge, where the far edge pokes past the slot ceiling).
     const fares =
         <int, (double, double, double, double, int, FareType, double, double)>{
       0: (
@@ -120,6 +125,16 @@ void main() {
         19750.0,
         20850.0,
       ),
+      25: (
+        85.0,
+        -35186.75390625,
+        315.0,
+        -36200.0,
+        68,
+        FareType.standard,
+        35186.753310582666,
+        36200.0,
+      ),
       32: (
         315.0,
         -45200.0,
@@ -139,6 +154,16 @@ void main() {
         FareType.standard,
         46431.59276313395,
         47262.61573958697,
+      ),
+      57: (
+        85.0,
+        -79955.8046875,
+        315.0,
+        -80800.0,
+        183,
+        FareType.vip,
+        79955.80382815372,
+        80800.0,
       ),
       64: (
         315.0,
@@ -188,6 +213,24 @@ void main() {
       expect(
           course.relocatedDropoffDistance(14, attempt: 1), 21832.985499934905,
           reason: 'fare 14 attempt 1 relocation distance');
+
+      // Fare 18's hop lands inside the 27,000 px junction band, so the
+      // containment runs the hop on to the band's far edge (27,200) —
+      // the one pinned relocation that exercises the margin at
+      // endless_course.dart's relocatedDropoffDistance.
+      final inBand = course.relocatedDropoff(18);
+      expect(inBand.x, 85.0, reason: 'fare 18 relocation x');
+      expect(inBand.y, -27200.0, reason: 'fare 18 relocation y');
+      expect(course.relocatedDropoffDistance(18), 27200.0,
+          reason: 'fare 18 relocation cleared to the band far edge');
+      final chainedAfterClear = course.relocatedDropoff(18, attempt: 1);
+      expect(chainedAfterClear.x, 315.0,
+          reason: 'fare 18 attempt 1 relocation x');
+      expect(chainedAfterClear.y, -27849.203125,
+          reason: 'fare 18 attempt 1 relocation y');
+      expect(
+          course.relocatedDropoffDistance(18, attempt: 1), 27849.202991873433,
+          reason: 'fare 18 attempt 1 relocation distance');
     });
 
     test('the fare-kind draws over the first 130 slots are frozen', () {
@@ -203,19 +246,132 @@ void main() {
       }
       expect(byKind, {
         FareType.standard: [
-          0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 17, 19, 20, 21, 22, 24, 25,
-          26, 27, 28, 29, 30, 31, 32, 33, 34, 38, 39, 40, 41, 44, 45, 46, 47,
-          48, 49, 52, 53, 55, 56, 58, 60, 63, 65, 67, 70, 71, 72, 73, 74, 75,
-          76, 77, 78, 79, 82, 83, 84, 85, 86, 87, 89, 90, 91, 92, 93, 95, 96,
-          97, 99, 101, 103, 104, 105, 106, 107, 108, 109, 110, 111, 113, 115,
-          116, 117, 119, 120, 121, 122, 124, 127,
+          0,
+          1,
+          2,
+          3,
+          4,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          17,
+          19,
+          20,
+          21,
+          22,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          38,
+          39,
+          40,
+          41,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          52,
+          53,
+          55,
+          56,
+          58,
+          60,
+          63,
+          65,
+          67,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          89,
+          90,
+          91,
+          92,
+          93,
+          95,
+          96,
+          97,
+          99,
+          101,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          113,
+          115,
+          116,
+          117,
+          119,
+          120,
+          121,
+          122,
+          124,
+          127,
         ],
         FareType.vip: [
-          5, 16, 18, 35, 43, 57, 62, 64, 80, 94, 102, 123, 125, 129,
+          5,
+          16,
+          18,
+          35,
+          43,
+          57,
+          62,
+          64,
+          80,
+          94,
+          102,
+          123,
+          125,
+          129,
         ],
         FareType.awkward: [13, 23, 36, 37, 51, 54, 81, 112, 114],
         FareType.longHaul: [
-          14, 15, 42, 50, 59, 61, 66, 68, 69, 88, 98, 100, 118, 126, 128,
+          14,
+          15,
+          42,
+          50,
+          59,
+          61,
+          66,
+          68,
+          69,
+          88,
+          98,
+          100,
+          118,
+          126,
+          128,
         ],
       });
     });
@@ -238,12 +394,35 @@ void main() {
       expect(
         [for (var i = 2; i <= 30; i++) env.profileForSegment(i).name],
         [
-          'standard', 'standard', 'narrow', 'standard', 'standard',
-          'standard', 'standard', 'standard', 'avenue', 'narrow',
-          'standard', 'narrow', 'standard', 'standard', 'narrow',
-          'standard', 'standard', 'standard', 'standard', 'avenue',
-          'standard', 'avenue', 'narrow', 'narrow', 'narrow', 'narrow',
-          'narrow', 'standard', 'standard',
+          'standard',
+          'standard',
+          'narrow',
+          'standard',
+          'standard',
+          'standard',
+          'standard',
+          'standard',
+          'avenue',
+          'narrow',
+          'standard',
+          'narrow',
+          'standard',
+          'standard',
+          'narrow',
+          'standard',
+          'standard',
+          'standard',
+          'standard',
+          'avenue',
+          'standard',
+          'avenue',
+          'narrow',
+          'narrow',
+          'narrow',
+          'narrow',
+          'narrow',
+          'standard',
+          'standard',
         ],
       );
       expect(
@@ -252,10 +431,35 @@ void main() {
             env.weatherAt(i * 4400.0 + 2200.0).type.name,
         ],
         [
-          'clear', 'clear', 'clear', 'clear', 'clear', 'rain', 'fog',
-          'clear', 'fog', 'clear', 'clear', 'clear', 'rain', 'fog',
-          'rain', 'rain', 'fog', 'rain', 'fog', 'clear', 'clear',
-          'clear', 'fog', 'rain', 'rain', 'clear', 'fog', 'rain', 'clear',
+          'clear',
+          'clear',
+          'clear',
+          'clear',
+          'clear',
+          'rain',
+          'fog',
+          'clear',
+          'fog',
+          'clear',
+          'clear',
+          'clear',
+          'rain',
+          'fog',
+          'rain',
+          'rain',
+          'fog',
+          'rain',
+          'fog',
+          'clear',
+          'clear',
+          'clear',
+          'fog',
+          'rain',
+          'rain',
+          'clear',
+          'fog',
+          'rain',
+          'clear',
         ],
       );
       expect(
@@ -327,6 +531,17 @@ void main() {
       expect(traffic.lanes[0].spawnProbability, 0.4813548843956227);
       expect(traffic.lanes[1].laneX, 237.0);
       expect(traffic.lanes[1].spawnProbability, 0.3648680767232933);
+      // The speed output — the field the verifier demonstrated could
+      // drift silently (a _rampedSpeedMean tweak moved it while every
+      // other pin held). Both lanes share the core's speedRange.
+      expect(traffic.lanes[0].speedRange.min, 106.3737063778858);
+      expect(traffic.lanes[0].speedRange.max, 159.57352431143153);
+      expect(traffic.lanes[1].speedRange.min, 106.3737063778858);
+      expect(traffic.lanes[1].speedRange.max, 159.57352431143153);
+      final core = DifficultyCurve.trafficCoreFor(20000,
+          environmentModifier: env.difficultyModifierAt(20000));
+      expect(core.meanSpeed, 132.97361534465867);
+      expect(core.halfSpread, 26.599908966772873);
     });
   });
 
