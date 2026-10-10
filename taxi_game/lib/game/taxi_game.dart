@@ -1098,11 +1098,12 @@ class TaxiGame extends FlameGame
     if (passengersDelivered >= passengers.length) {
       // The close-call lesson (issue #269): the last delivery completes
       // the rung only once its required shave is in. Until then the run
-      // stays live so the shave can still land — but only while the
-      // street can supply one: past the final dropoff the spawner's
-      // road-end gate and the cab's end clamp mean a shave never earned
-      // cannot be earned, which [_checkForCloseCallLessonEnd] answers
-      // with the failure verdict.
+      // stays live so the shave can still land — the street past the
+      // final dropoff still supplies passes for a while: waves keep
+      // spawning until the taxi is ~650 px from the road top (the spawn
+      // gate's last accepted point, one body inside the end). The last
+      // ~600 px to the end clamp supply none, and
+      // [_checkForCloseCallLessonEnd] answers that with the verdict.
       if (_closeCallObjectiveMet) _completeLevel();
     } else if (currentLevel.bankPromptEnabled) {
       // The banking lesson (issue #16): on the levels that teach it, every
@@ -1686,10 +1687,13 @@ class TaxiGame extends FlameGame
   }
 
   /// Fails the close-call lesson once the street has ended with its
-  /// required shave still owed (issue #269). The course's final stretch
-  /// cannot supply the lesson: [TrafficSpawner] rejects every spawn
-  /// beyond the road top, the end clamp leaves no reverse, and cars
-  /// despawn behind the cab — so without this verdict the run could
+  /// required shave still owed (issue #269). By the clamp the street
+  /// has stopped supplying chances: [TrafficSpawner] last accepted a
+  /// wave when the taxi was ~650 px from the road top, a same-direction
+  /// car's path dies at the road top rather than following the cab
+  /// (issue #31), and the clamp leaves no reverse — only a car already
+  /// on the road could still be passed, and the clamp is where the
+  /// lesson stops waiting for one. Without this verdict the run could
   /// neither complete nor fail in place, and quitting to the menu was
   /// the only exit. RETRY re-runs the rung, where the traffic is.
   void _failLevelForCloseCallMissed() {
@@ -1717,11 +1721,12 @@ class TaxiGame extends FlameGame
     audio?.playLevelFailedSound();
   }
 
-  /// Fails the close-call lesson at the course end (issue #269): the
-  /// taxi is clamped one car length inside the road's top (issue #31)
-  /// and cannot reverse, so a shave it never earned cannot be earned
-  /// past this point — the same dead end the stranded-fare verdict
-  /// (issue #112) answers, for the lesson's own requirement.
+  /// The close-call lesson's end deadline (issue #269): the taxi is
+  /// clamped one car length inside the road's top (issue #31) and
+  /// cannot reverse; the last ~600 px before the clamp accepted no new
+  /// waves, so the clamp is where the lesson stops asking. The verdict
+  /// is failure — the same dead end the stranded-fare verdict (issue
+  /// #112) answers, for the lesson's own requirement.
   void _checkForCloseCallLessonEnd() {
     if (!lessonCloseCallOwed) return;
     final roadTopY = levelRoadTopY;
