@@ -172,6 +172,14 @@ class ConstructionZone {
 class RunEnvironment {
   RunEnvironment({required this.seed});
 
+  /// The version of this generator's output (issue #287). The golden-seed
+  /// tests in test/golden_seeds_test.dart pin the exact city this version
+  /// draws: changed output fails those goldens, and a bump here without
+  /// re-pinned goldens fails their version assertion. A re-pin with no
+  /// bump passes — the bump is the deliberate-change signal, enforced by
+  /// review, not by these tests.
+  static const int generationVersion = 1;
+
   /// The run seed. Same seed, same city, same sky.
   final int seed;
 
