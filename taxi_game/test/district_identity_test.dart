@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -11,7 +10,6 @@ import 'package:taxi_game/game/components/district_palette.dart';
 import 'package:taxi_game/game/components/road_segment.dart';
 import 'package:taxi_game/game/systems/run_environment.dart';
 import 'package:taxi_game/game/taxi_game.dart';
-import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -60,6 +58,10 @@ void main() {
       // Literal values, not a re-read of the lookup the renderer uses.
       expect(DistrictPalette.of(RoadProfile.standard).surface,
           const Color(0xFF404040));
+      expect(DistrictPalette.of(RoadProfile.standard).intersection,
+          const Color(0xFF4A4A4A));
+      expect(DistrictPalette.of(RoadProfile.standard).marking,
+          const Color(0xFFFFFFFF));
       expect(DistrictPalette.of(RoadProfile.narrow).surface,
           const Color(0xFF4A3E34));
       expect(DistrictPalette.of(RoadProfile.avenue).surface,
@@ -223,9 +225,11 @@ void main() {
       const avenueTop = 42400.0; // segment 10: 40,000-44,000
       const junctionTop = 45600.0; // segment 11: narrow, junction at 45,000
 
-      // Exact colours need dry stretches; the probe distances below are
-      // dry on this seed (the golden weather sequence).
-      for (final d in const [39000.0, 17400.0, 42200.0, 45000.0]) {
+      // Exact colours need dry stretches; the guard checks the same
+      // distance the wet tint samples — the chunk's mid, top − length/2
+      // (road_segment.dart's surface and sidewalk tint). All dry on this
+      // seed (the golden weather sequence).
+      for (final d in const [38800.0, 17200.0, 42000.0, 45200.0]) {
         expect(env.rainIntensityAt(d), 0, reason: 'dry at $d');
       }
 
@@ -262,9 +266,11 @@ void main() {
     });
 
     test('a chunk crossing a district line paints both bands', () async {
-      // The standard→narrow line at 16,000 (golden segment 4). Chunk 20
-      // covers [15,600, 16,400) and straddles it: its recorded picture
-      // carries two districts, so the band overpaint runs for real.
+      // The standard→narrow line at 16,000 (golden segment 4). This
+      // directly-built 800 px segment covers distances [15,600, 16,400) —
+      // halves of manager chunks 19 and 20 — and straddles the line: its
+      // recorded picture carries two districts, so the band overpaint
+      // runs for real.
       final env = RunEnvironment(seed: 0xC0FFEE);
       const top = 16400.0;
       expect(env.roadAt(15960).profile, RoadProfile.standard);
@@ -343,33 +349,43 @@ void main() {
       expect(background.profile.districtName, 'Grand Avenue');
     });
 
-    test('a level run keeps the classic Midtown sky', () async {
-      // Level mode has no living road; the background must rest at the
-      // standard district (taxi_game.dart's level resets), not carry the
-      // last endless run's skyline onto the fixed street.
-      SharedPreferences.setMockInitialValues({
-        StorageService.saveDataKey:
-            jsonEncode((SaveData.createDefault()..currentLevel = 1).toJson()),
-      });
-      final storage = StorageService();
-      await storage.init();
-      final gameState = GameStateService(storage);
-      await gameState.loadSaveData();
-
+    test('a level run resets the sky from the last run\'s district', () async {
+      // Both resets must fire, so the test drives an endless run to the
+      // avenue on one game instance first: a fresh mount would rest at
+      // the default and could not tell either reset line apart from the
+      // default.
+      final gameState = await freshGameState();
       final game = TaxiGame(
         levelLoader: LevelLoaderService(),
         gameState: gameState,
+        endlessSeed: 0xC0FFEE,
       )
         ..overlays.addEntry('levelComplete', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
-        ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink());
+        ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink());
       await mountGame(game);
 
       final background =
           game.camera.backdrop.children.whereType<Background>().first;
+      game.player.position = Vector2(200, -42200);
       game.update(1 / 60);
-      expect(background.profile, RoadProfile.standard);
+      expect(background.profile, RoadProfile.avenue,
+          reason: 'precondition: the endless run reached Grand Avenue');
+
+      // The level load's own reset, asserted before any tick can run.
+      await game.loadLevel(1);
+      expect(background.profile, RoadProfile.standard,
+          reason: 'loading a level resets the sky before any frame');
+      expect(background.profile.districtName, 'Midtown');
+
+      // And the per-frame level branch keeps it there: a stale district
+      // set behind the game's back is corrected on the next frame.
+      background.profile = RoadProfile.avenue;
+      game.update(1 / 60);
+      expect(background.profile, RoadProfile.standard,
+          reason: 'the level frame re-forces the standard district');
       expect(background.profile.districtName, 'Midtown');
     });
   });
