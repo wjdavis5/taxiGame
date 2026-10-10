@@ -488,8 +488,11 @@ class _ScoringBarState extends State<_ScoringBar> {
         // owes the shave its completion waits on, the HUD says what the
         // lesson asks for — a pass that is close (a shave) and at speed.
         // Its own line, like the ghost badge below, because the row above
-        // has no horizontal room to spare.
-        if (!widget.game.isEndless && widget.game.lessonCloseCallOwed) ...[
+        // has no horizontal room to spare. Stands down once the run has
+        // settled — the failure panel words the miss itself.
+        if (!widget.game.isEndless &&
+            !widget.game.isShiftOver &&
+            widget.game.lessonCloseCallOwed) ...[
           const SizedBox(height: 6),
           const FittedBox(
             fit: BoxFit.scaleDown,
