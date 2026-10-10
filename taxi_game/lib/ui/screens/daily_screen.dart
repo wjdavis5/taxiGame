@@ -90,6 +90,11 @@ class DailyScreen extends StatelessWidget {
                     dayKey: dayKey,
                     result: gameState.dailyResultFor(dayKey),
                     ghost: gameState.ghostFor(dayKey),
+                    streak: gameState.dailyStreakOn(dayKey),
+                    bestStreak: gameState.dailyBestStreak,
+                    upcomingReward: gameState.dailyStreakRewardOn(dayKey),
+                    settledReward:
+                        gameState.settledDailyStreakRewardFor(dayKey),
                   ),
                 ),
               ),
@@ -150,7 +155,15 @@ class DailyScreen extends StatelessWidget {
 /// replay lives: a later-in-the-day visit can race the best run without
 /// replaying the daily from the summary panel.
 class _TodayCard extends StatelessWidget {
-  const _TodayCard({required this.dayKey, required this.result, this.ghost});
+  const _TodayCard({
+    required this.dayKey,
+    required this.result,
+    required this.streak,
+    required this.bestStreak,
+    required this.upcomingReward,
+    this.ghost,
+    this.settledReward,
+  });
 
   /// The calendar day this card is a snapshot of (issue #113): its date
   /// line, its result lookup, and the course its button starts all key
@@ -163,6 +176,22 @@ class _TodayCard extends StatelessWidget {
   /// The stored best run for today's course; null until a run on it has
   /// ever finished.
   final GhostTrace? ghost;
+
+  /// The streak run alive on [dayKey] (issue #281) — 0 once a day has
+  /// been missed.
+  final int streak;
+
+  /// The best streak ever completed (issue #281).
+  final int bestStreak;
+
+  /// The declared bonus the next completion pays, read on [dayKey]
+  /// (issue #281): today's own while the day is unplayed, the next
+  /// day's once it is.
+  final int upcomingReward;
+
+  /// The bonus already settled for [dayKey], or null when none has
+  /// (a save whose day was played before the reward existed).
+  final int? settledReward;
 
   @override
   Widget build(BuildContext context) {
@@ -266,6 +295,37 @@ class _TodayCard extends StatelessWidget {
                   ? 'Done for today — a new course arrives tomorrow.'
                   : 'One shift a day, and every player in the world gets '
                       'the same course. How far can you take it?',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.85),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // The visible streak (issue #281): the run the player is on,
+            // the best ever, and the one declared bonus — named here so
+            // the reward is known before the shift, not discovered after
+            // it. The paid amount comes from the settlement record, so a
+            // save whose day predates the reward never claims it was paid.
+            Text(
+              'STREAK $streak \u00b7 BEST $bestStreak',
+              key: const Key('daily_streak_status'),
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+                color: Colors.yellow,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              played
+                  ? (settledReward != null
+                      ? 'Streak bonus +$settledReward paid.'
+                      : "Complete tomorrow's shift for a "
+                          '+$upcomingReward streak bonus.')
+                  : "Complete today's shift for a "
+                      '+$upcomingReward streak bonus.',
+              key: const Key('daily_reward_status'),
               style: TextStyle(
                 fontSize: 13,
                 color: Colors.white.withValues(alpha: 0.85),

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/daily_result.dart';
+import 'package:taxi_game/models/daily_streak.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/haptics_service.dart';
@@ -600,6 +601,55 @@ void main() {
       await tester.pump(const Duration(minutes: 1));
 
       expectNewDayUnplayed(dayD);
+    });
+  });
+
+  group('the visible streak (issue #281)', () {
+    testWidgets('a fresh player sees the empty run and today\'s declared '
+        'bonus', (tester) async {
+      await pumpScreen(tester);
+
+      expect(find.byKey(const Key('daily_streak_status')), findsOneWidget);
+      expect(find.text('STREAK 0 \u00b7 BEST 0'), findsOneWidget);
+      expect(
+        find.text("Complete today's shift for a "
+            '+${DailyStreak.rewardCoins(1)} streak bonus.'),
+        findsOneWidget,
+        reason: 'the one reward is declared before the shift, not after',
+      );
+    });
+
+    testWidgets('a played day shows the run and the bonus it paid',
+        (tester) async {
+      await gameState
+          .recordDailyResult(resultFor(DailyShift.todayKey, score: 340));
+
+      await pumpScreen(tester);
+
+      expect(find.text('STREAK 1 \u00b7 BEST 1'), findsOneWidget);
+      expect(
+        find.text('Streak bonus +${DailyStreak.rewardCoins(1)} paid.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a missed day reads 0 while the best stays', (tester) async {
+      // A three-day run ending two days ago: today is unplayed and the
+      // run is dead, so the card reads 0 and the restart rate.
+      for (var i = 4; i >= 2; i--) {
+        await gameState.recordDailyResult(resultFor(daysAgoKey(i)));
+      }
+
+      await pumpScreen(tester);
+
+      expect(find.text('STREAK 0 \u00b7 BEST 3'), findsOneWidget,
+          reason: 'the missed day is visible; the best is not taken away');
+      expect(
+        find.text("Complete today's shift for a "
+            '+${DailyStreak.rewardCoins(1)} streak bonus.'),
+        findsOneWidget,
+        reason: 'a broken run restarts at the day-one rate',
+      );
     });
   });
 }
