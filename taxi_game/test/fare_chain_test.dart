@@ -476,11 +476,11 @@ void main() {
         gameState: gameState,
       ));
 
-      // Level 1: one fare, (315, 400) → (315, -300) for 50 coins.
+      // Level 1: one fare, (240, 400) → (315, -300) for 50 coins.
       final level = game.currentLevel;
       final pickup = level.pickupPoints.first;
       final dropoff = level.dropoffPoints.first;
-      final rideDistance = (dropoff.y - pickup.y).abs().toDouble();
+      final rideDistance = (dropoff - pickup).length;
 
       // Pull up to the kerb.
       game.player.position = Vector2(pickup.x, pickup.y + 30);

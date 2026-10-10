@@ -3,7 +3,7 @@
   "name": "First Ride",
   "difficulty": "easy",
   "pickupPoints": [
-    [315, 400]
+    [240, 400]
   ],
   "dropoffPoints": [
     [315, -300]

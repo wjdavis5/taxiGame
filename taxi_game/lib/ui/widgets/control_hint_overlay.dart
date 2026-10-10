@@ -37,13 +37,18 @@ import '../../game/taxi_game.dart';
 ///
 /// Entirely pointer-transparent: the hint sits inside the stick's own
 /// touch region (the lower half), so any tap on it *is* a stick touch —
-/// [VirtualStick]'s lower-half gate accepts it and dismisses the hint
+/// [VirtualStick]'s lower-half gate accepts it and answers the hint
 /// through `TaxiGame.onStickEngaged`. Placement is wholly below the
 /// screen's centre line, so that contract holds in every mode. There is
 /// deliberately no separate tap target here to swallow drags meant for
-/// the road; the hint is pure display, and the first real input —
-/// wherever the thumb lands low, including on the hint itself — ends it
-/// for good.
+/// the road; the hint is pure display.
+///
+/// The lesson itself (issue #267) ends only when the player has both
+/// accelerated and steered — a single low landing no longer dismisses it
+/// forever. A thumb that lands in the dead upper half raises the cue
+/// line instead of vanishing: the game's [TaxiGame.controlHintCue]
+/// notifier rebuilds this overlay on the touch itself, so the correction
+/// reads immediately rather than on the poll's next tick.
 class ControlHintOverlay extends StatefulWidget {
   const ControlHintOverlay({super.key, required this.game});
 
@@ -56,6 +61,11 @@ class ControlHintOverlay extends StatefulWidget {
   static const String _hintLine =
       'Touch and hold the lower half — drag up for speed, sideways to steer.';
 
+  /// The upper-half correction (issue #267): shown the moment a thumb
+  /// lands where the stick cannot hear it.
+  static const String _cueLine =
+      'Move your thumb lower — touch and hold in the lower half to drive.';
+
   @override
   State<ControlHintOverlay> createState() => _ControlHintOverlayState();
 }
@@ -66,20 +76,28 @@ class _ControlHintOverlayState extends State<ControlHintOverlay> {
   @override
   void initState() {
     super.initState();
+    // The upper-half cue must read the instant the thumb lands (issue
+    // #267), so it bypasses the poll below and rebuilds straight off the
+    // notifier.
+    widget.game.controlHintCue.addListener(_onCueChanged);
     // The hint rides the GameWidget's initialActiveOverlays, so its
     // first build races the game's own load: the level or endless run —
     // and with it the cab this placement measures — may not exist yet.
     // Poll like the HUD does until it does; once the cab stands, the
-    // placement moves only with the screen, and the first real stick
-    // touch removes the overlay (and this state, and the timer) for
-    // good.
+    // placement moves only with the screen, and the lesson's end removes
+    // the overlay (and this state, and the timer) for good.
     _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
       if (mounted) setState(() {});
     });
   }
 
+  void _onCueChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    widget.game.controlHintCue.removeListener(_onCueChanged);
     _timer?.cancel();
     super.dispose();
   }
@@ -125,6 +143,10 @@ class _ControlHintOverlayState extends State<ControlHintOverlay> {
           final hintTop = cabTailY + cabClearance;
           final laneHeight = math.max(0.0, screenH - hintTop);
 
+          // The upper-half correction (issue #267) is live while the
+          // notifier says so; the poll keeps it fresh across ticks.
+          final cue = widget.game.controlHintCue.value;
+
           return Stack(
             children: [
               Positioned(
@@ -146,19 +168,31 @@ class _ControlHintOverlayState extends State<ControlHintOverlay> {
                           decoration: BoxDecoration(
                             color: Colors.black54,
                             borderRadius: BorderRadius.circular(20),
+                            // The correction wears the stick knob's amber
+                            // (issue #267) — the same accent the landed
+                            // thumb's knob draws with, so the cue reads
+                            // as this control talking, not a new widget.
+                            border: cue
+                                ? Border.all(
+                                    color: const Color(0xFFFFC933),
+                                    width: 2,
+                                  )
+                                : null,
                           ),
-                          child: const Column(
+                          child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               CustomPaint(
-                                size: Size(140, 116),
-                                painter: _StickGhostPainter(),
+                                size: const Size(140, 116),
+                                painter: _StickGhostPainter(cue: cue),
                               ),
-                              SizedBox(height: 8),
+                              const SizedBox(height: 8),
                               Text(
-                                ControlHintOverlay._hintLine,
+                                cue
+                                    ? ControlHintOverlay._cueLine
+                                    : ControlHintOverlay._hintLine,
                                 textAlign: TextAlign.center,
-                                style: TextStyle(
+                                style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 13,
                                   height: 1.3,
@@ -182,11 +216,16 @@ class _ControlHintOverlayState extends State<ControlHintOverlay> {
 
 /// The faint stick ghost: the same ring and knob the live stick draws
 /// under a landed thumb (`VirtualStick.ringRadius` / `knobRadius`, the
-/// same white ring and amber knob), dimmed, with a small up arrow above
+/// same white ring and amber knob), dimmed, with a small arrow above
 /// it — the drag that asks for speed. Faint on purpose: it is a ghost of
 /// a control, not a button, and must never read as something to tap.
 class _StickGhostPainter extends CustomPainter {
-  const _StickGhostPainter();
+  const _StickGhostPainter({this.cue = false});
+
+  /// True while the upper-half correction (issue #267) is showing: the
+  /// arrow turns to point down, at the half of the screen the thumb must
+  /// move to.
+  final bool cue;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -203,23 +242,37 @@ class _StickGhostPainter extends CustomPainter {
       ..color = const Color(0xFFFFC933).withValues(alpha: 0.45);
     canvas.drawCircle(centre, 15, knob);
 
-    // The up arrow, clear of the ring: the ghost's one word of anatomy,
-    // matching the line's "drag up for speed".
+    // The arrow, clear of the ring: the ghost's one word of anatomy,
+    // matching the line's "drag up for speed" — or pointing down when
+    // the cue asks the thumb to move lower.
     final arrow = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
-      ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.55);
-    final path = Path()
-      ..moveTo(centre.dx, centre.dy - 46)
-      ..lineTo(centre.dx, centre.dy - 70)
-      ..moveTo(centre.dx - 8, centre.dy - 61)
-      ..lineTo(centre.dx, centre.dy - 70)
-      ..lineTo(centre.dx + 8, centre.dy - 61);
+      ..color = cue
+          ? const Color(0xFFFFC933).withValues(alpha: 0.85)
+          : const Color(0xFFFFFFFF).withValues(alpha: 0.55);
+    final path = Path();
+    if (cue) {
+      path
+        ..moveTo(centre.dx, centre.dy - 70)
+        ..lineTo(centre.dx, centre.dy - 46)
+        ..moveTo(centre.dx - 8, centre.dy - 55)
+        ..lineTo(centre.dx, centre.dy - 46)
+        ..lineTo(centre.dx + 8, centre.dy - 55);
+    } else {
+      path
+        ..moveTo(centre.dx, centre.dy - 46)
+        ..lineTo(centre.dx, centre.dy - 70)
+        ..moveTo(centre.dx - 8, centre.dy - 61)
+        ..lineTo(centre.dx, centre.dy - 70)
+        ..lineTo(centre.dx + 8, centre.dy - 61);
+    }
     canvas.drawPath(path, arrow);
   }
 
   @override
-  bool shouldRepaint(covariant _StickGhostPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _StickGhostPainter oldDelegate) =>
+      oldDelegate.cue != cue;
 }

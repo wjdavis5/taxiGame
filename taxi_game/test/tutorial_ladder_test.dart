@@ -6,7 +6,9 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/dropoff_zone.dart';
+import 'package:taxi_game/game/components/pickup_zone.dart';
 import 'package:taxi_game/game/levels/level.dart';
+import 'package:taxi_game/game/systems/collision_rules.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/systems/lives.dart';
 import 'package:taxi_game/game/taxi_game.dart';
@@ -867,6 +869,71 @@ void main() {
     });
   });
 
+  group('the first fare is reachable (issue #266)', () {
+    // Level 1's only pickup used to sit at the right kerb (315), where the
+    // cab's reachable band (centre x 120..280) registered it only in its
+    // outer 20 px: a natural centre-line first drive sailed past and the
+    // level failed 80 px later. The pickup now sits in the right lane
+    // (240), inside the straight-drive band, while the dropoff stays on
+    // the right kerb and still asks for alignment.
+
+    test('a natural straight drive from the start collects the first pickup',
+        () async {
+      final game = await mountGame(ladderGame());
+      await tickAndSettle(game);
+      expect(game.currentLevelNumber, 1);
+      expect(game.currentLevel.pickupPoints, hasLength(1));
+
+      // Full throttle, zero steering: the drive the control hint teaches
+      // first. The pickup sits 250 px up the road; 240 frames is 4 s at
+      // 60 fps, well inside the level's 4.5 s first traffic wave.
+      game.player.startAccelerating();
+      for (var i = 0; i < 240 && !game.player.hasPassenger; i++) {
+        game.update(1 / 60);
+        await drain();
+      }
+
+      expect(game.player.hasPassenger, isTrue,
+          reason: 'a centre-line drive must register the first pickup');
+      expect(game.isGameActive, isTrue,
+          reason: 'the level must not fail a player still driving to it');
+      expect(game.lastFailReason, isNull);
+    });
+
+    test('the pickup registers from the centre line, and the dropoff '
+        'demands the kerb', () async {
+      final game = await mountGame(ladderGame());
+      await tickAndSettle(game);
+      final pickup = game.currentLevel.pickupPoints.single;
+      final dropoff = game.currentLevel.dropoffPoints.single;
+
+      // A zone registers when the cab's scaled hitbox reaches its
+      // detection circle: zone detection radius + half the hitbox width.
+      // Both zones detect at 40 px (PickupZone / DropoffZone).
+      final stats = game.player.stats;
+      final hitboxHalf = stats.width * CollisionRules.playerHitboxScale / 2;
+      final pickupReach = PickupZone.detectionRadius + hitboxHalf;
+      final dropoffReach = DropoffZone.detectionRadius + hitboxHalf;
+      const centreLine = TaxiGame.roadCenterX;
+      final rightKerb =
+          TaxiGame.roadCenterX + TaxiGame.roadWidth / 2 - stats.width / 2;
+
+      // The first fare is inside the straight band with overlap to spare,
+      // so the drive the hint teaches needs no correction.
+      expect((pickup.x - centreLine).abs() + 5, lessThanOrEqualTo(pickupReach),
+          reason: 'the first pickup must register from the centre line '
+              'with at least 5 px of overlap');
+
+      // The dropoff is out of the centre-line band but inside the
+      // right-kerb one: the rung's alignment lesson.
+      expect((dropoff.x - centreLine).abs(), greaterThan(dropoffReach),
+          reason: 'the dropoff must not be collectable from the centre '
+              'line — pulling over to the kerb is the lesson');
+      expect((dropoff.x - rightKerb).abs(), lessThan(dropoffReach),
+          reason: 'the dropoff must register for a kerb-aligned cab');
+    });
+  });
+
   group('levels keep their authored dropoffs (issue #28)', () {
     test('driving past a level dropoff never relocates it', () async {
       final game = await mountGame(ladderGame());
@@ -1140,6 +1207,11 @@ void main() {
       await showPanel(tester, game);
 
       expect(find.text('FARE MISSED!'), findsOneWidget);
+      expect(
+          find.textContaining('Pull over to the kerb'),
+          findsOneWidget,
+          reason: 'the panel must correct the miss, not just explain it '
+              '(issue #266): pull to the kerb where fares wait');
       expect(
           find.textContaining('the street only runs one way'),
           findsOneWidget,
