@@ -550,18 +550,49 @@ class TaxiGame extends FlameGame
   /// Exposed for tests and the keyboard guard.
   VirtualStick? get virtualStick => _virtualStick;
 
-  /// The stick just received its first real touch this save (issue #37):
-  /// the thumb landed in the lower half exactly where the hint said it
-  /// would, so the hint has done its job — take it down and record the
-  /// dismissal for good. Called on every accepted stick engagement, but
-  /// the save write happens only once: [GameStateService
-  /// .dismissControlHint] is idempotent and removing a non-active
-  /// overlay is a no-op.
-  ///
-  /// The hint itself is offered by the game screen (issue #37 puts it on
-  /// the first game start of an undismissed save); the game only ever
-  /// stands it down.
+  /// The upper-half cue (issue #267): raised when a thumb lands in the
+  /// dead upper half while the lesson is still live, so the hint overlay
+  /// can say where the controls are instead of the touch vanishing. A
+  /// notifier so the overlay rebuilds on the touch itself — the hint's
+  /// own 100 ms poll would read as a late reaction to a dead touch.
+  /// Lowered by the first lower-half landing (the answer to the cue) and
+  /// by the lesson's dismissal.
+  final ValueNotifier<bool> controlHintCue = ValueNotifier<bool>(false);
+
+  /// The two axes the hint teaches (issue #267): the lesson ends when the
+  /// player has both accelerated and steered at least once, never on the
+  /// first lower-half landing — a thumb that only rested, or a single
+  /// straight drag, used to consume the one-time hint forever.
+  bool _hintAccelerated = false;
+  bool _hintSteered = false;
+
+  /// The stick just received a lower-half touch (issue #37): it answers
+  /// the upper-half cue (issue #267). The lesson itself no longer ends
+  /// here — only [onStickInput] demonstrating both axes does — so one
+  /// low touch can never dismiss it forever.
   void onStickEngaged() {
+    controlHintCue.value = false;
+  }
+
+  /// A thumb landed in the dead upper half (issue #267): while the
+  /// lesson is still live, raise the cue that tells the player to move
+  /// lower. After the lesson — or on a save that already drove — the
+  /// touch stays silent, because there is nothing left to teach.
+  void onUpperHalfTouch() {
+    if (gameState.controlHintDismissed) return;
+    controlHintCue.value = true;
+  }
+
+  /// The stick's axes on every update (issue #267): the hint's lesson
+  /// ends once the player has both accelerated (throttle above rest) and
+  /// steered (any live steering), and not before. Idempotent after the
+  /// first dismissal — the save write is guarded and removing a
+  /// non-active overlay is a no-op.
+  void onStickInput(StickInput input) {
+    if (input.throttle > 0) _hintAccelerated = true;
+    if (input.steering != 0) _hintSteered = true;
+    if (!_hintAccelerated || !_hintSteered) return;
+    controlHintCue.value = false;
     overlays.remove('controlHint');
     gameState.dismissControlHint();
   }

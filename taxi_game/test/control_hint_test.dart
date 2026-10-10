@@ -17,9 +17,12 @@ import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/game_screen.dart';
 
 /// The one-time stick-control hint (issue #37): a first game start on a
-/// save that has never dismissed it teaches the invisible relative stick,
-/// the first real stick touch dismisses it for good, and a reset re-arms
-/// it — the same wipe convention as the run history.
+/// save that has never dismissed it teaches the invisible relative stick.
+/// The lesson now stays until the player has both accelerated and steered
+/// (issue #267) — one low landing no longer dismisses it forever, and a
+/// thumb that lands in the dead upper half is answered with a cue to move
+/// lower — and a reset re-arms it, the same wipe convention as the run
+/// history.
 ///
 /// The HUD polls the game on a repeating timer, so the widget tests pump
 /// fixed durations — never pumpAndSettle.
@@ -159,12 +162,13 @@ void main() {
               'own terms');
     });
 
-    testWidgets('the first real stick input dismisses it and drives the taxi',
-        (tester) async {
+    testWidgets('a drag that accelerates and steers dismisses it and drives '
+        'the taxi', (tester) async {
       final game = await pumpGameScreen(tester);
       expect(hintFinder, findsOneWidget);
 
       // A real stick drag on the lower half: glide up-right past the rim.
+      // Both axes move, which is the lesson demonstrated (issue #267).
       final gesture = await tester.startGesture(const Offset(400, 450));
       await tester.pump(const Duration(milliseconds: 16));
       await gesture.moveBy(const Offset(72, -144));
@@ -172,7 +176,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(hintFinder, findsNothing,
-          reason: 'the thumb landed where the hint said it would');
+          reason: 'the thumb demonstrated both axes the hint taught');
       expect(gameState.controlHintDismissed, isTrue);
       expect(game.player.throttleInput, greaterThan(0.8),
           reason: 'the dismissal came from a real input, not a timer');
@@ -180,29 +184,97 @@ void main() {
       await gesture.up();
     });
 
-    testWidgets('a tap on the hint itself dismisses it', (tester) async {
+    testWidgets('a low tap alone no longer dismisses the lesson (issue #267)',
+        (tester) async {
       await pumpGameScreen(tester);
       expect(hintFinder, findsOneWidget);
 
       // The hint sits inside the stick's touch region, so a tap on it is
-      // a lower-half touch: down, up, no movement.
+      // a lower-half landing: it answers the upper-half cue, but one
+      // landing with neither throttle nor steering must not consume the
+      // lesson forever.
       final gesture =
           await tester.startGesture(tester.getCenter(hintFinder));
       await tester.pump(const Duration(milliseconds: 16));
       await gesture.up();
       await tester.pump(const Duration(milliseconds: 16));
 
-      expect(hintFinder, findsNothing);
+      expect(hintFinder, findsOneWidget,
+          reason: 'a landing alone demonstrates nothing yet');
+      expect(gameState.controlHintDismissed, isFalse);
+    });
+
+    testWidgets('the lesson ends only after both axes are demonstrated '
+        '(issue #267)', (tester) async {
+      final game = await pumpGameScreen(tester);
+      expect(hintFinder, findsOneWidget);
+
+      // Accelerate only: straight up past the rim.
+      var gesture = await tester.startGesture(const Offset(400, 450));
+      await tester.pump(const Duration(milliseconds: 16));
+      await gesture.moveBy(const Offset(0, -160));
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(game.player.throttleInput, greaterThan(0.8),
+          reason: 'precondition: the first glide accelerated');
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 16));
+
+      expect(hintFinder, findsOneWidget,
+          reason: 'speed without steering has not demonstrated the lesson');
+      expect(gameState.controlHintDismissed, isFalse);
+
+      // Steer only: a sideways glide on a fresh landing.
+      gesture = await tester.startGesture(const Offset(400, 450));
+      await tester.pump(const Duration(milliseconds: 16));
+      await gesture.moveBy(const Offset(72, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+
+      expect(hintFinder, findsNothing,
+          reason: 'the second axis completes the demonstration');
       expect(gameState.controlHintDismissed, isTrue);
+
+      await gesture.up();
+    });
+
+    testWidgets('an upper-half touch cues the thumb lower immediately '
+        '(issue #267)', (tester) async {
+      await pumpGameScreen(tester);
+      expect(hintFinder, findsOneWidget);
+      expect(find.textContaining('Move your thumb lower'), findsNothing);
+
+      // A thumb landing in the dead upper half feeds nothing — it must
+      // be answered with the cue on the touch itself. 250 sits inside
+      // the viewport's upper half on the default 800×600 test surface
+      // (the virtual half line lands at screen y 300) and below the HUD
+      // band, which owns the touches above it.
+      final gesture = await tester.startGesture(const Offset(400, 250));
+      await tester.pump();
+
+      expect(find.textContaining('Move your thumb lower'), findsOneWidget,
+          reason: 'the touch must be answered the moment it lands');
+      expect(hintFinder, findsOneWidget,
+          reason: 'the cue replaces the line, not the lesson');
+      expect(gameState.controlHintDismissed, isFalse);
+
+      // A lower-half landing is the answer: the cue stands down and the
+      // lesson carries on.
+      await gesture.up();
+      final lower = await tester.startGesture(const Offset(400, 450));
+      await tester.pump();
+
+      expect(find.textContaining('Move your thumb lower'), findsNothing);
+      expect(hintFinder, findsOneWidget);
+      await lower.up();
     });
 
     testWidgets('the dismissal persists — the next session renders no hint',
         (tester) async {
       await pumpGameScreen(tester);
 
+      // Demonstrate both axes in one glide, so the lesson is earned.
       final gesture = await tester.startGesture(const Offset(400, 450));
       await tester.pump(const Duration(milliseconds: 16));
-      await gesture.moveBy(const Offset(0, -160));
+      await gesture.moveBy(const Offset(72, -144));
       await tester.pump(const Duration(milliseconds: 16));
       await gesture.up();
       await tester.pump(const Duration(milliseconds: 16));
@@ -428,10 +500,10 @@ void main() {
       await pumpGameScreen(tester);
       expect(hintFinder, findsOneWidget);
 
-      // Dismiss the hint the way a player does.
+      // Dismiss the hint the way a player does: demonstrate both axes.
       final gesture = await tester.startGesture(const Offset(400, 450));
       await tester.pump(const Duration(milliseconds: 16));
-      await gesture.moveBy(const Offset(0, -160));
+      await gesture.moveBy(const Offset(72, -144));
       await tester.pump(const Duration(milliseconds: 16));
       await gesture.up();
       await tester.pump(const Duration(milliseconds: 16));

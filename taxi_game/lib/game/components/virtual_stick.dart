@@ -178,7 +178,13 @@ class VirtualStick extends PositionComponent
     // one-thumb gate (issue #200): the lower half is also the waiting
     // room's admission test, so it has to run for a second thumb too.
     final local = game.camera.viewport.globalToLocal(event.canvasPosition);
-    if (local.y <= game.camera.viewport.virtualSize.y / 2) return;
+    if (local.y <= game.camera.viewport.virtualSize.y / 2) {
+      // The dead upper half (issue #267): the touch can never feed the
+      // stick, so it raises the hint's cue to move the thumb lower
+      // instead of vanishing silently.
+      game.onUpperHalfTouch();
+      return;
+    }
     // The waiting room (issue #200): a second thumb used to be dropped
     // right here, and once the owner lifted, that thumb's every update
     // failed the pointer guard in [onDragUpdate] — the cab coasts dead
@@ -327,6 +333,9 @@ class VirtualStick extends PositionComponent
     _input = input;
     game.player.setSteering(input.steering);
     game.player.setThrottle(input.throttle);
+    // The hint's lesson (issue #267) watches the axes the stick feeds,
+    // not the touch itself: only a real throttle and a real steer end it.
+    game.onStickInput(input);
   }
 
   @override
