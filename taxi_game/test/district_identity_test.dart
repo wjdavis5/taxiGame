@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -10,6 +11,7 @@ import 'package:taxi_game/game/components/district_palette.dart';
 import 'package:taxi_game/game/components/road_segment.dart';
 import 'package:taxi_game/game/systems/run_environment.dart';
 import 'package:taxi_game/game/taxi_game.dart';
+import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -18,8 +20,22 @@ import 'package:taxi_game/services/storage_service.dart';
 /// silhouette, landmark, and palette, all derived from the profile the
 /// environment already rolls — so these probes pin pixels and shapes at
 /// the golden seed without a new draw in the seeded stream.
+///
+/// The palette probes assert literal byte values, never a re-read of the
+/// [DistrictPalette] lookup the renderer itself uses: a palette that
+/// collapses into another district or two districts that swap must fail
+/// here (review of PR #300).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  /// One pixel's RGB, against literal bytes.
+  void expectPixel(
+      Uint8List pixels, int x, int y, (int, int, int) rgb, String what) {
+    final o = (y * 400 + x) * 4;
+    expect(pixels[o], rgb.$1, reason: '$what red');
+    expect(pixels[o + 1], rgb.$2, reason: '$what green');
+    expect(pixels[o + 2], rgb.$3, reason: '$what blue');
+  }
 
   Future<Background> loadedBackground(RoadProfile profile) async {
     final background = Background()..profile = profile;
@@ -39,13 +55,57 @@ void main() {
         .asUint8List();
   }
 
-  int red(Uint8List pixels, int x, int y) => pixels[(y * 400 + x) * 4];
-
-  /// The byte the palette colour lays down in one channel (Color's
-  /// components are 0..1 doubles since the wide-gamut migration).
-  int byteOf(double component) => (component * 255).round();
-
   group('the skyline, landmark, and palette are the district', () {
+    test('the palettes are pinned literally and differ on every axis', () {
+      // Literal values, not a re-read of the lookup the renderer uses.
+      expect(DistrictPalette.of(RoadProfile.standard).surface,
+          const Color(0xFF404040));
+      expect(DistrictPalette.of(RoadProfile.narrow).surface,
+          const Color(0xFF4A3E34));
+      expect(DistrictPalette.of(RoadProfile.avenue).surface,
+          const Color(0xFF3C4650));
+      expect(DistrictPalette.of(RoadProfile.narrow).sidewalk,
+          const Color(0xFFC4AE8E));
+      expect(DistrictPalette.of(RoadProfile.avenue).sidewalk,
+          const Color(0xFFC6CBD3));
+      expect(DistrictPalette.of(RoadProfile.narrow).intersection,
+          const Color(0xFF544639));
+      expect(DistrictPalette.of(RoadProfile.avenue).intersection,
+          const Color(0xFF46505A));
+      expect(DistrictPalette.of(RoadProfile.narrow).building,
+          const Color(0xFF8A5A44));
+      expect(DistrictPalette.of(RoadProfile.avenue).building,
+          const Color(0xFF8E97A3));
+      expect(DistrictPalette.of(RoadProfile.narrow).landmark,
+          const Color(0xFFB9A38C));
+      expect(DistrictPalette.of(RoadProfile.avenue).landmark,
+          const Color(0xFF6E7683));
+      expect(DistrictPalette.of(RoadProfile.narrow).marking,
+          const Color(0xFFE8D9A8));
+      expect(DistrictPalette.of(RoadProfile.avenue).marking,
+          const Color(0xFFF4F7FF));
+
+      // Every axis is three distinct values, so a collapse into one
+      // palette cannot pass unnoticed.
+      final palettes = {
+        for (final p in RoadProfile.values) p: DistrictPalette.of(p),
+      };
+      final axes = <String, List<Color>>{
+        'surface': [for (final p in RoadProfile.values) palettes[p]!.surface],
+        'sidewalk': [for (final p in RoadProfile.values) palettes[p]!.sidewalk],
+        'marking': [for (final p in RoadProfile.values) palettes[p]!.marking],
+        'intersection': [
+          for (final p in RoadProfile.values) palettes[p]!.intersection,
+        ],
+        'building': [for (final p in RoadProfile.values) palettes[p]!.building],
+        'landmark': [for (final p in RoadProfile.values) palettes[p]!.landmark],
+      };
+      for (final axis in axes.entries) {
+        expect(axis.value.toSet(), hasLength(RoadProfile.values.length),
+            reason: '${axis.key} must be a different colour per district');
+      }
+    });
+
     test('silhouettes and landmarks differ per district', () async {
       final standard = await loadedBackground(RoadProfile.standard);
       final narrow = await loadedBackground(RoadProfile.narrow);
@@ -91,26 +151,44 @@ void main() {
       expect(narrow, isNot(equals(avenue)));
       expect(standard, isNot(equals(avenue)));
 
-      // Probes, per district: the roofline and the landmark carry the
-      // building and landmark colours the palette names.
-      expect(red(standard, 40, 40),
-          byteOf(DistrictPalette.of(RoadProfile.standard).building.r),
-          reason: 'Midtown block at noon');
-      expect(red(standard, 41, 342),
-          byteOf(DistrictPalette.of(RoadProfile.standard).landmark.r),
-          reason: 'the water tower tank at noon');
-      expect(red(narrow, 34, 130),
-          byteOf(DistrictPalette.of(RoadProfile.narrow).building.r),
-          reason: 'a gable above a rowhouse body');
-      expect(red(narrow, 33, 300),
-          byteOf(DistrictPalette.of(RoadProfile.narrow).landmark.r),
-          reason: 'the clock tower shaft');
-      expect(red(avenue, 40, 30),
-          byteOf(DistrictPalette.of(RoadProfile.avenue).building.r),
-          reason: 'a tower setback at noon');
-      expect(red(avenue, 360, 400),
-          byteOf(DistrictPalette.of(RoadProfile.avenue).landmark.r),
-          reason: 'the monument shaft');
+      // Literal byte probes: the roofline and the landmark carry the
+      // building and landmark colours the palette pins above.
+      expectPixel(standard, 40, 40, (0x61, 0x61, 0x61), 'Midtown block');
+      expectPixel(
+          standard, 41, 342, (0x4E, 0x52, 0x59), 'the water tower tank');
+      expectPixel(narrow, 34, 130, (0x8A, 0x5A, 0x44),
+          'a gable above a rowhouse body');
+      expectPixel(narrow, 33, 300, (0xB9, 0xA3, 0x8C), 'the clock tower shaft');
+      expectPixel(avenue, 40, 30, (0x8E, 0x97, 0xA3), 'a tower setback');
+      expectPixel(
+          avenue, 360, 400, (0x6E, 0x76, 0x83), 'the monument shaft');
+    });
+
+    test('a mounted background rebuilds its skyline when the district changes',
+        () async {
+      // The live path (a run driving across a district line): the profile
+      // is set before [Background.onLoad] nowhere here — it changes on an
+      // already-mounted component, so only a render can rebuild.
+      final background = Background();
+      await background.onLoad();
+      final midtown = await renderBackground(background, 0);
+      expect(background.skylineBounds, hasLength(10),
+          reason: 'Midtown until the road says otherwise');
+
+      background.profile = RoadProfile.narrow;
+      final oldTown = await renderBackground(background, 0);
+      expect(background.skylineBounds, hasLength(14),
+          reason: 'the switch rebuilds the skyline, not just the paint');
+      expect(oldTown, isNot(equals(midtown)));
+      expectPixel(oldTown, 34, 130, (0x8A, 0x5A, 0x44),
+          'the Old Town gable after the switch');
+
+      background.profile = RoadProfile.avenue;
+      final avenue = await renderBackground(background, 0);
+      expect(background.skylineBounds, hasLength(8));
+      expect(avenue, isNot(equals(oldTown)));
+      expectPixel(avenue, 360, 400, (0x6E, 0x76, 0x83),
+          'the monument after the switch');
     });
   });
 
@@ -134,15 +212,7 @@ void main() {
           .asUint8List();
     }
 
-    void expectRgb(Uint8List pixels, double worldX, double worldY, Color color,
-        String what) {
-      final o = (worldY.round() * 400 + worldX.round()) * 4;
-      expect(pixels[o], byteOf(color.r), reason: '$what red');
-      expect(pixels[o + 1], byteOf(color.g), reason: '$what green');
-      expect(pixels[o + 2], byteOf(color.b), reason: '$what blue');
-    }
-
-    test('surface, kerb, and junction differ per district at a fixed seed',
+    test('surface, kerb, and junction are pinned literally per district',
         () async {
       final env = RunEnvironment(seed: 0xC0FFEE);
       // Settled chunks, clear of tapers: seed 0xC0FFEE's pinned segment
@@ -166,40 +236,81 @@ void main() {
 
       // Probe a quarter lane in from each road's left kerb, clear of lane
       // boundaries and the centre dash, and the kerb 15 px outside it.
-      void probe(Uint8List pixels, double top, RoadProfile profile) {
+      // The expected bytes are literals: a palette collapse or a swap
+      // between districts must fail here, not move with the renderer.
+      void probe(Uint8List pixels, double top, RoadProfile profile,
+          (int, int, int) surface, (int, int, int) kerb) {
         final road = env.roadAt(top - 200);
         expect(road.profile, profile, reason: 'probe road at $top');
-        final palette = DistrictPalette.of(profile);
-        expectRgb(pixels, road.leftX + road.width * 0.25, 200, palette.surface,
-            '${profile.districtName} surface');
-        expectRgb(pixels, road.leftX - 15, 200, palette.sidewalk,
+        expectPixel(pixels, (road.leftX + road.width * 0.25).round(), 200,
+            surface, '${profile.districtName} surface');
+        expectPixel(pixels, (road.leftX - 15).round(), 200, kerb,
             '${profile.districtName} kerb');
       }
 
-      probe(standard, standardTop, RoadProfile.standard);
-      probe(narrow, narrowTop, RoadProfile.narrow);
-      probe(avenue, avenueTop, RoadProfile.avenue);
-
-      // The classic street is byte-for-byte the pre-#280 one.
-      expectRgb(standard, 150, 200, const Color(0xFF404040), 'asphalt');
-      expectRgb(standard, 85, 200, const Color(0xFFBDBDBD), 'kerb');
+      probe(standard, standardTop, RoadProfile.standard, (0x40, 0x40, 0x40),
+          (0xBD, 0xBD, 0xBD));
+      probe(narrow, narrowTop, RoadProfile.narrow, (0x4A, 0x3E, 0x34),
+          (0xC4, 0xAE, 0x8E));
+      probe(avenue, avenueTop, RoadProfile.avenue, (0x3C, 0x46, 0x50),
+          (0xC6, 0xCB, 0xD3));
 
       // The junction wears the district it stands in: 45,000 sits in
       // narrow segment 11, whose cross-street asphalt is warm.
-      expectRgb(junction, 150, 600,
-          DistrictPalette.of(RoadProfile.narrow).intersection,
+      expectPixel(junction, 150, 600, (0x54, 0x46, 0x39),
           'old-town junction');
+    });
+
+    test('a chunk crossing a district line paints both bands', () async {
+      // The standard→narrow line at 16,000 (golden segment 4). Chunk 20
+      // covers [15,600, 16,400) and straddles it: its recorded picture
+      // carries two districts, so the band overpaint runs for real.
+      final env = RunEnvironment(seed: 0xC0FFEE);
+      const top = 16400.0;
+      expect(env.roadAt(15960).profile, RoadProfile.standard);
+      expect(env.roadAt(16000).profile, RoadProfile.narrow);
+      expect(env.rainIntensityAt(top - 400), 0, reason: 'a dry stretch');
+
+      final pixels = await roadPixels(env, top);
+
+      // Below the line: Midtown's classic asphalt and kerb.
+      final midtown = env.roadAt(15700);
+      expectPixel(pixels, (midtown.leftX + midtown.width * 0.25).round(), 700,
+          (0x40, 0x40, 0x40), 'Midtown surface below the line');
+      expectPixel(pixels, (midtown.leftX - 15).round(), 700, (0xBD, 0xBD, 0xBD),
+          'Midtown kerb below the line');
+
+      // Above the line, in the same chunk: Old Town's warm asphalt and
+      // sandstone.
+      final oldTown = env.roadAt(16200);
+      expectPixel(pixels, (oldTown.leftX + oldTown.width * 0.25).round(), 200,
+          (0x4A, 0x3E, 0x34), 'Old Town surface above the line');
+      expectPixel(pixels, (oldTown.leftX - 15).round(), 200, (0xC4, 0xAE, 0x8E),
+          'Old Town kerb above the line');
     });
   });
 
   group('the sky follows the taxi into each district', () {
-    test('an endless run sets the background district from the road', () async {
+    Future<TaxiGame> mountGame(TaxiGame game) async {
+      game.onGameResize(Vector2(400, 800));
+      await game.onLoad();
+      // ignore: invalid_use_of_internal_member
+      game.mount();
+      await game.ready();
+      return game;
+    }
+
+    Future<GameStateService> freshGameState() async {
       SharedPreferences.setMockInitialValues({});
       final storage = StorageService();
       await storage.init();
       final gameState = GameStateService(storage);
       await gameState.loadSaveData();
+      return gameState;
+    }
 
+    test('an endless run sets the background district from the road', () async {
+      final gameState = await freshGameState();
       final game = TaxiGame(
         levelLoader: LevelLoaderService(),
         gameState: gameState,
@@ -209,11 +320,7 @@ void main() {
         ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
         ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink());
-      game.onGameResize(Vector2(400, 800));
-      await game.onLoad();
-      // ignore: invalid_use_of_internal_member
-      game.mount();
-      await game.ready();
+      await mountGame(game);
 
       final background =
           game.camera.backdrop.children.whereType<Background>().first;
@@ -234,6 +341,36 @@ void main() {
       game.update(1 / 60);
       expect(background.profile, RoadProfile.avenue);
       expect(background.profile.districtName, 'Grand Avenue');
+    });
+
+    test('a level run keeps the classic Midtown sky', () async {
+      // Level mode has no living road; the background must rest at the
+      // standard district (taxi_game.dart's level resets), not carry the
+      // last endless run's skyline onto the fixed street.
+      SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey:
+            jsonEncode((SaveData.createDefault()..currentLevel = 1).toJson()),
+      });
+      final storage = StorageService();
+      await storage.init();
+      final gameState = GameStateService(storage);
+      await gameState.loadSaveData();
+
+      final game = TaxiGame(
+        levelLoader: LevelLoaderService(),
+        gameState: gameState,
+      )
+        ..overlays.addEntry('levelComplete', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('levelFailed', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('bankOrPush', (_, __) => const SizedBox.shrink())
+        ..overlays.addEntry('shiftBanked', (_, __) => const SizedBox.shrink());
+      await mountGame(game);
+
+      final background =
+          game.camera.backdrop.children.whereType<Background>().first;
+      game.update(1 / 60);
+      expect(background.profile, RoadProfile.standard);
+      expect(background.profile.districtName, 'Midtown');
     });
   });
 }

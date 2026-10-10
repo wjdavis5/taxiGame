@@ -272,10 +272,14 @@ class RoadSegment extends PositionComponent {
   }
 
   /// Overpaints the district bands of a chunk that crosses a district
-  /// boundary (issue #280): each row interval is filled with its own
-  /// profile's colour, clipped to [shape]. A single-district chunk skips
-  /// the pass entirely — its one colour is already laid down, so the
-  /// classic street's recorded picture is byte-for-byte the old one.
+  /// boundary (issue #280): each row interval is filled with the profile
+  /// sampled at its upper row, clipped to [shape]. The interval that
+  /// straddles the boundary therefore keeps the district of its first row
+  /// for up to one [_rowStep] past the true line — the same sampling
+  /// resolution the width taper already renders at. A single-district
+  /// chunk skips the pass entirely — its one colour is already laid down,
+  /// so the classic street's recorded picture is byte-for-byte the old
+  /// one.
   void _overpaintDistrictBands(
     Canvas canvas,
     List<_RoadRow> rows,
