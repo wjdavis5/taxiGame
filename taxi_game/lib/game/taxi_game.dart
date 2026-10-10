@@ -2091,10 +2091,13 @@ class TaxiGame extends FlameGame
       // passed dropoff relocates (issue #28) instead of failing.
       if (!isEndless) {
         _checkForMissedFares();
-        // The close-call lesson's own dead end (issue #269): once the
+        // The close-call lesson's own deadline (issue #269): once the
         // taxi is pressed against the course's end with the required
-        // shave still owed, the verdict is failure — the street past
-        // the final dropoff cannot supply a pass.
+        // shave still owed, the verdict is failure. The street past the
+        // final dropoff still supplies passes until the spawn gate
+        // stops (~650 px from the road top), but the last ~600 px to
+        // the clamp accept no new waves, and the clamp is where the
+        // lesson stops waiting.
         _checkForCloseCallLessonEnd();
       }
 
