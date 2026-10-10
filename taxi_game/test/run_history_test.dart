@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/models/daily_result.dart';
+import 'package:taxi_game/models/daily_streak.dart';
 import 'package:taxi_game/models/ghost_trace.dart';
 import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/models/save_data.dart';
@@ -287,8 +288,10 @@ void main() {
         isEmpty,
         reason: 'the fresh save never reached the platform',
       );
-      // Memory is untouched, coherent with the old save still on disk.
-      expect(service.totalCoins, 30);
+      // Memory is untouched, coherent with the old save still on disk —
+      // 30 seeded coins plus the daily's declared day-one streak bonus
+      // (issue #281), which the record settled before the reset ran.
+      expect(service.totalCoins, 30 + DailyStreak.rewardCoins(1));
       expect(service.runHistory, hasLength(1));
       expect(service.dailyHistory, hasLength(1));
       expect(service.todayGhost, isNotNull);
@@ -296,7 +299,8 @@ void main() {
       // cache mutates ahead of the platform call, so the failed
       // daily-history remove evicted it from the cache while the store
       // kept it. The rollback must have put the cache back with it.
-      expect((await fakeStorage.loadSaveData())!.totalCoins, 30,
+      expect((await fakeStorage.loadSaveData())!.totalCoins,
+          30 + DailyStreak.rewardCoins(1),
           reason: 'the save reads back old through the cache too');
       expect(fakeStorage.loadRunHistory(), hasLength(1));
       expect(fakeStorage.loadDailyHistory(), hasLength(1),
@@ -359,14 +363,17 @@ void main() {
           reason: 'the rollback rewrote the removed ghost');
       expect(after['flutter.${StorageService.saveDataKey}'], saveJson,
           reason: 'the old save is the only one on disk');
-      expect(service.totalCoins, 30);
+      // The same old save in memory: 30 seeded coins plus the daily's
+      // declared day-one streak bonus (issue #281).
+      expect(service.totalCoins, 30 + DailyStreak.rewardCoins(1));
       expect(service.runHistory, hasLength(1));
       expect(service.dailyHistory, hasLength(1));
       expect(service.todayGhost, isNotNull);
       // The refused setString cached the fresh save (issue #232): the
       // readback through the service must show the old save the rollback
       // put back, not the cache's fresh copy.
-      expect((await fakeStorage.loadSaveData())!.totalCoins, 30,
+      expect((await fakeStorage.loadSaveData())!.totalCoins,
+          30 + DailyStreak.rewardCoins(1),
           reason: 'the rollback undid the refused setString\'s cache entry');
       expect(fakeStorage.loadRunHistory(), hasLength(1));
       expect(fakeStorage.loadDailyHistory(), hasLength(1));

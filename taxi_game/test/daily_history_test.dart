@@ -1,7 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/models/daily_result.dart';
+import 'package:taxi_game/models/daily_streak.dart';
+import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'helpers/calendar_days.dart';
@@ -120,6 +124,195 @@ void main() {
       await reloaded.loadSaveData();
       expect(reloaded.dailyHistory, isEmpty,
           reason: 'the wipe reached storage, not just memory');
+    });
+  });
+
+  group('the visible streak and its reward (issue #281)', () {
+    int rewardFor(int streak) => DailyStreak.rewardCoins(streak);
+
+    test('a first daily starts the run and pays the declared bonus', () async {
+      final today = DailyShift.todayKey;
+      await gameState.recordDailyResult(resultFor(today));
+
+      expect(gameState.dailyStreak, 1);
+      expect(gameState.dailyBestStreak, 1);
+      expect(gameState.totalCoins, rewardFor(1));
+      expect(gameState.settledDailyStreakRewardFor(today), rewardFor(1));
+    });
+
+    test('consecutive days extend the run and escalate the bonus', () async {
+      for (var i = 2; i >= 0; i--) {
+        await gameState.recordDailyResult(
+            resultFor(DailyShift.dateKeyFor(calendarDaysFromNow(-i))));
+      }
+
+      expect(gameState.dailyStreak, 3);
+      expect(gameState.dailyBestStreak, 3);
+      expect(gameState.totalCoins, rewardFor(1) + rewardFor(2) + rewardFor(3));
+      expect(gameState.settledDailyStreakRewardFor(DailyShift.todayKey),
+          rewardFor(3));
+    });
+
+    test('a missed day breaks the run but keeps the best', () async {
+      // Days -3 and -2 played; -1 skipped; today restarts at day one.
+      await gameState.recordDailyResult(
+          resultFor(DailyShift.dateKeyFor(calendarDaysFromNow(-3))));
+      await gameState.recordDailyResult(
+          resultFor(DailyShift.dateKeyFor(calendarDaysFromNow(-2))));
+      await gameState.recordDailyResult(resultFor(DailyShift.todayKey));
+
+      expect(gameState.dailyStreak, 1);
+      expect(gameState.dailyBestStreak, 2);
+      expect(gameState.totalCoins, rewardFor(1) + rewardFor(2) + rewardFor(1),
+          reason: 'the restart pays the day-one rate again');
+    });
+
+    test('a missed day reads as 0 without erasing the stored run', () async {
+      // A two-day run ending two days ago: nothing alive today.
+      await gameState.recordDailyResult(
+          resultFor(DailyShift.dateKeyFor(calendarDaysFromNow(-3))));
+      await gameState.recordDailyResult(
+          resultFor(DailyShift.dateKeyFor(calendarDaysFromNow(-2))));
+
+      expect(gameState.dailyStreak, 0);
+      expect(gameState.dailyBestStreak, 2);
+      expect(
+        gameState.dailyStreakOn(
+            DailyShift.dateKeyFor(calendarDaysFromNow(-2))),
+        2,
+        reason: 'the day the run ended still reads it',
+      );
+    });
+
+    test('the reward settles at most once per date', () async {
+      final today = DailyShift.todayKey;
+      await gameState.recordDailyResult(resultFor(today, score: 100));
+      await gameState.recordDailyResult(
+          resultFor(today, score: 999, banked: false));
+
+      expect(gameState.dailyHistory, hasLength(1));
+      expect(gameState.dailyStreak, 1);
+      expect(gameState.totalCoins, rewardFor(1),
+          reason: 'the duplicate record must not pay a second time');
+      expect(gameState.settledDailyStreakRewardFor(today), rewardFor(1));
+    });
+
+    test('the run and the settled reward survive a restart', () async {
+      final yesterday = DailyShift.dateKeyFor(calendarDaysFromNow(-1));
+      final today = DailyShift.todayKey;
+      // The save goes first, as it does on a device (issue #218).
+      await gameState.save();
+      await gameState.recordDailyResult(resultFor(yesterday));
+      await gameState.recordDailyResult(resultFor(today));
+
+      final reloaded = GameStateService(storage);
+      await reloaded.loadSaveData();
+
+      expect(reloaded.dailyStreak, 2);
+      expect(reloaded.dailyBestStreak, 2);
+      expect(reloaded.totalCoins, rewardFor(1) + rewardFor(2));
+      expect(reloaded.settledDailyStreakRewardFor(today), rewardFor(2));
+
+      // A replay of the settled day still pays nothing after the load.
+      await reloaded.recordDailyResult(resultFor(today, score: 1));
+      expect(reloaded.totalCoins, rewardFor(1) + rewardFor(2));
+    });
+
+    test('a run crosses the fall-back transition without breaking', () async {
+      // 2026-11-01 is the 25-hour US fall-back day; the calendar steps
+      // keep the three keys three consecutive days in any host zone.
+      for (var i = 0; i <= 2; i++) {
+        await gameState.recordDailyResult(resultFor(DailyShift.dateKeyFor(
+            calendarDaysFrom(DateTime(2026, 10, 31), i))));
+      }
+
+      expect(gameState.dailyStreakOn('2026-11-02'), 3,
+          reason: 'three calendar days, one 25-hour day among them');
+      expect(gameState.dailyBestStreak, 3);
+      expect(gameState.totalCoins, rewardFor(1) + rewardFor(2) + rewardFor(3));
+    });
+
+    test('a run crosses the spring-forward transition without breaking',
+        () async {
+      // 2026-03-08 is the 23-hour US spring-forward day.
+      for (var i = 0; i <= 2; i++) {
+        await gameState.recordDailyResult(resultFor(DailyShift.dateKeyFor(
+            calendarDaysFrom(DateTime(2026, 3, 7), i))));
+      }
+
+      expect(gameState.dailyStreakOn('2026-03-09'), 3,
+          reason: 'three calendar days, one 23-hour day among them');
+      expect(gameState.totalCoins, rewardFor(1) + rewardFor(2) + rewardFor(3));
+    });
+
+    test('a missed transition day resets the run', () async {
+      // 2026-11-01 skipped between the 31st and the 2nd.
+      await gameState.recordDailyResult(
+          resultFor(DailyShift.dateKeyFor(DateTime(2026, 10, 31, 12))));
+      await gameState.recordDailyResult(
+          resultFor(DailyShift.dateKeyFor(DateTime(2026, 11, 2, 12))));
+
+      expect(gameState.dailyStreakOn('2026-11-02'), 1,
+          reason: 'the skipped 25-hour day broke the run');
+      expect(gameState.dailyBestStreak, 1);
+    });
+
+    test('resetting progress wipes the streak and its settlement record',
+        () async {
+      await gameState.recordDailyResult(resultFor(DailyShift.todayKey));
+      await gameState.resetProgress();
+
+      expect(gameState.dailyStreak, 0);
+      expect(gameState.dailyBestStreak, 0);
+      expect(gameState.totalCoins, 0);
+      expect(
+          gameState.settledDailyStreakRewardFor(DailyShift.todayKey), isNull);
+    });
+
+    test('a save written before the streak block seeds from the history',
+        () async {
+      final yesterday = DailyShift.dateKeyFor(calendarDaysFromNow(-1));
+      final twoDaysAgo = DailyShift.dateKeyFor(calendarDaysFromNow(-2));
+      final threeDaysAgo = DailyShift.dateKeyFor(calendarDaysFromNow(-3));
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        StorageService.dailyHistoryKey,
+        jsonEncode([
+          resultFor(threeDaysAgo).toJson(),
+          resultFor(twoDaysAgo).toJson(),
+          resultFor(yesterday).toJson(),
+        ]),
+      );
+      // The pre-#281 save shape: no dailyStreak key at all.
+      await prefs.setString(
+        StorageService.saveDataKey,
+        jsonEncode({
+          'currentLevel': 11,
+          'totalCoins': 40,
+          'totalGems': 0,
+          'unlockedVehicles': ['taxi_yellow'],
+          'selectedVehicle': 'taxi_yellow',
+          'achievements': <String, bool>{},
+          'settings': Settings.createDefault().toJson(),
+        }),
+      );
+
+      final reloaded = GameStateService(storage);
+      await reloaded.loadSaveData();
+
+      expect(reloaded.dailyStreak, 3,
+          reason: 'the run that reaches yesterday is still alive');
+      expect(reloaded.dailyBestStreak, 3);
+      expect(reloaded.settledDailyStreakRewardFor(yesterday), isNull,
+          reason: 'no reward was ever paid under the old save');
+      expect(reloaded.totalCoins, 40,
+          reason: 'the seed shows the streak, it pays nothing');
+
+      // The seed persists: the next load reads it back as stored state.
+      final again = GameStateService(storage);
+      await again.loadSaveData();
+      expect(again.dailyStreak, 3);
+      expect(again.dailyBestStreak, 3);
     });
   });
 
