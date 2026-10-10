@@ -14,6 +14,11 @@ import 'package:taxi_game/game/systems/shift_earnings.dart';
 /// per-fare coins, chain multipliers, brink bank). The table it prints is
 /// the number the garage ladder is priced against.
 ///
+/// The distance line reports both the batch mean and the true median
+/// (with the median driven time): the mean is pulled by both tails —
+/// early wrecks below, the safety-capped survivors above — so the median
+/// is what a typical shift looks like.
+///
 /// Run with the expanded reporter to see the table:
 ///
 /// ```
@@ -36,6 +41,8 @@ void main() {
   const runCount = 101;
 
   final medians = <String, int>{};
+  final shiftStats = <String,
+      ({double meanKm, double medianKm, double medianDrivenMinutes})>{};
 
   test('coins per shift, by skill level (the tuning table)', () {
     print('Endless coins per shift — $runCount seeds '
@@ -49,7 +56,6 @@ void main() {
       final label = profile.$1;
       final runs = <SimulatedRun>[];
       final earnings = <ShiftEarnings>[];
-      var totalKm = 0.0;
       for (var seed = firstSeed; seed < firstSeed + runCount; seed++) {
         final run = RunLengthSimulator(
           seed: seed,
@@ -59,8 +65,14 @@ void main() {
         ).run();
         runs.add(run);
         earnings.add(ShiftEarnings.forRun(run));
-        totalKm += run.distancePx / 10000;
       }
+
+      final estimate = RunLengthEstimate.compute(runs);
+      final meanKm = runs.fold(0.0, (sum, run) => sum + run.distancePx) /
+          runs.length /
+          10000;
+      final medianKm = estimate.medianDistancePx / 10000;
+      final medianDrivenMinutes = estimate.medianDrivenSeconds / 60;
 
       List<int> sorted(int Function(ShiftEarnings) of) =>
           earnings.map(of).toList()..sort();
@@ -75,13 +87,20 @@ void main() {
 
       final median = pct(totals, 0.5);
       medians[label] = median;
+      shiftStats[label] = (
+        meanKm: meanKm,
+        medianKm: medianKm,
+        medianDrivenMinutes: medianDrivenMinutes,
+      );
 
       print('$label driver '
           '(reaction ${profile.reactionInterval}s, '
           'misjudge ${profile.misjudgeRate}, '
           'lookahead ${profile.lookahead}s)');
-      print('  median shift       : ${(totalKm / runCount).toStringAsFixed(1)} km, '
+      print('  median shift       : ${medianKm.toStringAsFixed(1)} km, '
+          '${medianDrivenMinutes.toStringAsFixed(1)} min driven, '
           '${pct(fares, 0.5)} fares delivered, best chain x${pct(chains, 0.5)}');
+      print('  mean shift         : ${meanKm.toStringAsFixed(1)} km');
       print('  fares-only floor   : '
           'p25 ${pct(floors, 0.25)}  median ${pct(floors, 0.5)}  '
           'p75 ${pct(floors, 0.75)}');
@@ -98,6 +117,24 @@ void main() {
         'Perfect-foresight banking is the ceiling; a real player\'s wallet '
         'lands between the floor and the ceiling.');
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('the table carries a labelled mean and true medians per profile', () {
+    // The printed fields, pinned so a later edit cannot silently drop the
+    // median or label the mean as one. The mean and median need not agree
+    // (early wrecks and capped survivors pull opposite ways); both must
+    // be real shift-scale numbers.
+    expect(shiftStats.keys, containsAll(['new', 'median', 'good']));
+    for (final MapEntry(key: label, value: stats) in shiftStats.entries) {
+      expect(stats.medianKm, greaterThan(0.0), reason: label);
+      expect(
+        stats.medianKm,
+        lessThanOrEqualTo(RunLengthSimulator.maxDistancePx / 10000),
+        reason: label,
+      );
+      expect(stats.meanKm, greaterThan(0.0), reason: label);
+      expect(stats.medianDrivenMinutes, greaterThan(0.0), reason: label);
+    }
+  });
 
   test('a first-session driver out-earns nothing: new < median', () {
     // Only the bottom of the ladder is pinned as an ordering. Median vs
