@@ -247,9 +247,11 @@ void main() {
 
     test('a counted day with no settled reward pays nothing on replay',
         () async {
-      // The migration seed's shape: the run counted today, no reward was
-      // ever paid under the old save — the last-counted-day half of the
-      // settlement guard must hold on its own.
+      // Defense-only shape: the block counted today with no reward on
+      // record. The migration seed cannot produce it — fromHistory leaves
+      // its day in the history, and the caller guard would drop the
+      // replay — but the last-counted-day half of the settlement guard
+      // must hold on its own.
       final today = DailyShift.todayKey;
       await seedSave(totalCoins: 0, dailyStreak: {
         'current': 1,
@@ -302,6 +304,42 @@ void main() {
       expect(reloaded.dailyBestStreak, 2);
       expect(reloaded.totalCoins, rewardFor(1) + rewardFor(2));
       expect(reloaded.dailyResultFor(today)!.score, 999);
+    });
+
+    test('a terminal save failure holds the history back, so the day '
+        'replays in full', () async {
+      final yesterday = DailyShift.dateKeyFor(calendarDaysFromNow(-1));
+      final today = DailyShift.todayKey;
+      // A real save from yesterday, as on a device: the durable state a
+      // stranded day would sit beside.
+      await gameState.recordDailyResult(resultFor(yesterday));
+      final coinsAfterYesterday = gameState.totalCoins;
+
+      // Today's record runs on a storage whose save writes fail
+      // terminally.
+      final failing = _FailingSaveStorage();
+      await failing.init();
+      final service = GameStateService(failing);
+      await service.loadSaveData();
+      await service.recordDailyResult(resultFor(today, score: 340));
+      expect(failing.saveAttempts, 1,
+          reason: 'precondition: the record went through the failing save');
+
+      // The failed save and the held-back history: the durable store
+      // still says yesterday only, and no history-ahead state exists.
+      final reloaded = GameStateService(storage);
+      await reloaded.loadSaveData();
+      expect(reloaded.dailyResultFor(today), isNull,
+          reason: 'the history write never ran beside a failed save');
+      expect(reloaded.dailyStreak, 1, reason: 'the run still ends yesterday');
+      expect(reloaded.totalCoins, coinsAfterYesterday);
+
+      // The day replays in full: the run extends and the bonus settles.
+      await reloaded.recordDailyResult(resultFor(today, score: 340));
+      expect(reloaded.dailyStreak, 2);
+      expect(reloaded.dailyBestStreak, 2);
+      expect(reloaded.totalCoins, coinsAfterYesterday + rewardFor(2));
+      expect(reloaded.settledDailyStreakRewardFor(today), rewardFor(2));
     });
 
     test('a completion older than the stored run settles nothing', () async {
@@ -490,7 +528,7 @@ class _KillAtSecondWriteStorage extends StorageService {
   }
 
   @override
-  Future<void> saveSaveData(SaveData data) {
+  Future<bool> saveSaveData(SaveData data) {
     _reachWrite();
     return super.saveSaveData(data);
   }
@@ -499,5 +537,19 @@ class _KillAtSecondWriteStorage extends StorageService {
   Future<void> saveDailyHistory(List<DailyResult> results) {
     _reachWrite();
     return super.saveDailyHistory(results);
+  }
+}
+
+/// A storage whose save writes fail terminally — both attempts refused,
+/// the same `false` the real retry path returns — while every other
+/// write lands. The shape of a refused save beside a successful history
+/// write: the state the record's history gate must prevent.
+class _FailingSaveStorage extends StorageService {
+  int saveAttempts = 0;
+
+  @override
+  Future<bool> saveSaveData(SaveData data) async {
+    saveAttempts++;
+    return false;
   }
 }

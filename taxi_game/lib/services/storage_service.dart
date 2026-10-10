@@ -148,10 +148,13 @@ class StorageService {
     return false;
   }
 
-  /// Save game data
-  Future<void> saveSaveData(SaveData data) async {
+  /// Save game data. Returns whether the write reached the platform —
+  /// `false` after both attempts fail (issue #281): the daily record
+  /// gates its history write on this, so a terminal save failure cannot
+  /// leave the history ahead of the save.
+  Future<bool> saveSaveData(SaveData data) {
     final jsonString = jsonEncode(data.toJson());
-    await _write(
+    return _write(
       'save data',
       () => _prefs.setString(saveDataKey, jsonString),
     );

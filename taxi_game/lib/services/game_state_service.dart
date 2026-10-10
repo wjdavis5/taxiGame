@@ -362,8 +362,12 @@ class GameStateService extends ChangeNotifier {
   /// flushes it — once — after the transaction settles.
   bool _saveRequestedDuringReset = false;
 
-  /// Save current data to storage
-  Future<void> save() async {
+  /// Save current data to storage. Returns whether the write reached the
+  /// platform (issue #281): `false` after a terminal failure, and also
+  /// while a reset defers the write — a caller whose next step depends on
+  /// the save having landed holds it back (the daily record's history
+  /// write). Every other caller ignores the answer, as before.
+  Future<bool> save() async {
     if (_resetInFlight) {
       // A save issued while the reset transaction runs (issue #246) is
       // deferred, not encoded: writing the current `_saveData` now would
@@ -372,9 +376,9 @@ class GameStateService extends ChangeNotifier {
       // next launch. The reset flushes one deferred save when it settles,
       // so a settings toggle made mid-window still reaches the disk.
       _saveRequestedDuringReset = true;
-      return;
+      return false;
     }
-    await _storageService.saveSaveData(_saveData);
+    return _storageService.saveSaveData(_saveData);
   }
 
   /// Runs one deferred [save] if a write was requested while the reset
@@ -505,8 +509,16 @@ class GameStateService extends ChangeNotifier {
     // history-first order left the opposite split, which the history
     // guard then made permanent: the run read one short and the day's
     // bonus could never settle.
-    await save();
-    await _storageService.saveDailyHistory(_dailyHistory);
+    //
+    // The history also *waits for the save* (issue #281's surviving
+    // producer): a terminal save failure — both retries refused — must
+    // not leave the history ahead of the save either, because the caller
+    // guard would then strand the day: unreplayable, the run one short,
+    // the bonus unpayable. Held back, a lost save is a lost record: the
+    // day replays from scratch and settles in full.
+    if (await save()) {
+      await _storageService.saveDailyHistory(_dailyHistory);
+    }
   }
 
   /// Extends the visible streak and settles the day's declared bonus

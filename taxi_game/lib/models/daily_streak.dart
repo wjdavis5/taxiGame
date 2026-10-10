@@ -93,7 +93,10 @@ class DailyStreak {
   /// The settlement ignores those — they can neither extend the run nor
   /// pay a backdated bonus, so walking the clock back through past days
   /// cannot mint a reward at every stop. Unreadable keys are not "before"
-  /// anything; the normal rules apply to them.
+  /// anything; the normal rules apply to them. A westward time zone move
+  /// can also put the local today before the stored last day: that
+  /// completion is recorded in the history but not counted, which is
+  /// still an improvement over resetting the run to 1.
   bool isBeforeLast(String dayKey) {
     final day = _dayNumber(dayKey);
     final last = _dayNumber(lastDateKey);
