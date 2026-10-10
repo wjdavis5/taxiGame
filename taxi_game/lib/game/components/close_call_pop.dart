@@ -1,6 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
+import '../taxi_game.dart';
 import 'world_one_shot.dart';
 
 /// Floating world-space award for one close call (issue #23). Names the
@@ -31,7 +34,20 @@ class CloseCallPop extends TextComponent with WorldOneShot {
               fontWeight: FontWeight.w900,
             ),
           ),
-        );
+        ) {
+    // The award rises out of the gap it names (issue #23), and a
+    // kerb-side shave puts that gap near the road's edge — centred
+    // there, the lesson line ran half off the phone (issue #269). The
+    // camera is locked horizontally and the world fold moves y only, so
+    // world x is screen x and clamping here is exact for the pop's whole
+    // life (the [PassengerNote] idiom, issue #50).
+    const roadWidth = 2 * TaxiGame.roadCenterX;
+    final half = width / 2;
+    x = x.clamp(
+      math.min(edgeMargin + half, TaxiGame.roadCenterX),
+      math.max(roadWidth - edgeMargin - half, TaxiGame.roadCenterX),
+    );
+  }
 
   /// The rule the first award states (issue #269): both halves of the
   /// qualifying pass — speed and proximity — feed the at-risk chain.
@@ -40,6 +56,9 @@ class CloseCallPop extends TextComponent with WorldOneShot {
 
   static String _firstAwardText(int points) =>
       'CLOSE CALL +$points\n$firstAwardLesson';
+
+  /// How far the award keeps clear of the screen's edges, in px.
+  static const double edgeMargin = 8.0;
 
   static const double lifetime = 0.8;
   static const double riseSpeed = 46.0;
