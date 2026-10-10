@@ -661,8 +661,8 @@ class LevelFailedOverlay extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               missedFare
-                  ? 'You drove past a fare this level still needs — the '
-                      'street only runs one way.'
+                  ? 'Pull over to the kerb to collect and drop off fares — '
+                      'the street only runs one way.'
                   : game.lastImpact?.headline ??
                       'You collided with traffic.',
               textAlign: TextAlign.center,
