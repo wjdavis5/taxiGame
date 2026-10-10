@@ -13,6 +13,7 @@ import 'package:taxi_game/game/systems/run_environment.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/fare_type.dart';
 import 'package:taxi_game/models/passenger_data.dart';
+import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -727,6 +728,39 @@ void main() {
           findsNothing);
     });
 
+    testWidgets('a save that has seen a contract is never briefed again',
+        (tester) async {
+      final seed = firstSeedDealing(FareType.vip);
+      late TaxiGame game;
+      await tester.runAsync(() async {
+        game = await mountGame(endlessGame(seed));
+        await tickAndSettle(game);
+      });
+      // The save already met a contract — the suppression is the thing
+      // under test, so the flag is set before the bar ever mounts.
+      gameState.markFareContractSeen();
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<GameStateService>.value(
+          value: gameState,
+          child: MaterialApp(
+            home: Scaffold(body: HudOverlay(game: game)),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150)); // poll tick
+
+      expect(game.currentFareOffer!.fareType, FareType.vip,
+          reason: 'a special offer really is on screen');
+      expect(find.byKey(const ValueKey('fare_contract_brief')),
+          findsNothing,
+          reason: 'the explanation is once per save, not once per offer');
+      // Only the brief is suppressed: the contract itself still states
+      // its payout and cost.
+      expect(find.byKey(const ValueKey('offer_payout_text')), findsOneWidget);
+      expect(find.byKey(const ValueKey('offer_cost_text')), findsOneWidget);
+    });
+
     testWidgets('level mode shows no offer bar', (tester) async {
       final game = TaxiGame(
         levelLoader: LevelLoaderService(),
@@ -745,6 +779,51 @@ void main() {
 
       expect(find.byKey(const ValueKey('decline_fare_button')), findsNothing,
           reason: 'a level\'s pickups are mandatory — nothing to decline');
+    });
+  });
+
+  group('the fare-contract save flag', () {
+    late GameStateService gameState;
+
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = StorageService();
+      await storage.init();
+      gameState = GameStateService(storage);
+      await gameState.loadSaveData();
+    });
+
+    test('a fresh save stays teachable, and marking persists on reload',
+        () async {
+      final fresh = SaveData.createDefault();
+      expect(fresh.fareContractSeen, isFalse,
+          reason: 'a fresh save has not met a contract yet');
+
+      final round = SaveData.fromJson(fresh.toJson());
+      expect(round.fareContractSeen, isFalse,
+          reason: 'false round-trips across sessions');
+
+      gameState.markFareContractSeen();
+      gameState.markFareContractSeen(); // idempotent, like the primer
+
+      final reloadedStorage = StorageService();
+      await reloadedStorage.init();
+      final reloaded = GameStateService(reloadedStorage);
+      await reloaded.loadSaveData();
+
+      expect(reloaded.fareContractSeen, isTrue,
+          reason: 'the spent flag reaches the disk');
+    });
+
+    test('a save written before the flag reads as already seen', () {
+      // A pre-issue-#279 save: no flag at all — its player has already
+      // driven and met a special fare.
+      final preFlag = SaveData.fromJson(seasonedSave());
+
+      expect(preFlag.fareContractSeen, isTrue,
+          reason: 'a missing key means "already a player", not "unseen"');
+      expect(SaveData.fromJson(preFlag.toJson()).fareContractSeen, isTrue,
+          reason: 'and it round-trips into new saves');
     });
   });
 }
@@ -777,3 +856,15 @@ int firstSeedDealing(FareType kind) {
   }
   throw StateError('no seed in range dealt a ${kind.name} opening fare');
 }
+
+/// A minimal valid save JSON as an older build wrote it — no
+/// fare-contract flag, the shape the migration case loads.
+Map<String, dynamic> seasonedSave() => {
+      'currentLevel': 4,
+      'totalCoins': 30,
+      'totalGems': 0,
+      'unlockedVehicles': ['taxi_yellow'],
+      'selectedVehicle': 'taxi_yellow',
+      'achievements': <String, bool>{},
+      'settings': Settings.createDefault().toJson(),
+    };
