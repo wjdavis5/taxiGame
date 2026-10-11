@@ -864,6 +864,99 @@ void main() {
     });
   });
 
+  group('the graduation pays a visible reward and a record (issue #283)', () {
+    late GameStateService saveAtTen;
+
+    setUp(() async {
+      saveAtTen = await gameStateAtLevel(GameLevel.ladderLength);
+    });
+
+    /// Rides the final rung to completion: every fare boarded, the
+    /// mid-route bank choice resolved with PUSH ON — the 900-coin finish
+    /// the issue-#155 group pins.
+    Future<void> rideGraduation(TaxiGame game) async {
+      final level = game.currentLevel;
+      for (final pickup in level.pickupPoints) {
+        game.player.position = Vector2(pickup.x, pickup.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+      for (var i = 0; i < level.dropoffPoints.length; i++) {
+        if (i == 1) game.pushOn();
+        final dropoff = level.dropoffPoints[i];
+        game.player.position = Vector2(dropoff.x, dropoff.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+    }
+
+    test('completing the last rung pays the bonus once and earns the record',
+        () async {
+      final game = await mountGame(ladderGame(saveAtTen));
+      await game.loadLevel(GameLevel.ladderLength);
+      await tickAndSettle(game);
+
+      await rideGraduation(game);
+
+      expect(game.overlays.isActive('levelComplete'), isTrue);
+      expect(game.lastCompletionBonus, GameStateService.tutorialGraduationBonus,
+          reason: 'the completion path hands the panel the bonus it paid');
+      expect(saveAtTen.totalCoins, 1400,
+          reason: 'a literal pin: the pushed finish paid 900, plus the '
+              'literal 500 graduation bonus');
+      expect(game.gameState.tutorialComplete, isTrue);
+      expect(game.gameState.isAchievementUnlocked('tutorial_complete'), isTrue);
+      expect(
+        game.lastCompletionUnlocks.map((a) => a.id),
+        contains('tutorial_complete'),
+        reason: 'the panel this completion shows carries the record',
+      );
+
+      // A replay of the final rung pays the rung only: the save already
+      // sits past it, so the bonus can never pay twice.
+      expect(saveAtTen.completeLevel(GameLevel.ladderLength, 0), 0);
+      expect(saveAtTen.totalCoins, 1400,
+          reason: 'the one-time bonus stays 500');
+    });
+
+    testWidgets('the completion panel shows the bonus line and the unlock '
+        'banner', (tester) async {
+      final game = (await tester.runAsync<TaxiGame>(() async {
+        final game = await mountGame(ladderGame(saveAtTen));
+        await game.loadLevel(GameLevel.ladderLength);
+        await tickAndSettle(game);
+        await rideGraduation(game);
+        return game;
+      }))!;
+      expect(game.overlays.isActive('levelComplete'), isTrue);
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: LevelCompleteOverlay(game: game))),
+      );
+      await tester.pump();
+
+      expect(find.text('TUTORIAL COMPLETE!'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('level_complete_bonus')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('TUTORIAL BONUS +500 Coins'),
+        findsOneWidget,
+        reason: 'the reward is named where the finish lands, at the '
+            'literal 500 the product decision pinned',
+      );
+      expect(
+        find.byKey(
+            const ValueKey('level_complete_unlock_tutorial_complete')),
+        findsOneWidget,
+      );
+      expect(find.text('ACHIEVEMENT UNLOCKED'), findsOneWidget);
+      expect(find.text('LICENSED DRIVER'), findsOneWidget,
+          reason: 'the ladder\'s record is announced at its finish');
+    });
+  });
+
   group('the end state hands off to Endless', () {
     test('rungs 1-9 have a next rung; rung 10 does not', () async {
       final game = await mountGame(ladderGame());

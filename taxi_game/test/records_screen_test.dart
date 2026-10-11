@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/models/achievements.dart';
+import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
@@ -71,6 +72,39 @@ void main() {
     );
     expect(
       tester.widget<Text>(find.byKey(const Key('records_pb_fares'))).data,
+      '0',
+    );
+
+    // The lifetime card (issue #283): the mastery records' own numbers,
+    // zeroed like the personal bests.
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('records_lifetime_close_calls')))
+          .data,
+      '0',
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('records_lifetime_distance')))
+          .data,
+      '0 m',
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('records_lifetime_fares')))
+          .data,
+      '0',
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('records_recent_dailies')))
+          .data,
+      '0',
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('records_lifetime_shifts')))
+          .data,
       '0',
     );
 
@@ -160,6 +194,87 @@ void main() {
         find.byKey(const Key('records_achievement_count')),
       ).data,
       '4 of ${AchievementCatalog.all.length} earned',
+    );
+  });
+
+  testWidgets('the lifetime card shows the totals the mastery records read '
+      '(issue #283)', (tester) async {
+    await gameState.recordEndlessRun(const RunRecord(
+      endedAtMs: 0,
+      distancePx: 25000, // 2.5 km
+      score: 600,
+      faresDelivered: 12,
+      nearMisses: 7,
+      longestChain: 3,
+      livesLost: 0,
+      lifeLossDistancesPx: [],
+      banked: true,
+      durationSeconds: 300,
+    ));
+    await gameState.recordDailyResult(const DailyResult(
+      dateKey: '2026-01-01',
+      score: 300,
+      banked: true,
+      completedAtMs: 0,
+    ));
+
+    await tester.pumpWidget(wrap(const RecordsScreen()));
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('records_lifetime_close_calls')))
+          .data,
+      '7',
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('records_lifetime_distance')))
+          .data,
+      '2.5 km',
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('records_lifetime_fares')))
+          .data,
+      '12',
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('records_recent_dailies')))
+          .data,
+      '1',
+      reason: 'participation is visible without a streak',
+    );
+    expect(find.text('Daily shifts (last 400)'), findsOneWidget,
+        reason: 'the row derives its number from the window constant; this '
+            'literal pin holds that constant at 400, so retuning '
+            'GameStateService.maxRecordedDailyResults must fail here '
+            'rather than silently relabel the row');
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('records_lifetime_shifts')))
+          .data,
+      '1',
+    );
+
+    // And the locked mastery tiers show their live progress: close calls
+    // 7 of 10, lifetime volume 2.5 km of 25 km.
+    expect(
+      tester
+          .widget<Text>(
+            find.byKey(const Key('achievement_progress_close_call_10')),
+          )
+          .data,
+      '7/10',
+    );
+    expect(
+      tester
+          .widget<Text>(
+            find.byKey(const Key('achievement_progress_lifetime_25km')),
+          )
+          .data,
+      '2500/25000',
     );
   });
 

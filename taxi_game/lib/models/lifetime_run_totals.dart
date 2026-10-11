@@ -41,6 +41,12 @@ class LifetimeRunTotals {
   /// Drive time across every shift, in seconds.
   double totalDurationSeconds;
 
+  /// Close calls cleared across every shift (issue #283): the near-miss
+  /// economy's lifetime count. [RunRecord.nearMisses] has been recorded
+  /// since issue #23; this counter folds it before the window can age
+  /// the shift out, the same rule as the six above.
+  int totalNearMisses;
+
   /// Accepted and declined fare counts by kind (issue #279), keyed by
   /// `FareType.name` — the same keys [RunRecord] stores. Folded like the
   /// six counters above, so the per-kind answer history survives the
@@ -55,6 +61,7 @@ class LifetimeRunTotals {
     this.totalFares = 0,
     this.totalLivesLost = 0,
     this.totalDurationSeconds = 0.0,
+    this.totalNearMisses = 0,
     Map<String, int>? acceptedFaresByKind,
     Map<String, int>? declinedFaresByKind,
   })  : acceptedFaresByKind = acceptedFaresByKind ?? <String, int>{},
@@ -77,6 +84,7 @@ class LifetimeRunTotals {
     totalFares += record.faresDelivered;
     totalLivesLost += record.livesLost;
     totalDurationSeconds += record.durationSeconds;
+    totalNearMisses += record.nearMisses;
     _foldCounts(acceptedFaresByKind, record.acceptedByKind);
     _foldCounts(declinedFaresByKind, record.declinedByKind);
   }
@@ -123,6 +131,14 @@ class LifetimeRunTotals {
       totalDurationSeconds = windowDurationSeconds;
       seeded = true;
     }
+    // The close-call counter (issue #283) seeds the same way: the window
+    // has carried `nearMisses` since issue #23, so a save written before
+    // the counter existed keeps every close call its history still shows.
+    final windowNearMisses = window.fold(0, (sum, r) => sum + r.nearMisses);
+    if (windowNearMisses > totalNearMisses) {
+      totalNearMisses = windowNearMisses;
+      seeded = true;
+    }
     if (_seedCounts(acceptedFaresByKind, window, (r) => r.acceptedByKind)) {
       seeded = true;
     }
@@ -143,6 +159,7 @@ class LifetimeRunTotals {
       totalLivesLost: (json['totalLivesLost'] as num?)?.toInt() ?? 0,
       totalDurationSeconds:
           (json['totalDurationSeconds'] as num?)?.toDouble() ?? 0.0,
+      totalNearMisses: (json['totalNearMisses'] as num?)?.toInt() ?? 0,
       acceptedFaresByKind: _countsFromJson(json['acceptedFaresByKind']),
       declinedFaresByKind: _countsFromJson(json['declinedFaresByKind']),
     );
@@ -157,6 +174,7 @@ class LifetimeRunTotals {
       'totalFares': totalFares,
       'totalLivesLost': totalLivesLost,
       'totalDurationSeconds': totalDurationSeconds,
+      'totalNearMisses': totalNearMisses,
       'acceptedFaresByKind': acceptedFaresByKind,
       'declinedFaresByKind': declinedFaresByKind,
     };

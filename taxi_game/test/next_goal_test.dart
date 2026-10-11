@@ -23,6 +23,10 @@ void main() {
     int cleanBankedShifts = 0,
     int unlockedVehicleCount = 1,
     int longestDailyStreak = 0,
+    int totalNearMisses = 0,
+    int completedDailyCount = 0,
+    int lifetimeDistanceMetres = 0,
+    bool tutorialComplete = false,
   }) =>
       AchievementState(
         bestBankedScore: bestBankedScore,
@@ -32,6 +36,10 @@ void main() {
         cleanBankedShifts: cleanBankedShifts,
         unlockedVehicleCount: unlockedVehicleCount,
         longestDailyStreak: longestDailyStreak,
+        totalNearMisses: totalNearMisses,
+        completedDailyCount: completedDailyCount,
+        lifetimeDistanceMetres: lifetimeDistanceMetres,
+        tutorialComplete: tutorialComplete,
       );
 
   NextGoal? select({

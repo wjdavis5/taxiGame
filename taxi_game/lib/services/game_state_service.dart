@@ -6,6 +6,7 @@ import '../models/city_license.dart';
 import '../models/daily_result.dart';
 import '../models/daily_streak.dart';
 import '../models/ghost_trace.dart';
+import '../models/lifetime_run_totals.dart';
 import '../models/next_goal.dart';
 import '../models/personal_bests.dart';
 import '../models/run_record.dart';
@@ -79,6 +80,11 @@ class GameStateService extends ChangeNotifier {
   /// longest chain, furthest distance, most fares in one shift.
   PersonalBests get personalBests => _saveData.personalBests;
 
+  /// The player's lifetime shift totals (issue #183): the stored,
+  /// monotone counters the stats screen's Totals card and the lifetime
+  /// mastery records (issue #283) both read.
+  LifetimeRunTotals get lifetimeRunTotals => _saveData.lifetimeRunTotals;
+
   /// True when the achievement with [id] has been earned (issue #21).
   /// The save's `achievements` map is the only source of truth — a
   /// definition whose measure currently reads below its threshold can
@@ -109,6 +115,19 @@ class GameStateService extends ChangeNotifier {
         longestDailyStreak: AchievementCatalog.longestDailyStreak(
           _dailyHistory,
         ),
+        // The close-call and volume measures read the stored lifetime
+        // totals (issue #283), never the window: the same never-falls
+        // rule as the clean-bank counter above.
+        totalNearMisses: _saveData.lifetimeRunTotals.totalNearMisses,
+        // Participation, not streak (issue #283): every completed daily
+        // in the window counts, gaps and all. The count caps at the
+        // window size, and every participation tier in the catalog sits
+        // under that cap, so a saturated count can never fall back under
+        // an earned tier.
+        completedDailyCount: _dailyHistory.length,
+        lifetimeDistanceMetres:
+            _saveData.lifetimeRunTotals.totalDistanceMetres.floor(),
+        tutorialComplete: tutorialComplete,
       );
 
   /// The next reachable goal (issue #282), read live from the save:
@@ -500,15 +519,44 @@ class GameStateService extends ChangeNotifier {
     return false;
   }
   
+  /// The one-time graduation bonus (issue #283): finishing the ladder's
+  /// final rung pays this on top of the rung's own reward, so rung ten
+  /// ends with a payout of its own instead of being a dead end whose only
+  /// next step is the Endless handoff. The same completion earns
+  /// [AchievementCatalog.tutorialComplete].
+  static const int tutorialGraduationBonus = 500;
+
   /// Complete a level: award coins and, if it was the player's furthest
   /// level, unlock the next one. Replaying an old level only earns coins.
-  void completeLevel(int levelNumber, int coinsEarned) {
+  ///
+  /// Returns the graduation bonus this completion paid (issue #283): the
+  /// one-time reward for finishing the ladder's final rung, 0 for every
+  /// other completion — the caller shows it on the completion panel.
+  int completeLevel(int levelNumber, int coinsEarned) {
     addCoins(coinsEarned);
     if (levelNumber == _saveData.currentLevel) {
       _saveData.currentLevel++;
+      // The ladder's last rung pays its graduation bonus in the same
+      // mutation as the unlock and the save below: one write, so a kill
+      // can never land the "done" sentinel without the reward. Only the
+      // first completion reaches this branch (a replay finds the save
+      // already past the rung), so the bonus can never pay twice.
+      var bonus = 0;
+      if (levelNumber == GameLevel.ladderLength) {
+        bonus = tutorialGraduationBonus;
+        _saveData.totalCoins += bonus;
+      }
+      // A completed rung is a gameplay event like a shift end (issue
+      // #283): the achievements are evaluated with the new standing, so
+      // the completion panel that caused the graduation can announce its
+      // record. The queue must be filled before this method's own save
+      // and before the caller drains it.
+      _evaluateAchievements();
       notifyListeners();
       save();
+      return bonus;
     }
+    return 0;
   }
 
   /// Records the score an endless shift just ended with against the
