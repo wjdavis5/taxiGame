@@ -147,8 +147,8 @@ class _PersonalBestsCard extends StatelessWidget {
 /// measure, on screen where their progress lives — close calls, volume
 /// driven, fares, and the shifts it all happened over. Stored counters
 /// (issue #183), so no number here can fall as the history window trims.
-/// The daily row is the one exception and says so: the daily history is
-/// a 400-day window, so its count is recent play, not a lifetime total.
+/// The daily row is the one exception and says so: the daily history is a
+/// fixed window, so its count is recent play, not a lifetime total.
 class _LifetimeCard extends StatelessWidget {
   const _LifetimeCard({required this.gameState});
 
@@ -178,12 +178,15 @@ class _LifetimeCard extends StatelessWidget {
               '${totals.totalFares}',
               valueKey: const Key('records_lifetime_fares'),
             ),
-            // Windowed, so labelled as such: the count keeps the most
-            // recent 400 dailies, while every participation threshold
-            // (10/50/200) sits under the window and is reached long
-            // before a day can age out.
+            // Windowed, so labelled as such: the count is the daily
+            // history's own size, capped at the window constant. The
+            // label derives that number from
+            // [GameStateService.maxRecordedDailyResults] (the stats
+            // screen's _ScopeCaption rule), never a hardcoded copy, so a
+            // retuned window can never make the row lie.
             _statRow(
-              'Daily shifts (last 400)',
+              'Daily shifts (last '
+              '${GameStateService.maxRecordedDailyResults})',
               '${gameState.dailyHistory.length}',
               valueKey: const Key('records_recent_dailies'),
             ),

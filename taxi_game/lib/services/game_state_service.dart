@@ -120,9 +120,10 @@ class GameStateService extends ChangeNotifier {
         // rule as the clean-bank counter above.
         totalNearMisses: _saveData.lifetimeRunTotals.totalNearMisses,
         // Participation, not streak (issue #283): every completed daily
-        // in the window counts, gaps and all. The window is 400 days and
-        // every threshold sits below it, so a count that saturates at
-        // the window size can never fall back under an earned tier.
+        // in the window counts, gaps and all. The count caps at the
+        // window size, and every participation tier in the catalog sits
+        // under that cap, so a saturated count can never fall back under
+        // an earned tier.
         completedDailyCount: _dailyHistory.length,
         lifetimeDistanceMetres:
             _saveData.lifetimeRunTotals.totalDistanceMetres.floor(),

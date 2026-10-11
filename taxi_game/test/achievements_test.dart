@@ -92,6 +92,24 @@ void main() {
       expect(VehicleCatalog.vehicles.length, 7);
     });
 
+    test('every participation tier sits under the daily-history window', () {
+      // The participation measure caps at GameStateService
+      // .maxRecordedDailyResults, so a tier above the window could never
+      // be earned — and a count saturating at the window size can never
+      // fall back under an earned tier. Retuning the window must keep
+      // this relation, or the tiers need rethinking.
+      final participation = AchievementCatalog.all
+          .where((def) => def.id.startsWith('daily_'));
+      expect(participation, isNotEmpty);
+      for (final def in participation) {
+        expect(
+          def.threshold,
+          lessThanOrEqualTo(GameStateService.maxRecordedDailyResults),
+          reason: '${def.id} sits above the daily-history window',
+        );
+      }
+    });
+
     test('streaks count consecutive days, gaps break them', () {
       expect(AchievementCatalog.longestDailyStreak(const []), 0);
       expect(

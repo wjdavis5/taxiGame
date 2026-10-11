@@ -247,8 +247,10 @@ void main() {
       reason: 'participation is visible without a streak',
     );
     expect(find.text('Daily shifts (last 400)'), findsOneWidget,
-        reason: 'the windowed row says it is windowed — the card must not '
-            'pass it off as a lifetime total');
+        reason: 'the row derives its number from the window constant; this '
+            'literal pin holds that constant at 400, so retuning '
+            'GameStateService.maxRecordedDailyResults must fail here '
+            'rather than silently relabel the row');
     expect(
       tester
           .widget<Text>(find.byKey(const Key('records_lifetime_shifts')))
