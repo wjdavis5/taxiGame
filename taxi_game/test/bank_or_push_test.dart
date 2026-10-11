@@ -396,15 +396,25 @@ void main() {
             'life',
       );
 
-      // The chosen push keeps its own pop, and starts above the
-      // settlement still on screen rather than under it.
+      // The chosen push keeps its own pop, and starts clear of the
+      // settlement still on screen rather than under it. The pin is the
+      // measured clearance between the two mounted pops, not just their
+      // order: shrinking [TaxiGame.pushPopSettlementOffset] below what a
+      // three-line settlement needs fails here.
       game.pushOn();
       game.update(1 / 60);
       await drain();
       final pushPop = game.world.children.whereType<PushPop>().single;
-      expect(pushPop.position.y, lessThan(newSettlement.position.y),
-          reason: 'the push pop starts a line above the settlement it '
-              'would otherwise cover');
+      final settlementHalfHeight = newSettlement.height / 2;
+      final pushHalfHeight = pushPop.height / 2;
+      final clearance = newSettlement.position.y -
+          pushPop.position.y -
+          settlementHalfHeight -
+          pushHalfHeight;
+      expect(clearance, greaterThan(4.0),
+          reason: 'the push pop must clear the settlement\'s three lines, '
+              'not just start above its centre: clearance ${clearance}px '
+              'with offset ${TaxiGame.pushPopSettlementOffset}');
     });
   });
 
@@ -508,29 +518,9 @@ void main() {
       expectSingleLine(find.text('BANK 1000'), 'the four-digit BANK label');
     });
 
-    testWidgets('the bank prompt and the settlement line share a 320 pt '
-        'screen without crowding (issue #270)', (tester) async {
-      // The frame the issue names: a dropoff just settled (the HUD is
-      // holding its settlement line) and the choice is up on the same
-      // 320 pt screen. Both must fit; neither may shove the other off or
-      // overflow — and the panel must not paint over the line, which is
-      // the occlusion this test exists to catch: existence and a null
-      // exception both pass while the panel sits on top of the pill.
-      tester.view.physicalSize = const Size(320, 568);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      final fare0 = EndlessCourse(seed: 42).fare(0);
-      final game = await armedGame(tester, fare0);
-      game.lastSettlement = FareSettlement(
-        outcome: FareOutcome.onTime,
-        fareValue: fare0.reward,
-        multiplier: 2,
-        chainStepBonus: 0,
-        scoreAwarded: fare0.reward * 2,
-        scoreTotal: fare0.reward * 2,
-      );
-
+    /// Pumps the HUD and the prompt over one 320 pt screen and lets a
+    /// poll tick land — the frame both settlement-crowding tests judge.
+    Future<void> showPromptAndHud(WidgetTester tester, TaxiGame game) async {
       await tester.pumpWidget(
         ChangeNotifierProvider<GameStateService>.value(
           value: gameState,
@@ -547,6 +537,51 @@ void main() {
         ),
       );
       await tester.pump(const Duration(milliseconds: 150)); // poll tick
+    }
+
+    /// The crowding frame: fare 0 delivered (the window is up) and a
+    /// settlement staged for the HUD to hold. [primerSeen] picks the save
+    /// state — the post-primer one is where the overlap lived: the primer
+    /// hides the pause button (issue #132), and that button is what makes
+    /// the top HUD row tall enough for the settlement pill's bottom to
+    /// cross the panel's old 120 pt park.
+    Future<TaxiGame> stagedCrowdingFrame(
+      WidgetTester tester, {
+      required bool primerSeen,
+    }) async {
+      if (primerSeen) gameState.markBankPromptSeen();
+      final fare0 = EndlessCourse(seed: 42).fare(0);
+      final game = await armedGame(tester, fare0);
+      game.lastSettlement = FareSettlement(
+        outcome: FareOutcome.onTime,
+        fareValue: fare0.reward,
+        multiplier: 2,
+        chainStepBonus: 0,
+        scoreAwarded: fare0.reward * 2,
+        scoreTotal: fare0.reward * 2,
+      );
+      return game;
+    }
+
+    testWidgets('the bank prompt and the settlement line share a 320 pt '
+        'screen without crowding (issue #270)', (tester) async {
+      // The frame the issue names: a dropoff just settled (the HUD is
+      // holding its settlement line) and the choice is up on the same
+      // 320 pt screen. Both must fit; neither may shove the other off or
+      // overflow — and the panel must not paint over the line, which is
+      // the occlusion this test exists to catch: existence and a null
+      // exception both pass while the panel sits on top of the pill.
+      //
+      // The save has seen a prompt, so the pause button is on screen: in
+      // the primer state it is hidden and the top row is short enough
+      // that the pre-fix 120 pt park already cleared the pill, which is
+      // why this pin must run post-primer to fail on that layout.
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final game = await stagedCrowdingFrame(tester, primerSeen: true);
+      await showPromptAndHud(tester, game);
 
       expect(find.byKey(const ValueKey('bank_prompt_panel')), findsOneWidget);
       expect(
@@ -559,8 +594,8 @@ void main() {
 
       // The pin the existence checks cannot make: the two painted rects
       // must not intersect. On the pre-fix layout the panel parks at the
-      // HUD's old 120 pt band and covers the pill (~112-141), which is
-      // exactly the crowding the issue names.
+      // HUD's old 120 pt band and covers the pill, which is exactly the
+      // crowding the issue names.
       final panelRect =
           tester.getRect(find.byKey(const ValueKey('bank_prompt_panel')));
       final settlementRect =
@@ -570,6 +605,32 @@ void main() {
               'panel $panelRect vs settlement $settlementRect');
       expect(settlementRect.bottom, lessThanOrEqualTo(panelRect.top),
           reason: 'the whole settlement line stays visible above the panel');
+    });
+
+    testWidgets('the primer state keeps the same promise on a 320 pt '
+        'screen (issue #270)', (tester) async {
+      // The fresh-save frame: the primer freeze hides the pause button,
+      // and the pill still crosses the old 120 pt park in this tree (its
+      // painted bottom lands ~132), so this case fails on the old layout
+      // too. The post-primer test above is the state the audit named;
+      // this one keeps the other shared state pinned.
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final game = await stagedCrowdingFrame(tester, primerSeen: false);
+      expect(game.isBankPrimerActive, isTrue,
+          reason: 'precondition: the primer owns the world');
+      await showPromptAndHud(tester, game);
+
+      expect(tester.takeException(), isNull);
+      final panelRect =
+          tester.getRect(find.byKey(const ValueKey('bank_prompt_panel')));
+      final settlementRect =
+          tester.getRect(find.byKey(const ValueKey('fare_settlement_panel')));
+      expect(panelRect.overlaps(settlementRect), isFalse,
+          reason: 'the panel parks below the settlement line, not over it: '
+              'panel $panelRect vs settlement $settlementRect');
     });
 
     testWidgets('renders nothing while no choice is open', (tester) async {

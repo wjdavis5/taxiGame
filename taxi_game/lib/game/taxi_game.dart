@@ -348,6 +348,12 @@ class TaxiGame extends FlameGame
   /// Seconds since [lastSettlement] landed — the HUD hold timer.
   double _settlementAge = 0;
 
+  /// Where [lastSettlement]'s pop spawned, in true-distance terms, so the
+  /// push pop can start clear of it even across a world fold (issue #270
+  /// follow-up). Null until a settlement lands; cleared with the
+  /// settlement.
+  double? _lastSettlementTrueY;
+
   /// Whether [lastSettlement] is still worth showing on the HUD.
   bool get showsSettlement =>
       lastSettlement != null &&
@@ -839,6 +845,7 @@ class TaxiGame extends FlameGame
     lastRunSummary = null;
     lastSettlement = null;
     _settlementAge = 0;
+    _lastSettlementTrueY = null;
     _runCoinsEarned = 0;
     _lifeLossDistancesPx.clear();
     _runDrivenSeconds = 0;
@@ -987,6 +994,7 @@ class TaxiGame extends FlameGame
     lastCompletionPayout = null;
     lastSettlement = null;
     _settlementAge = 0;
+    _lastSettlementTrueY = null;
 
     // Tear down the previous level, if any.
     _clearWorld();
@@ -1145,8 +1153,9 @@ class TaxiGame extends FlameGame
     // cannot move to a kerb while the world is stopped — and the tests
     // that pin it drive the cab by hand straight through the paused
     // primer, exactly as they always have. Cue off (issue #270
-    // follow-up): this delivery's settlement pop names the pushed
-    // multiplier on the same beat, so a second pop would paint over it.
+    // follow-up): this delivery's settlement pop names the multiplier it
+    // settled at — the pushed one when the fare is on time — so a second
+    // pop would paint over it on the same beat.
     if (bankPrompt.isActive) pushOn(cue: false);
 
     passengersDelivered++;
@@ -1210,6 +1219,9 @@ class TaxiGame extends FlameGame
   void _settleFare(FareSettlement settlement, Vector2 at) {
     lastSettlement = settlement;
     _settlementAge = 0;
+    // The pop's constructor treats [at] as live-frame; capture the same
+    // point in true-distance terms for the push pop's anchor.
+    _lastSettlementTrueY = at.y - worldShift;
     world.add(FareSettlementPop(position: at, settlement: settlement));
     audio?.playDropoffSound();
     if (settlement.isLate) {
@@ -1233,7 +1245,8 @@ class TaxiGame extends FlameGame
     // resolves as its default push before this fare scores, so driving
     // straight to the next kerb pays exactly what waiting each window
     // out pays — never less. Cue off for the same reason: this fare's
-    // settlement pop names the pushed multiplier (issue #270 follow-up).
+    // settlement pop names the multiplier it settled at (issue #270
+    // follow-up).
     if (bankPrompt.isActive) pushOn(cue: false);
 
     player.hasPassenger = fareController?.hasActivePickup ?? false;
@@ -1410,17 +1423,27 @@ class TaxiGame extends FlameGame
     // The push has its own beat (issue #273): the step the player just
     // bought, named where the cab is, with its own sting and tick. The
     // button and the window timing out show the pop; a delivery that
-    // supersedes the prompt shows only the settlement, which carries the
-    // pushed multiplier in its own numbers (issue #270 follow-up).
+    // supersedes the prompt shows only the settlement, whose own numbers
+    // name the multiplier the fare settled at — the pushed one when it
+    // delivered on time, a flat 1x when it was late (issue #270
+    // follow-up).
     if (cue && _playerReady) {
       // A settlement pop still climbing would sit under this one — the
       // player can answer a window inside the settlement's 1.1 s life —
-      // so the push pop starts a line higher and both read.
+      // so the push pop starts clear above it.
       final settlementOnScreen = lastSettlement != null &&
           _settlementAge < FareSettlementPop.lifetime;
+      var popY = player.position.y;
+      final settlementTrueY = _lastSettlementTrueY;
+      if (settlementOnScreen && settlementTrueY != null) {
+        // Anchored to the settlement, not to the cab: at the kerb the cab
+        // sits ~30 px below the dropoff centre, and a cab-relative offset
+        // left the two pops overlapping.
+        final settlementY = settlementTrueY + worldShift;
+        popY = math.min(popY, settlementY) - pushPopSettlementOffset;
+      }
       world.add(PushPop(
-        position: player.position.clone() +
-            (settlementOnScreen ? Vector2(0, -pushPopSettlementOffset) : Vector2.zero()),
+        position: Vector2(player.position.x, popY),
         multiplier: fareChain.multiplier,
       ));
     }
@@ -1430,9 +1453,13 @@ class TaxiGame extends FlameGame
   }
 
   /// How far above a live settlement pop the push pop starts, in world px
-  /// (issue #270 follow-up): the settlement's two lines are ~36 px tall
-  /// and the push's one ~18, so this clears them with a few px to spare.
-  static const double pushPopSettlementOffset = 34.0;
+  /// (issue #270 follow-up). The settlement pop is three lines — the
+  /// headline plus two detail lines, ~54 px on device and ~45 in the test
+  /// font — and the push pop is one, ~18 px, so this clears the taller
+  /// pop's half-height plus the shorter one's with ~10 px of daylight on
+  /// device (more in the test font). The pop-de-stacking test pins the
+  /// clearance against the mounted pops' measured heights.
+  static const double pushPopSettlementOffset = 46.0;
 
   /// Freezes the shift and pays the banked score out. The score itself
   /// stays readable for the panel until the next run resets it.

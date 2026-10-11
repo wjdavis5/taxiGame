@@ -345,10 +345,6 @@ class _PauseButtonState extends State<_PauseButton> {
     // offers a tap the handler would ignore: a settled shift's summary
     // owns the screen (issue #52), and the primer's freeze owns the
     // world (issue #132).
-    // Both halves of [TaxiGame.pauseGame]'s guard, so the button never
-    // offers a tap the handler would ignore: a settled shift's summary
-    // owns the screen (issue #52), and the primer's freeze owns the
-    // world (issue #132).
     if (widget.game.isShiftOver || widget.game.isBankPrimerActive) {
       return const SizedBox.shrink();
     }
