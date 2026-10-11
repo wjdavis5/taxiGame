@@ -162,6 +162,12 @@ class ShiftEarnings {
       // the cycle ending at this stop is one cleared with this fare
       // aboard. The multiplier is the one the fare actually scored at,
       // exactly as completeFare judges the clean chain.
+      //
+      // One deliberate divergence from the live rule: the ledger carries
+      // no expiry clock, so every pass in the cycle is priced even if
+      // this fare's meter had already run out when the pass landed — the
+      // live game skips expired timers (FareChain.awardNearMiss). The
+      // direction is over-pay only, and the per-fare cap bounds it.
       var tip = 0;
       while (passIndex < run.closeCallDistancesPx.length &&
           run.closeCallDistancesPx[passIndex] <= stop.distancePx) {

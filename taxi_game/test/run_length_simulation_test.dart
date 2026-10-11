@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 
+import 'package:flame/components.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/data/vehicle_catalog.dart';
+import 'package:taxi_game/game/systems/near_miss.dart';
 import 'package:taxi_game/game/systems/run_length_simulator.dart';
 import 'package:taxi_game/game/systems/run_environment.dart';
 import 'package:taxi_game/models/traffic_pattern.dart';
@@ -238,6 +240,57 @@ void main() {
       ]);
       expect(even.medianDistancePx, 3000.0);
       expect(even.medianDrivenSeconds, 180.0);
+    });
+  });
+
+  group('the close-call ledger\'s geometry (issue #276)', () {
+    // The ledger must rule with the live game's own geometry —
+    // [NearMissRules.lateralGap] — never a copy of its arithmetic. The
+    // scenario parks a sedan at an exact lateral offset from the lane
+    // the cab holds, so the edge-to-edge daylight is fixed before the
+    // run: the cab and the sedan are both 40 px wide, so 52 px of centre
+    // offset leaves 12 px of daylight (inside the 14 px window) and
+    // 60 px leaves 20 px (outside it). A change to lateralGap's formula
+    // moves the cab's verdict and turns this red.
+    final env = RunEnvironment(seed: 2011);
+    final laneX = env.roadAt(0).sameDirectionLaneX;
+
+    SimulatedRun scenario(double offset) => RunLengthSimulator(
+          seed: 2011,
+          environment: env,
+          presetTraffic: [
+            PresetTrafficVehicle(x: laneX + offset, y: -100, speed: 0),
+          ],
+        ).run();
+
+    test('a 12-px pass rules in, a 20-px pass does not', () {
+      // The daylight the scenario sets up, read through the live rule:
+      // a change to lateralGap's formula turns this red before the
+      // ledger assertions even run.
+      final daylight = NearMissRules.lateralGap(
+        playerPosition: Vector2(laneX, -100),
+        playerSize: Vector2(40, 60),
+        vehiclePosition: Vector2(laneX + 52, -100),
+        vehicleSize: TrafficVehicleType.sedan.size,
+      );
+      expect(daylight, 12);
+
+      // The pass lands ~100 px into the run, long before the seed's own
+      // spawns (500 px ahead) can reach the cab — so the ledger's early
+      // entries are the scenario's own.
+      final close = scenario(52);
+      expect(close.closeCallDistancesPx, isNotEmpty,
+          reason: '12 px of daylight at speed is a close call');
+      expect(close.closeCallDistancesPx.first, closeTo(100, 25),
+          reason: 'the scenario\'s own pass, not the seed\'s traffic');
+
+      final wide = scenario(60);
+      expect(
+        wide.closeCallDistancesPx.where((d) => d < 130),
+        isEmpty,
+        reason: '20 px of daylight never rules in — if this flips, the '
+            'ledger is not reading NearMissRules.lateralGap',
+      );
     });
   });
 

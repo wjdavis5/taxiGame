@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flame/components.dart';
 import 'package:meta/meta.dart';
 
 import '../../data/vehicle_catalog.dart';
@@ -871,13 +872,21 @@ class RunLengthSimulator {
       // The live game's pass ruling, mirrored: the frame the taxi's y
       // sinks past a car it never touched, inside [NearMissRules]' award
       // window at speed, is the pass — judged once, however it rules,
-      // and never re-armed. No RNG and no motion: the same deterministic
-      // run, with its qualifying passes recorded for the tip economy.
+      // and never re-armed. The gap comes from [NearMissRules.lateralGap]
+      // itself, never a copy of its arithmetic, so the ledger reads the
+      // one geometry the live game reads. No RNG and no motion: the same
+      // deterministic run, with its qualifying passes recorded for the
+      // tip economy.
       for (final v in vehicles) {
         if (v.nearMissJudged || v.y < y) continue;
         v.nearMissJudged = true;
         if (v.contacted) continue;
-        final gap = (x - v.x).abs() - (stats.width + v.type.size.x) / 2;
+        final gap = NearMissRules.lateralGap(
+          playerPosition: Vector2(x, y),
+          playerSize: Vector2(stats.width, stats.height),
+          vehiclePosition: Vector2(v.x, v.y),
+          vehicleSize: v.type.size,
+        );
         if (NearMissRules.isCloseCall(gap: gap, playerForwardSpeed: speed)) {
           closeCallDistances.add(math.max(0.0, -y));
         }

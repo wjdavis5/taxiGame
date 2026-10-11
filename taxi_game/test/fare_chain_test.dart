@@ -520,6 +520,31 @@ void main() {
   });
 
   group('the passenger tip (issue #276)', () {
+    test('the tip contract is literally 4 coins an event, 12 a fare', () {
+      // The PR states these numbers as the rule, so they are pinned
+      // literally here: a silent retune (4 to 3, 12 to 15) must go red,
+      // not hide behind the constants every other assertion references.
+      expect(TipRule.thrillPassCoins, 4);
+      expect(TipRule.cleanChainCoins, 4);
+      expect(TipRule.maxTipCoins, 12);
+
+      // And once through the rule itself, not just the constants: one
+      // THRILL PASS pays the literal 4; a spree pays the literal 12.
+      final single = FareChain();
+      final passenger = fareOf('single', 400, -300);
+      single.startFare(passenger);
+      single.awardNearMiss();
+      expect(single.completeFare(passenger, fareValue: 50).tipCoins, 4);
+
+      final spree = FareChain();
+      final spreeRider = fareOf('spree', 400, -300);
+      spree.startFare(spreeRider);
+      for (var i = 0; i < 4; i++) {
+        spree.awardNearMiss();
+      }
+      expect(spree.completeFare(spreeRider, fareValue: 50).tipCoins, 12);
+    });
+
     test('a THRILL PASS with a fare aboard pays at the dropoff', () {
       final chain = FareChain();
       final passenger = fareOf('a', 400, -300);
