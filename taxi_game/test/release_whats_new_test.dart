@@ -74,6 +74,21 @@ void main() {
               'closed — the lane and the gate both refuse it, but the '
               'file must also not ship blank');
     });
+
+    test('the notes name both flagship modes in the app\'s own voice '
+        '(issue #264)', () {
+      // The store page and the first screen must agree: the menu states
+      // the Endless rule (three crashes, bank or push) and the Daily's
+      // shared course + ghost, and the What's New repeats the same two
+      // modes in the same words. Line wrapping is presentation, so the
+      // phrases are matched against normalized whitespace.
+      final notes = readRepoFile('taxi_game/fastlane/whats_new.txt')
+          .replaceAll(RegExp(r'\s+'), ' ');
+      expect(notes, contains('three crashes end an Endless Shift'));
+      expect(notes, contains('bank-or-push call'));
+      expect(notes, contains('Daily Shift is one shared course'));
+      expect(notes, contains('ghost'));
+    });
   });
 
   group('the submit lane writes the What\'s New (issue #199)', () {

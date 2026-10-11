@@ -279,6 +279,25 @@ class RunSummaryPanel extends StatelessWidget {
               _statRow('Close calls', '${summary.nearMisses}'),
               _statRow('Distance', summary.distanceLabel),
               _statRow('Coins earned', '${summary.coinsEarned}'),
+              // The next reachable goal (issue #282): the summary is
+              // where the player decides whether to drive again, so it
+              // is where the chase belongs — the next car or the closest
+              // locked achievement, in the menu's own line.
+              if (game.gameState.nextGoal != null) ...[
+                const SizedBox(height: 12),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    game.gameState.nextGoal!.line,
+                    key: const ValueKey('run_summary_next_goal'),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.yellow,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
               ElevatedButton(
                 key: const ValueKey('retry_button'),

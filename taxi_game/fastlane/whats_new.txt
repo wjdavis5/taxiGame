@@ -1,8 +1,15 @@
 What's new:
 
-- The steering stick now switches thumbs instantly — no more dead
-  steering when you swap fingers mid-drive.
-- The stick ring fades out smoothly when you lift your thumb.
-- Layout fixes on smaller iPhones: long labels no longer wrap or
-  overflow their buttons and panels.
-- General stability and polish.
+- The first screen is unmistakably Cab Hustle now, and it states the
+  rules before you drive: three crashes end an Endless Shift, and
+  every dropoff is a bank-or-push call.
+- The Daily Shift is one shared course for everyone, and your own
+  ghost is waiting to race you after your run.
+- The menu shows your next goal, the next cab or the next
+  achievement, and every run summary carries it too.
+- Shift stats are one tap from the menu now, not tucked behind
+  Settings.
+- The garage says what its bars change, so buying a cab is a
+  driving decision.
+- The steering stick switches thumbs instantly, and its ring fades
+  out when you lift your thumb.

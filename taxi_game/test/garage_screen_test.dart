@@ -251,6 +251,20 @@ void main() {
     expect(balanceText('${compact.price + 400}'), findsNothing);
   });
 
+  testWidgets('the header explains what the handling bars change '
+      '(issue #282)', (tester) async {
+    await pumpGarage(tester);
+
+    expect(find.byKey(const Key('garage_handling_explainer')), findsOneWidget,
+        reason: 'a purchase must read as a driving decision, not a stat rise');
+    expect(
+      find.text('The bars change how the car drives \u2014 top speed, '
+          'acceleration, steering, and how big a target the body is. '
+          'No cab wins them all.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('every card surfaces the four handling stats', (tester) async {
     await pumpGarage(tester);
 

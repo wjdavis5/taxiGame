@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flame/game.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,10 +10,12 @@ import 'helpers/calendar_days.dart';
 import 'helpers/fake_audio_platform.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/systems/lives.dart';
 import 'package:taxi_game/game/systems/run_summary.dart';
 import 'package:taxi_game/models/achievements.dart';
+import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
@@ -162,6 +166,43 @@ void main() {
         reason: 'only fare-base coins were ever paid');
     expect(find.text('+90 Coins'), findsNothing,
         reason: 'nothing was paid out at a wreck');
+  });
+
+  testWidgets('the settled shift names the next reachable goal (issue #282)',
+      (tester) async {
+    final game = endlessGame();
+    await showPanel(tester, game, bankedSummary);
+
+    expect(find.byKey(const ValueKey('run_summary_next_goal')), findsOneWidget,
+        reason: 'the decision to drive again is where the chase belongs');
+    expect(find.text('NEXT GOAL \u00b7 CITY COMPACT \u2014 5000 COINS TO GO'),
+        findsOneWidget);
+  });
+
+  testWidgets('a completed save shows no next-goal line on the summary '
+      '(issue #282)', (tester) async {
+    // Nothing left to chase: the panel must render no line rather than a
+    // placeholder goal.
+    final save = SaveData.createDefault();
+    save.unlockedVehicles
+      ..clear()
+      ..addAll(VehicleCatalog.vehicles.map((v) => v.id));
+    for (final def in AchievementCatalog.all) {
+      save.achievements[def.id] = true;
+    }
+    SharedPreferences.setMockInitialValues({
+      StorageService.saveDataKey: jsonEncode(save.toJson()),
+    });
+    final storage = StorageService();
+    await storage.init();
+    gameState = GameStateService(storage);
+    await gameState.loadSaveData();
+    expect(gameState.nextGoal, isNull,
+        reason: 'precondition: the save is fully completed');
+
+    await showPanel(tester, endlessGame(), bankedSummary);
+
+    expect(find.byKey(const ValueKey('run_summary_next_goal')), findsNothing);
   });
 
   testWidgets('a beaten best gets the banner', (tester) async {
@@ -363,6 +404,12 @@ void main() {
         mockShareChannel(calls);
         await showPanel(tester, dailyGame(), bankedSummary);
 
+        // The next-goal row (issue #282) lengthened the panel; on the
+        // 800x600 test surface the share button now sits below the fold
+        // of its scroll view, exactly like a small phone.
+        await tester.ensureVisible(
+            find.byKey(const ValueKey('share_score_button')));
+        await tester.pump();
         await tester.tap(find.byKey(const ValueKey('share_score_button')));
         // Done when the channel has actually been handed the card (issue
         // #46) — not after a guess at how long the raster takes.
@@ -451,6 +498,9 @@ void main() {
           seed: DailyShift.seedForDateKey(DailyShift.todayKey));
       await showPanel(tester, game, bankedSummary);
 
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('race_ghost_button')));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('race_ghost_button')));
       await tester.pump();
 
@@ -499,6 +549,9 @@ void main() {
       DailyShift.clock = () => calendarDaysFromNow(1);
       addTearDown(() => DailyShift.clock = DateTime.now);
 
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('race_ghost_button')));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('race_ghost_button')));
       await tester.pump();
 
@@ -710,6 +763,7 @@ void main() {
             'NEW PERSONAL BEST',
             'DRIVE AGAIN',
             'Fares delivered',
+            'NEXT GOAL \u00b7 CITY COMPACT \u2014 5000 COINS TO GO',
           ]),
           (wrecked, wreckedSummary,
               ['SHIFT OVER', 'Forfeited: 90 coins']),
