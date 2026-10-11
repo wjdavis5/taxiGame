@@ -4,13 +4,49 @@ import '../../models/fare_type.dart';
 import '../../models/passenger_data.dart';
 
 /// How a delivered fare settled against its countdown (issue #12).
-enum FareSettlement {
+enum FareOutcome {
   /// Delivered inside the fare's time window: the chain extends.
   onTime,
 
   /// Delivered after the window closed (or with no window at all): the
   /// chain stays broken at 1x.
   late,
+}
+
+/// What one fare settled at (issues #12, #270): the outcome plus the
+/// numbers behind it, so the dropoff feedback can name the whole deal —
+/// what the fare was worth, the multiplier it scored at, any chain bonus
+/// its kind paid, what it awarded, and the at-risk total it left standing.
+class FareSettlement {
+  const FareSettlement({
+    required this.outcome,
+    required this.fareValue,
+    required this.multiplier,
+    required this.chainStepBonus,
+    required this.scoreAwarded,
+    required this.scoreTotal,
+  });
+
+  final FareOutcome outcome;
+
+  /// The fare's coin value before the chain prices it.
+  final int fareValue;
+
+  /// The multiplier this fare actually scored at: the live chain for an
+  /// on-time delivery, a flat 1x for a late one.
+  final int multiplier;
+
+  /// Extra chain steps the fare kind granted on time (a long-haul's
+  /// payout, issue #25); zero when the fare was late or standard.
+  final int chainStepBonus;
+
+  /// The chain score this fare added: [fareValue] x [multiplier].
+  final int scoreAwarded;
+
+  /// The chain score standing after this fare — the at-risk total.
+  final int scoreTotal;
+
+  bool get isLate => outcome == FareOutcome.late;
 }
 
 /// One passenger's countdown. Starts at pickup and ticks every frame the
@@ -222,7 +258,8 @@ class FareChain {
   /// rebuilt while this rider sat expired aboard (issue #120: the break
   /// now fires once, at the crossing, so the multiplier standing at a
   /// late dropoff is whatever the deliveries since then earned).
-  /// Returns how it settled so callers can react.
+  /// Returns the full [FareSettlement] — outcome and numbers — so callers
+  /// can react and say what happened (issue #270).
   FareSettlement completeFare(
     PassengerData passenger, {
     required int fareValue,
@@ -230,13 +267,23 @@ class FareChain {
     final timer = _timers.remove(passenger.id);
     final onTime = timer != null && !timer.isExpired;
 
-    score += fareValue * (onTime ? multiplier : 1);
+    final appliedMultiplier = onTime ? multiplier : 1;
+    final chainStepBonus = onTime ? passenger.fareType.chainStepBonus : 0;
+    final awarded = fareValue * appliedMultiplier;
+    score += awarded;
     multiplier = onTime
-        ? multiplier + multiplierStep + passenger.fareType.chainStepBonus
+        ? multiplier + multiplierStep + chainStepBonus
         : 1;
     _trackBest();
 
-    return onTime ? FareSettlement.onTime : FareSettlement.late;
+    return FareSettlement(
+      outcome: onTime ? FareOutcome.onTime : FareOutcome.late,
+      fareValue: fareValue,
+      multiplier: appliedMultiplier,
+      chainStepBonus: chainStepBonus,
+      scoreAwarded: awarded,
+      scoreTotal: score,
+    );
   }
 
   /// The reward for pushing on at a dropoff (issue #13): the multiplier
@@ -290,8 +337,12 @@ class FareChain {
   /// an on-time delivery or push bonus earned while they sat in the cab
   /// held for exactly one tick before being quietly reset to 1x. Only
   /// the crossing is the chain-breaking event; riding expired is not.
-  void update(double dt) {
-    if (_timers.isEmpty) return;
+  ///
+  /// Returns whether this tick's crossing broke the chain, so the caller
+  /// can give the loss its own cue (issue #273) — the multiplier is
+  /// already 1x by the time it reads it.
+  bool update(double dt) {
+    if (_timers.isEmpty) return false;
 
     var crossedZero = false;
     for (final timer in _timers.values) {
@@ -301,6 +352,7 @@ class FareChain {
       if (!wasExpired && timer.isExpired) crossedZero = true;
     }
     if (crossedZero) multiplier = 1;
+    return crossedZero;
   }
 
   /// Clears the chain: score, multiplier, best chain, close calls, and

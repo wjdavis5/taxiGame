@@ -347,8 +347,8 @@ void main() {
       final longHaul = fareOfType(FareType.longHaul, 'long');
       chain.startFare(longHaul);
 
-      expect(chain.completeFare(longHaul, fareValue: 60),
-          FareSettlement.onTime);
+      expect(chain.completeFare(longHaul, fareValue: 60).outcome,
+          FareOutcome.onTime);
       expect(chain.multiplier,
           1 + FareChain.multiplierStep + FareType.longHaul.chainStepBonus);
       expect(chain.multiplier, 4);
@@ -371,8 +371,8 @@ void main() {
       chain.startFare(longHaul);
       chain.update(FareChain.secondsForRide(700) + 5);
 
-      expect(chain.completeFare(longHaul, fareValue: 60),
-          FareSettlement.late);
+      expect(chain.completeFare(longHaul, fareValue: 60).outcome,
+          FareOutcome.late);
       expect(chain.multiplier, 1,
           reason: 'missing the window loses the whole boost');
     });
