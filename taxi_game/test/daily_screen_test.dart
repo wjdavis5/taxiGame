@@ -655,6 +655,19 @@ void main() {
   });
 
   group('the weekly gauntlet card (issue #288)', () {
+    // The clock is pinned (issue #288): the card's week, objective, and
+    // modifier are derived from the calendar, so an unpinned suite would
+    // silently test whatever week CI happens to run in — and the met-
+    // objective assertion below would only hold in a chain-objective
+    // week. 2026-10-12 is Monday of W42, a fares week: pinning a
+    // non-chain week is deliberate, so the test proves the record is
+    // measured against the objective's own field rather than whichever
+    // field the week happens to use.
+    setUp(() {
+      DailyShift.clock = () => DateTime(2026, 10, 12, 12);
+      addTearDown(() => DailyShift.clock = DateTime.now);
+    });
+
     /// The week's plan as the screen derives it — from today's day key,
     /// through the same calendar the Daily reads.
     GauntletPlan currentPlan() => WeeklyGauntlet.planForWeek(
@@ -718,12 +731,23 @@ void main() {
     testWidgets('the stored best of the week shows as progress, and a met '
         'objective says so', (tester) async {
       final plan = currentPlan();
+      // The record must fill the field this week's objective actually
+      // reads (issue #288): a hard-coded bestChain would only ever clear
+      // a chain week, and this pin is a fares week.
       await gameState.recordGauntletRun(
         weekKey: plan.weekKey,
-        score: 100,
-        fares: 2,
-        bestChain: plan.objective.target,
-        distanceMetres: 100,
+        score: plan.objective == GauntletObjective.score
+            ? plan.objective.target
+            : 0,
+        fares: plan.objective == GauntletObjective.fares
+            ? plan.objective.target
+            : 0,
+        bestChain: plan.objective == GauntletObjective.chain
+            ? plan.objective.target
+            : 0,
+        distanceMetres: plan.objective == GauntletObjective.distance
+            ? plan.objective.target
+            : 0,
       );
 
       await pumpScreen(tester);
@@ -751,6 +775,41 @@ void main() {
 
       expect(find.text('No gauntlet run yet this week.'), findsOneWidget,
           reason: 'last season\'s best is not this week\'s');
+    });
+
+    testWidgets('a clock behind the stored week disables START and says why',
+        (tester) async {
+      // The group's clock is pinned to W42; a record from the next week
+      // means the device calendar moved backward. The data layer refuses
+      // to fold older-week runs in, so a live START would silently
+      // discard every attempt — the card must not invite one.
+      await gameState.recordGauntletRun(
+        weekKey: '2026-W43',
+        score: 100,
+        fares: 2,
+        bestChain: 1,
+        distanceMetres: 100,
+      );
+
+      await pumpScreen(tester);
+
+      expect(find.byKey(const Key('weekly_gauntlet_stale_clock')),
+          findsOneWidget);
+      expect(
+        find.textContaining('Runs will not count until it catches up'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('weekly_gauntlet_calendar_note')),
+          findsNothing,
+          reason: 'the normal note is replaced by the real explanation');
+      expect(
+        tester
+            .widget<ElevatedButton>(
+                find.byKey(const Key('weekly_gauntlet_start_button')))
+            .onPressed,
+        isNull,
+        reason: 'a run would be discarded, so no run is offered',
+      );
     });
   });
 }

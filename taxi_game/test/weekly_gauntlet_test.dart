@@ -355,12 +355,22 @@ void main() {
     // keeps the gauntlet's own surface free of the account/leaderboard
     // words a hidden backend path would need.
     test('no shipped lib surface carries network machinery', () {
+      // A denylist heuristic, not a proof: it catches the common
+      // machinery a network path would need — HTTP clients, sockets,
+      // remote image loads, URI fetches — in every file that ships.
       const denied = <String>[
         'package:http',
+        'package:dio',
+        'web_socket_channel',
         'HttpClient',
         'WebSocket',
+        'RawSocket',
         'InternetAddress',
         'Socket(',
+        'Uri.https',
+        'Uri.http',
+        'Image.network',
+        'NetworkImage',
       ];
       final files = Directory('lib')
           .listSync(recursive: true)

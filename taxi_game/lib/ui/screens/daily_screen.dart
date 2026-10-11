@@ -489,6 +489,13 @@ class _WeeklyGauntletCard extends StatelessWidget {
     final playedThisWeek = record.weekKey == plan.weekKey;
     final progress = plan.progressIn(record);
     final met = plan.objectiveMet(record);
+    // The record holds a week *later* than the one the clock reads: the
+    // device calendar moved backward under the save. The data layer
+    // already refuses to fold older-week runs into it, so a live START
+    // would silently discard every attempt while the card still invited
+    // one — the button turns dead and the card says why instead.
+    final staleClock = record.weekKey.isNotEmpty &&
+        record.weekKey.compareTo(plan.weekKey) > 0;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Container(
@@ -563,37 +570,53 @@ class _WeeklyGauntletCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              'The device calendar controls the event: a new gauntlet '
-              'arrives every Monday.',
-              key: const Key('weekly_gauntlet_calendar_note'),
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.white.withValues(alpha: 0.85),
+            if (staleClock)
+              Text(
+                'The device calendar is behind this gauntlet '
+                '(last counted ${record.weekKey}). Runs will not count '
+                'until it catches up.',
+                key: const Key('weekly_gauntlet_stale_clock'),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.orange.shade200,
+                ),
+              )
+            else
+              Text(
+                'The device calendar controls the event: a new gauntlet '
+                'arrives every Monday.',
+                key: const Key('weekly_gauntlet_calendar_note'),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.white.withValues(alpha: 0.85),
+                ),
               ),
-            ),
             const SizedBox(height: 12),
             ElevatedButton.icon(
               key: const Key('weekly_gauntlet_start_button'),
-              onPressed: () {
-                // The same duplicate-push guard the daily button carries
-                // (issue #220): a stray second tap from the transition is
-                // refused before the dressing.
-                if (ModalRoute.of(context)?.isCurrent != true) return;
-                audioOf(context)?.playButtonSound();
-                hapticsOf(context)?.buttonPress();
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => GameScreen(
-                      endlessSeed: plan.seed,
-                      isGauntlet: true,
-                      gauntletWeekKey: plan.weekKey,
-                      gauntletModifier: plan.modifier,
-                    ),
-                  ),
-                );
-              },
+              onPressed: staleClock
+                  ? null
+                  : () {
+                      // The same duplicate-push guard the daily button
+                      // carries (issue #220): a stray second tap from the
+                      // transition is refused before the dressing.
+                      if (ModalRoute.of(context)?.isCurrent != true) {
+                        return;
+                      }
+                      audioOf(context)?.playButtonSound();
+                      hapticsOf(context)?.buttonPress();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => GameScreen(
+                            endlessSeed: plan.seed,
+                            isGauntlet: true,
+                            gauntletWeekKey: plan.weekKey,
+                            gauntletModifier: plan.modifier,
+                          ),
+                        ),
+                      );
+                    },
               icon: const Icon(Icons.play_arrow, size: 20),
               label: const Text(
                 'START GAUNTLET',

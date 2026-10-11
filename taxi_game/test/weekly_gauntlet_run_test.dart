@@ -161,6 +161,9 @@ void main() {
 
       expect(gameState.totalCoins, fare0.reward * 2,
           reason: 'the wallet sees double; the chain score does not');
+      expect(game.score, fare0.reward,
+          reason: 'the chain score stays the fare\'s own value — the '
+              'modifier moves the wallet, not the mastery');
     });
   });
 
