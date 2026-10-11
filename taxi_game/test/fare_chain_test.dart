@@ -2,6 +2,8 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/coin_pop.dart';
+import 'package:taxi_game/game/components/economy_pops.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/fare_type.dart';
@@ -594,6 +596,19 @@ void main() {
       expect(game.lastCompletionPayout, 50);
       expect(gameState.totalCoins, game.lastCompletionPayout,
           reason: 'the visible payout is the credited payout, to the coin');
+      // And the pop count pins *when* the claim plays (issue #284): the
+      // kerb names its settlement, and the only coins in the air are the
+      // completion volley's six — the frame that credited them. The old
+      // dropoff popped three before the wallet moved, making nine here.
+      // The delivery frame queues its adds; one tick mounts them.
+      game.update(1 / 60);
+      await drain();
+      expect(game.world.children.whereType<FareSettlementPop>().length, 1,
+          reason: 'the dropoff explains the settlement instead of popping '
+              'coins the wallet has not received');
+      expect(game.world.children.whereType<CoinPop>().length, 6,
+          reason: 'six completion coins, no dropoff coins: the pops and '
+              'the credit land on the same frame');
       // The bank-or-push offer is an endless-shift thing (issue #13):
       // levels settle at completion, so no choice is armed here.
       expect(game.bankPrompt.isActive, isFalse);

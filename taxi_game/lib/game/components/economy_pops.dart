@@ -11,7 +11,8 @@ import 'world_one_shot.dart';
 /// settlement at every dropoff, the chain break when a countdown runs
 /// out, and the push bonus when the player rides on. Each names its
 /// event in its own colour so the three can never be read for one
-/// another; all three rise and fade on the [CloseCallPop] beat.
+/// another; all three rise and shrink on the [CloseCallPop] beat (no
+/// alpha fade — they scale down as they climb).
 
 /// What one dropoff paid and what it left at risk (issue #270). The
 /// settlement's whole story, where the player is looking when it lands.
