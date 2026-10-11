@@ -272,4 +272,103 @@ void main() {
           reason: 'and it round-trips into new saves');
     });
   });
+
+  group('weekly gauntlet best (issue #288)', () {
+    test('a new save holds no gauntlet best', () {
+      expect(gameStateService.weeklyGauntlet.weekKey, '');
+      expect(gameStateService.weeklyGauntlet.bestScore, 0);
+    });
+
+    test('the week keeps each surface\'s maximum across runs', () async {
+      await gameStateService.recordGauntletRun(
+        weekKey: '2026-W41',
+        score: 1200,
+        fares: 7,
+        bestChain: 3,
+        distanceMetres: 1500,
+      );
+      await gameStateService.recordGauntletRun(
+        weekKey: '2026-W41',
+        score: 900,
+        fares: 9,
+        bestChain: 2,
+        distanceMetres: 2100,
+      );
+
+      final record = gameStateService.weeklyGauntlet;
+      expect(record.weekKey, '2026-W41');
+      expect(record.bestScore, 1200);
+      expect(record.bestFares, 9);
+      expect(record.bestChain, 3);
+      expect(record.bestDistanceMetres, 2100);
+    });
+
+    test('a run from an older week never overwrites the current best',
+        () async {
+      await gameStateService.recordGauntletRun(
+        weekKey: '2026-W41',
+        score: 1200,
+        fares: 7,
+        bestChain: 3,
+        distanceMetres: 1500,
+      );
+      await gameStateService.recordGauntletRun(
+        weekKey: '2026-W40',
+        score: 99999,
+        fares: 99,
+        bestChain: 9,
+        distanceMetres: 99999,
+      );
+
+      expect(gameStateService.weeklyGauntlet.weekKey, '2026-W41',
+          reason: 'a backward clock cannot rewrite the week that is being '
+              'played');
+      expect(gameStateService.weeklyGauntlet.bestScore, 1200);
+    });
+
+    test('the best survives an app restart', () async {
+      await gameStateService.recordGauntletRun(
+        weekKey: '2026-W41',
+        score: 4321,
+        fares: 12,
+        bestChain: 5,
+        distanceMetres: 2870,
+      );
+      // The save is queued (issue #230); the reload must read the settled
+      // state, not a snapshot from mid-queue.
+      await storageService.pendingWrites;
+
+      // Simulate an app restart: a brand-new service stack reading the
+      // same on-device store.
+      final reloadedStorage = StorageService();
+      await reloadedStorage.init();
+      final reloaded = GameStateService(reloadedStorage);
+      await reloaded.loadSaveData();
+
+      expect(reloaded.weeklyGauntlet.weekKey, '2026-W41');
+      expect(reloaded.weeklyGauntlet.bestScore, 4321);
+      expect(reloaded.weeklyGauntlet.bestFares, 12);
+      expect(reloaded.weeklyGauntlet.bestChain, 5);
+      expect(reloaded.weeklyGauntlet.bestDistanceMetres, 2870);
+    });
+
+    test('a save written before the gauntlet existed loads as no best', () {
+      // A pre-issue-#288 save: no weeklyGauntlet key at all.
+      final save = SaveData.fromJson({
+        'currentLevel': 3,
+        'totalCoins': 40,
+        'totalGems': 0,
+        'unlockedVehicles': ['taxi_yellow'],
+        'selectedVehicle': 'taxi_yellow',
+        'achievements': <String, bool>{},
+        'settings': Settings.createDefault().toJson(),
+      });
+
+      expect(save.weeklyGauntlet.weekKey, '',
+          reason: 'a missing key means "no gauntlet run yet", not a '
+              'corrupt save');
+      expect(save.toJson()['weeklyGauntlet'], isNotNull,
+          reason: 'and it round-trips into new saves');
+    });
+  });
 }

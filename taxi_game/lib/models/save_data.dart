@@ -1,6 +1,7 @@
 import 'daily_streak.dart';
 import 'lifetime_run_totals.dart';
 import 'personal_bests.dart';
+import 'weekly_gauntlet_record.dart';
 
 /// Save data model that persists player progress
 class SaveData {
@@ -34,6 +35,11 @@ class SaveData {
   /// the daily history: the history window trims at 400 days, and the
   /// settlement record is what keeps the bonus at most once per date.
   DailyStreak dailyStreak;
+
+  /// The Weekly Gauntlet's best of the current week (issue #288). Stored,
+  /// not derived from the shift history: the gauntlet is replayable all
+  /// week and its best must survive the history window.
+  WeeklyGauntletRecord weeklyGauntlet;
 
   /// The best score any endless shift has ever ended with, banked or
   /// forfeited (issue #15). Compared against at every shift end.
@@ -69,10 +75,12 @@ class SaveData {
     PersonalBests? personalBests,
     LifetimeRunTotals? lifetimeRunTotals,
     DailyStreak? dailyStreak,
+    WeeklyGauntletRecord? weeklyGauntlet,
     required this.settings,
   })  : personalBests = personalBests ?? PersonalBests(),
         lifetimeRunTotals = lifetimeRunTotals ?? LifetimeRunTotals(),
-        dailyStreak = dailyStreak ?? const DailyStreak();
+        dailyStreak = dailyStreak ?? const DailyStreak(),
+        weeklyGauntlet = weeklyGauntlet ?? const WeeklyGauntletRecord();
 
   /// Create default save data for new players
   factory SaveData.createDefault() {
@@ -120,6 +128,13 @@ class SaveData {
           ? const DailyStreak()
           : DailyStreak.fromJson(
               json['dailyStreak'] as Map<String, dynamic>),
+      // Saves written before issue #288 have no gauntlet block; a missing
+      // key means "no gauntlet run recorded yet", not a corrupt save — an
+      // empty record reads as no best and the current week starts fresh.
+      weeklyGauntlet: json['weeklyGauntlet'] == null
+          ? const WeeklyGauntletRecord()
+          : WeeklyGauntletRecord.fromJson(
+              json['weeklyGauntlet'] as Map<String, dynamic>),
       // Saves written before issue #37 have no hint flag at all — and a
       // save that exists at all means its player has already driven.
       // A missing key therefore reads as dismissed: the stick hint is
@@ -152,6 +167,7 @@ class SaveData {
       'personalBests': personalBests.toJson(),
       'lifetimeRunTotals': lifetimeRunTotals.toJson(),
       'dailyStreak': dailyStreak.toJson(),
+      'weeklyGauntlet': weeklyGauntlet.toJson(),
       'settings': settings.toJson(),
     };
   }
