@@ -5,6 +5,7 @@ import '../models/achievements.dart';
 import '../models/daily_result.dart';
 import '../models/daily_streak.dart';
 import '../models/ghost_trace.dart';
+import '../models/next_goal.dart';
 import '../models/personal_bests.dart';
 import '../models/run_record.dart';
 import '../models/run_stats.dart';
@@ -106,6 +107,17 @@ class GameStateService extends ChangeNotifier {
         longestDailyStreak: AchievementCatalog.longestDailyStreak(
           _dailyHistory,
         ),
+      );
+
+  /// The next reachable goal (issue #282), read live from the save:
+  /// coins, the garage fleet, and achievement progress. The menu and the
+  /// run summary both render [NextGoal.line]; null only when nothing is
+  /// left to chase.
+  NextGoal? get nextGoal => NextGoal.select(
+        totalCoins: totalCoins,
+        unlockedVehicleIds: unlockedVehicles,
+        achievementState: achievementState,
+        isAchievementEarned: isAchievementUnlocked,
       );
 
   /// Drains the achievements unlocked by the most recent gameplay event

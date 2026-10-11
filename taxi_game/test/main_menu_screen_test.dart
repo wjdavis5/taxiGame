@@ -4,9 +4,11 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/daily_result.dart';
+import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/haptics_service.dart';
@@ -15,6 +17,7 @@ import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/game_screen.dart';
 import 'package:taxi_game/ui/screens/main_menu_screen.dart';
 import 'package:taxi_game/ui/screens/records_screen.dart';
+import 'package:taxi_game/ui/widgets/cab_button.dart';
 import 'helpers/calendar_days.dart';
 import 'helpers/fake_audio_platform.dart';
 
@@ -63,7 +66,7 @@ void main() {
 
     final playButton = find.byKey(const ValueKey('play_button'));
     expect(playButton, findsOneWidget);
-    expect(tester.widget<ElevatedButton>(playButton).onPressed, isNotNull);
+    expect(tester.widget<CabButton>(playButton).onPressed, isNotNull);
   });
 
   testWidgets('garage button is present and enabled', (tester) async {
@@ -76,7 +79,7 @@ void main() {
 
     final garageButton = find.byKey(const ValueKey('garage_button'));
     expect(garageButton, findsOneWidget);
-    expect(tester.widget<ElevatedButton>(garageButton).onPressed, isNotNull);
+    expect(tester.widget<CabButton>(garageButton).onPressed, isNotNull);
   });
 
   testWidgets('endless shift button is present and enabled', (tester) async {
@@ -89,7 +92,7 @@ void main() {
 
     final endlessButton = find.byKey(const ValueKey('endless_button'));
     expect(endlessButton, findsOneWidget);
-    expect(tester.widget<ElevatedButton>(endlessButton).onPressed, isNotNull);
+    expect(tester.widget<CabButton>(endlessButton).onPressed, isNotNull);
     expect(find.text('ENDLESS SHIFT'), findsOneWidget);
   });
 
@@ -120,13 +123,14 @@ void main() {
     );
 
     // And the on-ramp is styled as the headline: the yellow signature
-    // colour, while the mode buttons step back in white.
-    final playColor =
-        tester.widget<ElevatedButton>(playButton).style?.backgroundColor;
-    final endlessColor =
-        tester.widget<ElevatedButton>(endlessButton).style?.backgroundColor;
-    expect(playColor, isNot(endlessColor),
+    // face, while the mode buttons step back in white (issue #264's
+    // CabButton carries the style now).
+    final playPrimary = tester.widget<CabButton>(playButton).primary;
+    final endlessPrimary = tester.widget<CabButton>(endlessButton).primary;
+    expect(playPrimary, isTrue,
         reason: 'only the on-ramp is styled like the headline');
+    expect(endlessPrimary, isFalse,
+        reason: 'the modes step back from the on-ramp');
   });
 
   testWidgets('a finished save keeps the retained order: daily first, '
@@ -188,7 +192,7 @@ void main() {
 
     final recordsButton = find.byKey(const Key('records_button'));
     expect(recordsButton, findsOneWidget);
-    expect(tester.widget<ElevatedButton>(recordsButton).onPressed, isNotNull);
+    expect(tester.widget<CabButton>(recordsButton).onPressed, isNotNull);
     expect(find.text('RECORDS'), findsOneWidget);
 
     await tester.ensureVisible(recordsButton);
@@ -210,7 +214,7 @@ void main() {
 
       final dailyButton = find.byKey(const ValueKey('daily_button'));
       expect(dailyButton, findsOneWidget);
-      expect(tester.widget<ElevatedButton>(dailyButton).onPressed, isNotNull);
+      expect(tester.widget<CabButton>(dailyButton).onPressed, isNotNull);
       expect(find.text('DAILY SHIFT'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('daily_status')),
@@ -266,7 +270,7 @@ void main() {
           reason: 'the day\'s score stays on the menu until midnight');
 
       final dailyButton = find.byKey(const ValueKey('daily_button'));
-      expect(tester.widget<ElevatedButton>(dailyButton).onPressed, isNotNull,
+      expect(tester.widget<CabButton>(dailyButton).onPressed, isNotNull,
           reason: 'done is not dead — the button opens the day\'s result');
     });
 
@@ -555,6 +559,12 @@ void main() {
             find.byKey(const ValueKey('daily_status'))),
         ('the daily streak line',
             find.byKey(const ValueKey('daily_streak_status'))),
+        ('the daily ghost line',
+            find.byKey(const ValueKey('daily_ghost_status'))),
+        ('the endless rule line',
+            find.byKey(const ValueKey('endless_rule_status'))),
+        ('the next goal line',
+            find.byKey(const ValueKey('menu_next_goal'))),
         // #208: a fresh save shows the three widest button labels —
         // the on-ramp headline and both mode labels.
         ('START DRIVING', find.text('START DRIVING')),
@@ -614,7 +624,7 @@ void main() {
       await tester.pump();
 
       final endless = find.byKey(const ValueKey('endless_button'));
-      final onPressed = tester.widget<ElevatedButton>(endless).onPressed!;
+      final onPressed = tester.widget<CabButton>(endless).onPressed;
       onPressed();
       onPressed();
 
@@ -630,6 +640,139 @@ void main() {
         reason: 'one push, one live shift — a stacked second game keeps '
             'simulating behind the visible one',
       );
+    });
+  });
+
+  group('the branded first screen (issue #264)', () {
+    testWidgets('a fresh save opens on the Cab Hustle wordmark, and the '
+        'menu speaks no stock Material control language', (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('cab_hustle_wordmark')),
+          findsOneWidget,
+          reason: 'the first screen is the game\'s own mark, not a bare '
+              'centered Text');
+      expect(find.text('CAB HUSTLE'), findsOneWidget);
+      expect(find.byType(ElevatedButton), findsNothing,
+          reason: 'every menu action is a CabButton — the custom face — '
+              'not a stock Material button');
+    });
+
+    testWidgets('ENDLESS SHIFT names the three-crash and bank-or-push rule '
+        'in one line', (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(
+        find.text('3 CRASHES END IT \u2014 BANK OR PUSH AT EVERY DROPOFF'),
+        findsOneWidget,
+        reason: 'the flagship rule is stated before the mode is entered, '
+            'on a fresh save',
+      );
+    });
+
+    testWidgets('the daily card names the shared course and the ghost '
+        'payoff before the first attempt', (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(find.textContaining('SAME FOR EVERYONE'), findsOneWidget,
+          reason: 'the shared course is the first half of the pitch');
+      expect(find.text('RACE YOUR GHOST AFTER YOUR RUN'), findsOneWidget,
+          reason: 'the local ghost is the payoff, named before the first '
+              'attempt');
+    });
+  });
+
+  group('the next goal (issue #282)', () {
+    testWidgets('a fresh save points at the next car and its shortfall',
+        (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('menu_next_goal')), findsOneWidget);
+      expect(find.text('NEXT GOAL \u00b7 CITY COMPACT \u2014 5000 COINS '
+          'TO GO'), findsOneWidget);
+    });
+
+    testWidgets('the goal moves with the wallet', (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+      gameStateService.addCoins(2000);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(find.text('NEXT GOAL \u00b7 CITY COMPACT \u2014 3000 COINS '
+          'TO GO'), findsOneWidget);
+    });
+
+    testWidgets('with the fleet complete the goal points at the closest '
+        'locked achievement', (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+      gameStateService.addCoins(200000);
+      for (final vehicle in VehicleCatalog.vehicles) {
+        gameStateService.unlockVehicle(vehicle.id, vehicle.price);
+      }
+      // A 3 km run earns the 1 km and 3 km distance tiers and leaves the
+      // 5 km tier at 3000/5000 — closer than anything else locked.
+      await gameStateService.recordEndlessRun(const RunRecord(
+        endedAtMs: 0,
+        distancePx: 30000,
+        score: 100,
+        faresDelivered: 2,
+        longestChain: 1,
+        livesLost: 0,
+        lifeLossDistancesPx: [],
+        banked: true,
+        durationSeconds: 60,
+      ));
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(find.text('NEXT GOAL \u00b7 CROSS-TOWN LEGEND \u2014 3000/5000'),
+          findsOneWidget);
+    });
+
+    testWidgets('the shift-stats screen is one tap from the menu',
+        (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      final statsButton = find.byKey(const Key('stats_button'));
+      expect(statsButton, findsOneWidget);
+      expect(find.text('SHIFT STATS'), findsOneWidget);
+      await tester.ensureVisible(statsButton);
+      await tester.tap(statsButton);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('stats_screen')), findsOneWidget,
+          reason: 'the mastery wall must not hide behind Settings');
     });
   });
 }

@@ -5,6 +5,7 @@ import '../../game/taxi_game.dart';
 import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
 import '../../services/haptics_service.dart';
+import '../widgets/cab_button.dart';
 import '../widgets/day_key_builder.dart';
 import 'credits_screen.dart';
 import 'daily_screen.dart';
@@ -12,6 +13,7 @@ import 'game_screen.dart';
 import 'garage_screen.dart';
 import 'records_screen.dart';
 import 'settings_screen.dart';
+import 'stats_screen.dart';
 
 /// Main menu screen - entry point of the app
 class MainMenuScreen extends StatelessWidget {
@@ -43,35 +45,16 @@ class MainMenuScreen extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Game Title
-                  //
-                  // The scale-down box (issue #187): 'CAB HUSTLE' at 48 px
-                  // is ~480 px of bold type, and the 280 px left on a
-                  // 320 pt iPhone wrapped the title into two flush-left
-                  // lines — the menu's headline, broken on the oldest
-                  // phones still running iOS 15. The garage/HUD/completion
-                  // idiom (issues #156, #159): one line, laid out under
-                  // unbounded width, scaled down to whatever fits.
+                  // The wordmark (issue #264): the first screen is the
+                  // identity judgement, so it opens on the game's own
+                  // mark — the loading state's voice (issue #265's blue
+                  // field, white type, yellow cab) grown into a cab-sign
+                  // plate — instead of a bare centered Text. The scale-
+                  // down box stays (#187): one line of ink at whatever
+                  // width the phone offers.
                   const Padding(
                     padding: EdgeInsets.all(20.0),
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        'CAB HUSTLE',
-                        style: TextStyle(
-                          fontSize: 48,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          shadows: [
-                            Shadow(
-                              offset: Offset(2, 2),
-                              blurRadius: 4,
-                              color: Colors.black45,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    child: _Wordmark(),
                   ),
 
                   const SizedBox(height: 40),
@@ -96,6 +79,26 @@ class MainMenuScreen extends StatelessWidget {
                             Icons.monetization_on,
                             '${gameState.totalCoins} Coins',
                           ),
+                          // The next reachable goal (issue #282): the
+                          // first screen a returning player sees names
+                          // what they are chasing — the next car, or the
+                          // closest locked achievement — so progression
+                          // stops being a garage price list.
+                          if (gameState.nextGoal != null) ...[
+                            const SizedBox(height: 14),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                gameState.nextGoal!.line,
+                                key: const ValueKey('menu_next_goal'),
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.yellow,
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       );
                     },
@@ -195,6 +198,27 @@ class MainMenuScreen extends StatelessWidget {
 
                   const SizedBox(height: 20),
 
+                  // Shift stats (issue #282): the mastery wall was
+                  // reachable only through Settings, where a returning
+                  // player never looks. It is a top-level destination
+                  // beside Records — the two reading screens sit
+                  // together.
+                  _MenuButton(
+                    buttonKey: const Key('stats_button'),
+                    icon: Icons.query_stats,
+                    label: 'SHIFT STATS',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const StatsScreen(),
+                        ),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
                   // Settings Button
                   _MenuButton(
                     buttonKey: const Key('settings_button'),
@@ -287,6 +311,23 @@ class MainMenuScreen extends StatelessWidget {
               ),
             );
           },
+        ),
+        // The flagship rule, stated before the mode is ever entered
+        // (issue #264): three crashes end the shift and every dropoff is
+        // a bank-or-push call. Rides the scale-down box like the daily
+        // status line (#201), one line at every width.
+        const SizedBox(height: 10),
+        const FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            '3 CRASHES END IT \u2014 BANK OR PUSH AT EVERY DROPOFF',
+            key: ValueKey('endless_rule_status'),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
         ),
         if (gameState.endlessBestScore > 0) ...[
           const SizedBox(height: 10),
@@ -405,6 +446,23 @@ class MainMenuScreen extends StatelessWidget {
             ),
           ),
         ),
+        const SizedBox(height: 6),
+        // The ghost payoff, named before the first attempt (issue #264):
+        // the shared course alone never said what it is for — the run you
+        // set becomes the car you race. The Daily screen's own verb
+        // (RACE YOUR GHOST) in the menu's scale-down idiom (#201).
+        const FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            'RACE YOUR GHOST AFTER YOUR RUN',
+            key: ValueKey('daily_ghost_status'),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: Colors.white70,
+            ),
+          ),
+        ),
         if (result == null)
           TextButton(
             key: const ValueKey('daily_history_button'),
@@ -453,6 +511,10 @@ class MainMenuScreen extends StatelessWidget {
   }
 }
 
+/// The menu's press wrapper (issue #264): keeps the route guard and the
+/// click/tick feedback (issues #4, #5, #220) in one place, and hands the
+/// face to [CabButton] — the menu's own control language, not a stock
+/// Material button.
 class _MenuButton extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -473,8 +535,11 @@ class _MenuButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ElevatedButton.icon(
+    return CabButton(
       key: buttonKey,
+      icon: icon,
+      label: label,
+      primary: primary,
       // Every menu press clicks (issue #4) and ticks (issue #5), then
       // does its job. The route guard comes first (issue #220): a stray
       // second tap from the push transition — the menu stays
@@ -487,36 +552,62 @@ class _MenuButton extends StatelessWidget {
         hapticsOf(context)?.buttonPress();
         onPressed();
       },
-      icon: Icon(icon, size: primary ? 34 : 32),
-      // Every menu label rides the scale-down box (issue #208, the
-      // title's #187 idiom one screen up): on a 320 pt iPhone the
-      // button's padding and icon leave ~190 px of label slot, and the
-      // widest labels — START DRIVING, TODAY'S RESULT — wrapped into
-      // two flush-left lines there. One line of ink, shrunk to whatever
-      // fits; text finders key on the Text inside, so nothing that
-      // looks the label up notices the box.
-      label: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: primary ? 26 : 22,
-            fontWeight: FontWeight.bold,
+    );
+  }
+}
+
+/// The Cab Hustle wordmark (issue #264): the loading state's voice
+/// (issue #265) as a mark — a dark plate with the yellow rim and the
+/// taxi, the wordmark in the loading state's white, letterspaced type.
+/// The mark is the first thing a fresh save shows, and it is the game's
+/// own, not Flutter's.
+class _Wordmark extends StatelessWidget {
+  const _Wordmark();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('cab_hustle_wordmark'),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.30),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.yellow, width: 3),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black45,
+            offset: Offset(0, 6),
+            blurRadius: 0,
           ),
-        ),
+        ],
       ),
-      style: ElevatedButton.styleFrom(
-        padding: EdgeInsets.symmetric(
-          horizontal: primary ? 44 : 40,
-          vertical: primary ? 18 : 15,
-        ),
-        minimumSize: Size(primary ? 280 : 250, primary ? 70 : 60),
-        backgroundColor: primary ? Colors.yellow : Colors.white,
-        foregroundColor: primary ? Colors.black : Colors.blue.shade900,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(30),
-        ),
-        elevation: primary ? 10 : 6,
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.local_taxi, size: 40, color: Colors.yellow),
+          SizedBox(width: 10),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                'CAB HUSTLE',
+                style: TextStyle(
+                  fontSize: 42,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 3,
+                  color: Colors.white,
+                  shadows: [
+                    Shadow(
+                      offset: Offset(2, 2),
+                      blurRadius: 4,
+                      color: Colors.black45,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
