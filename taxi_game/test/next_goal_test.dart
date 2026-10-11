@@ -1,14 +1,19 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/models/achievements.dart';
+import 'package:taxi_game/models/city_license.dart';
 import 'package:taxi_game/models/next_goal.dart';
 
 /// The next-goal selection (issue #282): the garage ladder while a car is
-/// unowned, then the closest locked achievement. The City License board
-/// (#278) adds a source to [NextGoal.select]; these tests pin the two
-/// sources that ship and the seam they plug into.
+/// unowned, then the City License board's next open objective (issue
+/// #278), then the closest locked achievement. These tests pin all three
+/// sources and the priority order between them.
 void main() {
   const starterId = 'taxi_yellow';
+
+  /// Every license objective's id — the shape a save holds once the whole
+  /// board is complete.
+  final allLicenseIds = CityLicense.board.map((rule) => rule.id).toSet();
 
   AchievementState stateWith({
     int bestBankedScore = 0,
@@ -34,6 +39,7 @@ void main() {
     List<String> unlocked = const [starterId],
     AchievementState? state,
     Set<String> earned = const {},
+    Set<String> completedLicense = const {},
   }) =>
       NextGoal.select(
         totalCoins: totalCoins,
@@ -41,6 +47,7 @@ void main() {
         achievementState:
             state ?? stateWith(unlockedVehicleCount: unlocked.length),
         isAchievementEarned: earned.contains,
+        completedLicenseObjectiveIds: completedLicense,
       );
 
   test('a fresh save chases the first unowned car, in ladder order', () {
@@ -62,7 +69,33 @@ void main() {
     expect(goal.id, 'sedan_blue');
   });
 
-  test('a completed fleet falls through to the closest locked achievement',
+  test('a completed fleet falls through to the next open license objective',
+      () {
+    final goal = select(
+      unlocked: VehicleCatalog.vehicles.map((v) => v.id).toList(),
+      state: stateWith(unlockedVehicleCount: VehicleCatalog.vehicles.length),
+    )!;
+    expect(goal.kind, NextGoalKind.license,
+        reason: 'the garage ladder is spent; the post-tutorial board leads');
+    expect(goal.id, 'cleanBank',
+        reason: 'board order: the first objective is the first goal');
+    expect(goal.title, 'CLEAN BANK');
+    expect(goal.detail, 'BANK A SHIFT WITHOUT CRASHING');
+    expect(goal.line,
+        'NEXT GOAL \u00b7 CLEAN BANK \u2014 BANK A SHIFT WITHOUT CRASHING');
+  });
+
+  test('a completed objective drops out for the next open one', () {
+    final goal = select(
+      unlocked: VehicleCatalog.vehicles.map((v) => v.id).toList(),
+      state: stateWith(unlockedVehicleCount: VehicleCatalog.vehicles.length),
+      completedLicense: const {'cleanBank'},
+    )!;
+    expect(goal.kind, NextGoalKind.license);
+    expect(goal.id, 'bigBank');
+  });
+
+  test('a completed board falls through to the closest locked achievement',
       () {
     final goal = select(
       unlocked: VehicleCatalog.vehicles.map((v) => v.id).toList(),
@@ -70,6 +103,7 @@ void main() {
         furthestDistanceMetres: 3000,
         unlockedVehicleCount: VehicleCatalog.vehicles.length,
       ),
+      completedLicense: allLicenseIds,
     )!;
     expect(goal.kind, NextGoalKind.achievement);
     expect(goal.id, 'distance_5000',
@@ -83,6 +117,7 @@ void main() {
     final goal = select(
       unlocked: VehicleCatalog.vehicles.map((v) => v.id).toList(),
       state: stateWith(unlockedVehicleCount: VehicleCatalog.vehicles.length),
+      completedLicense: allLicenseIds,
     )!;
     expect(goal.id, 'chain_3',
         reason: 'every ratio is 0; the first track\'s first tier leads');
@@ -94,15 +129,18 @@ void main() {
       unlocked: VehicleCatalog.vehicles.map((v) => v.id).toList(),
       state: stateWith(unlockedVehicleCount: VehicleCatalog.vehicles.length),
       earned: const {'chain_3', 'chain_5'},
+      completedLicense: allLicenseIds,
     )!;
     expect(goal.id, 'chain_8');
   });
 
-  test('null when every car is owned and every achievement is earned', () {
+  test('null when every car is owned, the board is complete, and every '
+      'achievement is earned', () {
     final goal = select(
       unlocked: VehicleCatalog.vehicles.map((v) => v.id).toList(),
       state: stateWith(unlockedVehicleCount: VehicleCatalog.vehicles.length),
       earned: AchievementCatalog.all.map((a) => a.id).toSet(),
+      completedLicense: allLicenseIds,
     );
     expect(goal, isNull,
         reason: 'a completed save renders no line, never a placeholder');

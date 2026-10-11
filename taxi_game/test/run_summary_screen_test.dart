@@ -15,6 +15,7 @@ import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/systems/lives.dart';
 import 'package:taxi_game/game/systems/run_summary.dart';
 import 'package:taxi_game/models/achievements.dart';
+import 'package:taxi_game/models/city_license.dart';
 import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/services/audio_service.dart';
@@ -189,6 +190,9 @@ void main() {
       ..addAll(VehicleCatalog.vehicles.map((v) => v.id));
     for (final def in AchievementCatalog.all) {
       save.achievements[def.id] = true;
+    }
+    for (final rule in CityLicense.board) {
+      save.licenseObjectives[rule.id] = true;
     }
     SharedPreferences.setMockInitialValues({
       StorageService.saveDataKey: jsonEncode(save.toJson()),

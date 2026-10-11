@@ -10,6 +10,7 @@ import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/achievements.dart';
+import 'package:taxi_game/models/city_license.dart';
 import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/models/run_record.dart';
 import 'package:taxi_game/models/save_data.dart';
@@ -789,15 +790,47 @@ void main() {
           'TO GO'), findsOneWidget);
     });
 
-    testWidgets('with the fleet complete the goal points at the closest '
-        'locked achievement', (tester) async {
+    testWidgets('with the fleet complete the goal points at the next open '
+        'license objective (issue #278)', (tester) async {
+      // The garage ladder is spent and the board is untouched: the
+      // post-tutorial board leads, with its first objective named.
+      final save = SaveData.createDefault();
+      save.unlockedVehicles
+        ..clear()
+        ..addAll(VehicleCatalog.vehicles.map((v) => v.id));
+      SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey: jsonEncode(save.toJson()),
+      });
       final storageService = StorageService();
       await storageService.init();
       final gameStateService = GameStateService(storageService);
-      gameStateService.addCoins(200000);
-      for (final vehicle in VehicleCatalog.vehicles) {
-        gameStateService.unlockVehicle(vehicle.id, vehicle.price);
+      await gameStateService.loadSaveData();
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(
+          find.text('NEXT GOAL \u00b7 CLEAN BANK \u2014 BANK A SHIFT WITHOUT '
+              'CRASHING'),
+          findsOneWidget);
+    });
+
+    testWidgets('a completed board points at the closest locked achievement',
+        (tester) async {
+      final save = SaveData.createDefault();
+      save.unlockedVehicles
+        ..clear()
+        ..addAll(VehicleCatalog.vehicles.map((v) => v.id));
+      for (final rule in CityLicense.board) {
+        save.licenseObjectives[rule.id] = true;
       }
+      SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey: jsonEncode(save.toJson()),
+      });
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+      await gameStateService.loadSaveData();
       // A 3 km run earns the 1 km and 3 km distance tiers and leaves the
       // 5 km tier at 3000/5000 — closer than anything else locked.
       await gameStateService.recordEndlessRun(const RunRecord(
@@ -820,15 +853,18 @@ void main() {
     });
 
     testWidgets('a completed save shows no next-goal line', (tester) async {
-      // Every car owned and every achievement earned: nothing is left to
-      // chase, so the surface renders no line at all — a placeholder
-      // goal would be a lie.
+      // Every car owned, every license objective complete, and every
+      // achievement earned: nothing is left to chase, so the surface
+      // renders no line at all — a placeholder goal would be a lie.
       final save = SaveData.createDefault();
       save.unlockedVehicles
         ..clear()
         ..addAll(VehicleCatalog.vehicles.map((v) => v.id));
       for (final def in AchievementCatalog.all) {
         save.achievements[def.id] = true;
+      }
+      for (final rule in CityLicense.board) {
+        save.licenseObjectives[rule.id] = true;
       }
       SharedPreferences.setMockInitialValues({
         StorageService.saveDataKey: jsonEncode(save.toJson()),
@@ -844,6 +880,27 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(const ValueKey('menu_next_goal')), findsNothing);
+    });
+
+    testWidgets('the City License board is one tap from the menu '
+        '(issue #278)', (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      final licenseButton = find.byKey(const Key('license_button'));
+      expect(licenseButton, findsOneWidget);
+      expect(find.text('CITY LICENSE'), findsOneWidget);
+      expect(tester.widget<CabButton>(licenseButton).onPressed, isNotNull);
+      await tester.ensureVisible(licenseButton);
+      await tester.tap(licenseButton);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('city_license_screen')), findsOneWidget);
+      expect(find.byKey(const ValueKey('license_progress')), findsOneWidget);
     });
 
     testWidgets('the shift-stats screen is one tap from the menu',
