@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import '../game/levels/level.dart';
 import '../game/systems/daily_shift.dart';
 import '../models/achievements.dart';
+import '../models/city_license.dart';
 import '../models/daily_result.dart';
 import '../models/daily_streak.dart';
 import '../models/ghost_trace.dart';
@@ -111,15 +112,55 @@ class GameStateService extends ChangeNotifier {
       );
 
   /// The next reachable goal (issue #282), read live from the save:
-  /// coins, the garage fleet, and achievement progress. The menu and the
-  /// run summary both render [NextGoal.line]; null only when nothing is
-  /// left to chase.
+  /// coins, the garage fleet, achievement progress, and the City License
+  /// board (issue #278). The menu and the run summary both render
+  /// [NextGoal.line]; null only when nothing is left to chase.
   NextGoal? get nextGoal => NextGoal.select(
         totalCoins: totalCoins,
         unlockedVehicleIds: unlockedVehicles,
         achievementState: achievementState,
         isAchievementEarned: isAchievementUnlocked,
+        completedLicenseObjectiveIds: completedLicenseObjectiveIds,
       );
+
+  /// True when the City License objective with [id] is complete (issue
+  /// #278). The save's `licenseObjectives` map is the only source of
+  /// truth — a rule whose measure a later run dips below stays complete,
+  /// because complete means "was completed", forever.
+  bool isLicenseObjectiveComplete(String id) =>
+      _saveData.licenseObjectives[id] == true;
+
+  /// The ids of every completed City License objective (issue #278).
+  Set<String> get completedLicenseObjectiveIds => {
+        for (final entry in _saveData.licenseObjectives.entries)
+          if (entry.value) entry.key,
+      };
+
+  /// How many City License objectives have been completed (issue #278).
+  int get completedLicenseObjectiveCount =>
+      _saveData.licenseObjectives.values.where((done) => done).length;
+
+  /// Marks every City License objective [record] just completed (issue
+  /// #278), leaving the notify and the save to [recordEndlessRun]'s own
+  /// — the run's settlement is one write. An objective already complete
+  /// is skipped, never re-marked: the map is a record, not a counter.
+  void _evaluateLicenseObjectives(RunRecord record) {
+    final run = LicenseRun(
+      score: record.score,
+      banked: record.banked,
+      livesLost: record.livesLost,
+      nearMisses: record.nearMisses,
+      acceptedByKind: record.acceptedByKind,
+      vehicleId: record.vehicleId,
+      seed: record.seed,
+      distancePx: record.distancePx,
+    );
+    for (final rule in CityLicense.board) {
+      if (isLicenseObjectiveComplete(rule.id)) continue;
+      if (!rule.isMet(run)) continue;
+      _saveData.licenseObjectives[rule.id] = true;
+    }
+  }
 
   /// Drains the achievements unlocked by the most recent gameplay event
   /// (issue #21): the caller that just caused an award — the shift-end
@@ -511,6 +552,10 @@ class GameStateService extends ChangeNotifier {
     // block lives in the save, so the save must reach the disk on every
     // recorded shift now, records improved or not.
     _saveData.lifetimeRunTotals.applyRun(record);
+    // The City License board reads the settled shift too (issue #278):
+    // the same record carries everything its rules measure, so a
+    // completed objective rides the one save below with the shift.
+    _evaluateLicenseObjectives(record);
     _runHistory.add(record);
     if (_runHistory.length > maxRecordedRuns) {
       _runHistory.removeRange(0, _runHistory.length - maxRecordedRuns);

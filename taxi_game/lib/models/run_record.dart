@@ -26,6 +26,8 @@ class RunRecord {
     this.nearMisses = 0,
     this.acceptedByKind = const {},
     this.declinedByKind = const {},
+    this.seed = 0,
+    this.vehicleId = '',
   });
 
   /// When the shift ended, in epoch milliseconds. Not used by the
@@ -80,6 +82,17 @@ class RunRecord {
   final Map<String, int> acceptedByKind;
   final Map<String, int> declinedByKind;
 
+  /// The seed the shift ran on (issue #278): the course, its sky, and its
+  /// weather are pure functions of it, so the City License board can
+  /// measure a finished shift's weather exposure without the live world.
+  /// 0 for records written before the board existed.
+  final int seed;
+
+  /// The garage id of the car the shift was driven in (issue #278) — the
+  /// fact the board's vehicle-tradeoff objectives read. Empty for records
+  /// written before the board existed.
+  final String vehicleId;
+
   /// The run's distance in metres, on the same px scale
   /// [RunSummary.pixelsPerMetre] and the HUD's distance badge use — one
   /// constant referenced, never duplicated.
@@ -109,6 +122,8 @@ class RunRecord {
       durationSeconds: (json['durationSeconds'] as num?)?.toDouble() ?? 0.0,
       acceptedByKind: _countsFromJson(json['acceptedByKind']),
       declinedByKind: _countsFromJson(json['declinedByKind']),
+      seed: (json['seed'] as num?)?.toInt() ?? 0,
+      vehicleId: (json['vehicleId'] as String?) ?? '',
     );
   }
 
@@ -127,6 +142,8 @@ class RunRecord {
       'durationSeconds': durationSeconds,
       'acceptedByKind': acceptedByKind,
       'declinedByKind': declinedByKind,
+      'seed': seed,
+      'vehicleId': vehicleId,
     };
   }
 }
