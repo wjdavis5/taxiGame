@@ -27,8 +27,9 @@ class NextGoal {
 
   final NextGoalKind kind;
 
-  /// Stable id of the thing the goal names — a vehicle id or an
-  /// achievement id. Pinned by tests and the seam #278 reuses.
+  /// Stable id of the thing the goal names — a vehicle id, a City License
+  /// objective id (issue #278), or an achievement id. Pinned by tests and
+  /// the seam #278 reused.
   final String id;
 
   /// Uppercase display name ('CITY COMPACT', 'HOT STREAK').

@@ -82,9 +82,10 @@ class MainMenuScreen extends StatelessWidget {
                           ),
                           // The next reachable goal (issue #282): the
                           // first screen a returning player sees names
-                          // what they are chasing — the next car, or the
-                          // closest locked achievement — so progression
-                          // stops being a garage price list.
+                          // what they are chasing — the next car, the
+                          // next open City License objective (issue #278),
+                          // or the closest locked achievement — so
+                          // progression stops being a garage price list.
                           if (gameState.nextGoal != null) ...[
                             const SizedBox(height: 14),
                             FittedBox(

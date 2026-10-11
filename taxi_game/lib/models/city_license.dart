@@ -114,51 +114,58 @@ class LicenseRun {
 /// its family, the title and ask the board renders, and the rule a shift
 /// must satisfy to complete it.
 ///
-/// The rule switch and the brief are deliberately separate facts: the
-/// tests pin every threshold against the text, so a re-tuned number cannot
-/// leave a lie on the card.
+/// The bar is the [threshold] field, and the rule switch reads that same
+/// field, so the number on the card and the number enforced are one fact:
+/// the tests pin every [brief] to contain its [threshold], and a re-tuned
+/// rule whose card still quotes the old number fails them.
 enum LicenseRule {
   // Banking: the two ways a bank is a decision — clean, or big.
   cleanBank(LicenseFamily.banking, 'CLEAN BANK',
-      'BANK A SHIFT WITHOUT CRASHING'),
-  bigBank(LicenseFamily.banking, 'BIG BANK', 'BANK 4000+ IN ONE SHIFT'),
+      'BANK A SHIFT WITH 0 CRASHES', threshold: 0),
+  bigBank(LicenseFamily.banking, 'BIG BANK', 'BANK 4000+ IN ONE SHIFT',
+      threshold: 4000),
 
   // Close calls: the near-miss economy (issue #23) as a named bar.
   tightThread(LicenseFamily.closeCalls, 'TIGHT THREAD',
-      'CLEAR 8 CLOSE CALLS IN ONE SHIFT'),
+      'CLEAR 8 CLOSE CALLS IN ONE SHIFT', threshold: 8),
   needleThread(LicenseFamily.closeCalls, 'NEEDLE THREAD',
-      'CLEAR 15 CLOSE CALLS IN ONE SHIFT'),
+      'CLEAR 15 CLOSE CALLS IN ONE SHIFT', threshold: 15),
 
   // Fare kinds: the merged contract vocabulary (issue #279). The counts
   // are boardings — an accepted contract is the decision the offer bar
   // asks, and the counts are what the record stores.
   vipRun(LicenseFamily.fareKinds, 'VIP RUN',
-      'TAKE 2 VIP FARES IN ONE SHIFT', fareKind: 'vip'),
+      'TAKE 2 VIP FARES IN ONE SHIFT', threshold: 2, fareKind: 'vip'),
   longHaulRun(LicenseFamily.fareKinds, 'LONG HAULER',
-      'TAKE 2 LONG-HAUL FARES IN ONE SHIFT', fareKind: 'longHaul'),
+      'TAKE 2 LONG-HAUL FARES IN ONE SHIFT',
+      threshold: 2, fareKind: 'longHaul'),
   farSideRun(LicenseFamily.fareKinds, 'FAR SIDE',
-      'TAKE 3 FAR-SIDE FARES IN ONE SHIFT', fareKind: 'awkward'),
+      'TAKE 3 FAR-SIDE FARES IN ONE SHIFT',
+      threshold: 3, fareKind: 'awkward'),
 
   // Weather: the environment's own axes (issue #24), measured over the
   // span the shift actually drove.
-  rainRun(LicenseFamily.weather, 'RAIN RUN', 'DRIVE 300 M IN THE RAIN'),
-  fogRun(LicenseFamily.weather, 'FOG RUN', 'DRIVE 300 M IN FOG'),
-  nightRun(LicenseFamily.weather, 'NIGHT SHIFT',
-      'DRIVE 300 M AFTER DARK'),
+  rainRun(LicenseFamily.weather, 'RAIN RUN', 'DRIVE 300 M IN THE RAIN',
+      threshold: 300),
+  fogRun(LicenseFamily.weather, 'FOG RUN', 'DRIVE 300 M IN FOG',
+      threshold: 300),
+  nightRun(LicenseFamily.weather, 'NIGHT SHIFT', 'DRIVE 300 M AFTER DARK',
+      threshold: 300),
 
   // Vehicle tradeoffs: a car's handling character turned into a bar
   // (issue #9). The compact threads gaps; the Executive banks.
   compactThread(LicenseFamily.vehicle, 'COMPACT PRECISION',
       'CLEAR 8 CLOSE CALLS IN THE CITY COMPACT',
-      requiredVehicleId: 'compact_red'),
+      threshold: 8, requiredVehicleId: 'compact_red'),
   executiveBank(LicenseFamily.vehicle, 'EXECUTIVE DISCIPLINE',
       'BANK 3000+ IN THE EXECUTIVE',
-      requiredVehicleId: 'luxury_white');
+      threshold: 3000, requiredVehicleId: 'luxury_white');
 
   const LicenseRule(
     this.family,
     this.title,
     this.brief, {
+    required this.threshold,
     this.requiredVehicleId,
     this.fareKind,
   });
@@ -172,8 +179,14 @@ enum LicenseRule {
   /// Uppercase display name ('CLEAN BANK', 'VIP RUN').
   final String title;
 
-  /// The ask, in the board's voice ('BANK 4000+ IN ONE SHIFT').
+  /// The ask, in the board's voice ('BANK 4000+ IN ONE SHIFT'). It names
+  /// [threshold], and the tests hold it to that.
   final String brief;
+
+  /// The bar this rule enforces, in the rule's own unit — crashes, coins,
+  /// close calls, boarded fares, or metres. [isMet] reads this field, so
+  /// the card's number is never a second copy of the rule.
+  final int threshold;
 
   /// The car this objective must be driven in, for the vehicle family.
   final String? requiredVehicleId;
@@ -184,20 +197,20 @@ enum LicenseRule {
 
   /// Whether a finished [run] completes this objective.
   bool isMet(LicenseRun run) => switch (this) {
-        cleanBank => run.banked && run.livesLost == 0,
-        bigBank => run.banked && run.score >= 4000,
-        tightThread => run.nearMisses >= 8,
-        needleThread => run.nearMisses >= 15,
-        vipRun => run.acceptedOf(fareKind!) >= 2,
-        longHaulRun => run.acceptedOf(fareKind!) >= 2,
-        farSideRun => run.acceptedOf(fareKind!) >= 3,
-        rainRun => run.rainMetres >= 300,
-        fogRun => run.fogMetres >= 300,
-        nightRun => run.nightMetres >= 300,
+        cleanBank => run.banked && run.livesLost <= threshold,
+        bigBank => run.banked && run.score >= threshold,
+        tightThread => run.nearMisses >= threshold,
+        needleThread => run.nearMisses >= threshold,
+        vipRun => run.acceptedOf(fareKind!) >= threshold,
+        longHaulRun => run.acceptedOf(fareKind!) >= threshold,
+        farSideRun => run.acceptedOf(fareKind!) >= threshold,
+        rainRun => run.rainMetres >= threshold,
+        fogRun => run.fogMetres >= threshold,
+        nightRun => run.nightMetres >= threshold,
         compactThread =>
-          run.vehicleId == requiredVehicleId && run.nearMisses >= 8,
+          run.vehicleId == requiredVehicleId && run.nearMisses >= threshold,
         executiveBank =>
-          run.vehicleId == requiredVehicleId && run.banked && run.score >= 3000,
+          run.vehicleId == requiredVehicleId && run.banked && run.score >= threshold,
       };
 }
 

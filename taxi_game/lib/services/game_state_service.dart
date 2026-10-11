@@ -137,8 +137,12 @@ class GameStateService extends ChangeNotifier {
       };
 
   /// How many City License objectives have been completed (issue #278).
-  int get completedLicenseObjectiveCount =>
-      _saveData.licenseObjectives.values.where((done) => done).length;
+  /// Counted over the board, never over the save map: a save carrying an
+  /// id this build does not know (a future objective, a hand edit) must
+  /// not render "13 OF 12 COMPLETE".
+  int get completedLicenseObjectiveCount => CityLicense.board
+      .where((rule) => isLicenseObjectiveComplete(rule.id))
+      .length;
 
   /// Marks every City License objective [record] just completed (issue
   /// #278), leaving the notify and the save to [recordEndlessRun]'s own
