@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -7,8 +9,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/data/vehicle_catalog.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/taxi_game.dart';
+import 'package:taxi_game/models/achievements.dart';
 import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/models/run_record.dart';
+import 'package:taxi_game/models/save_data.dart';
 import 'package:taxi_game/services/audio_service.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/haptics_service.dart';
@@ -658,9 +662,47 @@ void main() {
           reason: 'the first screen is the game\'s own mark, not a bare '
               'centered Text');
       expect(find.text('CAB HUSTLE'), findsOneWidget);
-      expect(find.byType(ElevatedButton), findsNothing,
+      expect(find.byType(ElevatedButton), findsNothing);
+      expect(find.byType(TextButton), findsNothing);
+      expect(find.byType(OutlinedButton), findsNothing,
           reason: 'every menu action is a CabButton — the custom face — '
-              'not a stock Material button');
+              'not a stock Material button, the Daily History link '
+              'included');
+      expect(
+        tester.widget(find.byKey(const ValueKey('daily_history_button'))),
+        isA<CabButton>(),
+        reason: 'the history link was the one stock TextButton left on '
+            'the fresh-save menu',
+      );
+    });
+
+    testWidgets('the Daily History button reads its label exactly once to '
+        'semantics', (tester) async {
+      // The explicit Semantics label is the button's whole semantics;
+      // without excludeSemantics the visible Text adds a labeled child
+      // node and a screen reader announces the label twice.
+      final semantics = tester.ensureSemantics();
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      final node = tester.getSemantics(
+          find.byKey(const ValueKey('daily_history_button')));
+      expect(node.label, 'DAILY HISTORY');
+      final labeledChildren = <String>[];
+      node.visitChildren((child) {
+        labeledChildren.add(child.label);
+        return true;
+      });
+      expect(labeledChildren.where((label) => label == 'DAILY HISTORY'),
+          isEmpty,
+          reason: 'the child Text must not duplicate the button label');
+      // Disposed in the body, not a tear-down: the binding checks for
+      // live handles before tear-downs run.
+      semantics.dispose();
     });
 
     testWidgets('ENDLESS SHIFT names the three-crash and bank-or-push rule '
@@ -753,6 +795,33 @@ void main() {
 
       expect(find.text('NEXT GOAL \u00b7 CROSS-TOWN LEGEND \u2014 3000/5000'),
           findsOneWidget);
+    });
+
+    testWidgets('a completed save shows no next-goal line', (tester) async {
+      // Every car owned and every achievement earned: nothing is left to
+      // chase, so the surface renders no line at all — a placeholder
+      // goal would be a lie.
+      final save = SaveData.createDefault();
+      save.unlockedVehicles
+        ..clear()
+        ..addAll(VehicleCatalog.vehicles.map((v) => v.id));
+      for (final def in AchievementCatalog.all) {
+        save.achievements[def.id] = true;
+      }
+      SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey: jsonEncode(save.toJson()),
+      });
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+      await gameStateService.loadSaveData();
+      expect(gameStateService.nextGoal, isNull,
+          reason: 'precondition: the save is fully completed');
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('menu_next_goal')), findsNothing);
     });
 
     testWidgets('the shift-stats screen is one tap from the menu',

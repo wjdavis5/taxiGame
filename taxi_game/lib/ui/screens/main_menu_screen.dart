@@ -464,14 +464,17 @@ class MainMenuScreen extends StatelessWidget {
           ),
         ),
         if (result == null)
-          TextButton(
-            key: const ValueKey('daily_history_button'),
+          // The history link in the menu's own control language (issue
+          // #264's follow-up): it was the one stock Material TextButton
+          // left on the fresh-save menu, so the first screen's claim —
+          // every action is a CabButton — was one control short of true.
+          // The compact face keeps the link subordinate to the modes.
+          _MenuButton(
+            buttonKey: const ValueKey('daily_history_button'),
+            icon: Icons.history,
+            label: 'DAILY HISTORY',
+            compact: true,
             onPressed: () {
-              // The same transition guard as the menu buttons (issue
-              // #220): this link is a push too.
-              if (ModalRoute.of(context)?.isCurrent != true) return;
-              audioOf(context)?.playButtonSound();
-              hapticsOf(context)?.buttonPress();
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -479,14 +482,6 @@ class MainMenuScreen extends StatelessWidget {
                 ),
               );
             },
-            child: const Text(
-              'DAILY HISTORY',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.white70,
-              ),
-            ),
           ),
       ],
     );
@@ -525,12 +520,17 @@ class _MenuButton extends StatelessWidget {
   /// app's signature yellow. Everything else steps back in white.
   final bool primary;
 
+  /// The compact face for the menu's secondary links (issue #264's
+  /// follow-up) — the Daily History link.
+  final bool compact;
+
   const _MenuButton({
     required this.icon,
     required this.label,
     required this.onPressed,
     this.buttonKey,
     this.primary = false,
+    this.compact = false,
   });
 
   @override
@@ -540,6 +540,7 @@ class _MenuButton extends StatelessWidget {
       icon: icon,
       label: label,
       primary: primary,
+      compact: compact,
       // Every menu press clicks (issue #4) and ticks (issue #5), then
       // does its job. The route guard comes first (issue #220): a stray
       // second tap from the push transition — the menu stays

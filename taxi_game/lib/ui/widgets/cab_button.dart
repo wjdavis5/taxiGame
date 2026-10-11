@@ -17,6 +17,7 @@ class CabButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     this.primary = false,
+    this.compact = false,
   });
 
   final String label;
@@ -28,6 +29,12 @@ class CabButton extends StatelessWidget {
   /// white with the deep-blue ink.
   final bool primary;
 
+  /// The small form (issue #264's follow-up): the Daily History link's
+  /// size — one step down in padding, rim, type, and shadow, so a
+  /// secondary link reads as the same control family without the
+  /// weight of a mode button.
+  final bool compact;
+
   @override
   Widget build(BuildContext context) {
     final face = primary ? Colors.yellow : Colors.white;
@@ -35,24 +42,33 @@ class CabButton extends StatelessWidget {
     return Semantics(
       button: true,
       label: label,
+      // The explicit label is the button's whole semantics. Without
+      // this, the visible Text below adds its own labeled node inside
+      // the button's, and a screen reader announces the label twice.
+      excludeSemantics: true,
       child: GestureDetector(
         // Opaque so the whole face — padding and the gap around the
         // icon included — is the tap target, not just the painted text.
         behavior: HitTestBehavior.opaque,
         onTap: onPressed,
         child: Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: primary ? 26 : 22,
-            vertical: primary ? 14 : 11,
-          ),
+          padding: compact
+              ? const EdgeInsets.symmetric(horizontal: 14, vertical: 8)
+              : EdgeInsets.symmetric(
+                  horizontal: primary ? 26 : 22,
+                  vertical: primary ? 14 : 11,
+                ),
           decoration: BoxDecoration(
             color: face,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.black, width: 3),
-            boxShadow: const [
+            borderRadius: BorderRadius.circular(compact ? 12 : 16),
+            border: Border.all(
+              color: Colors.black,
+              width: compact ? 2 : 3,
+            ),
+            boxShadow: [
               BoxShadow(
                 color: Colors.black45,
-                offset: Offset(0, 5),
+                offset: Offset(0, compact ? 3 : 5),
                 blurRadius: 0,
               ),
             ],
@@ -60,17 +76,17 @@ class CabButton extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: primary ? 30 : 26, color: ink),
-              const SizedBox(width: 12),
+              Icon(icon, size: compact ? 16 : (primary ? 30 : 26), color: ink),
+              SizedBox(width: compact ? 8 : 12),
               Flexible(
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
                     label,
                     style: TextStyle(
-                      fontSize: primary ? 24 : 20,
+                      fontSize: compact ? 13 : (primary ? 24 : 20),
                       fontWeight: FontWeight.w900,
-                      letterSpacing: 1.1,
+                      letterSpacing: compact ? 0.8 : 1.1,
                       color: ink,
                     ),
                   ),
