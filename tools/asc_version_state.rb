@@ -36,6 +36,10 @@
 #   otherwise         one line per matching record's appStoreState
 #                     (PREPARE_FOR_SUBMISSION, READY_FOR_SALE, ...).
 # Everything diagnostic goes to stderr, so stdout stays machine-parseable.
+# Every run that reaches a verdict logs both raw answers there — each
+# record count and every record's own identifiers (a version's string and
+# state, a submission's id and state) — so a wrong verdict can be
+# attributed to the answer that carried it (issue #94).
 #
 # Fail closed, always (the #93 lesson): an answer the gate cannot trust is
 # an error, never a verdict. A non-200, an unparseable body, a missing data
@@ -233,16 +237,22 @@ stuck = submissions.select { |s| STUCK_SUBMISSION_STATES.include?(submission_sta
 
 matching = versions.select { |r| r.dig('attributes', 'versionString') == version }
 
-if matching.empty?
-  # The inventory goes to stderr even when the second source overrides the
-  # verdict below: #93's postmortem could not tell an empty list from a
-  # wrong-key answer precisely because the NONE path used to print nothing.
-  inventory = versions.map do |r|
-    "#{r.dig('attributes', 'versionString') || '?'}=#{r.dig('attributes', 'appStoreState') || 'UNKNOWN'}"
-  end.join(', ')
-  warn "appStoreVersions for app #{APP_ID}: #{versions.length} record(s), none for #{version} " \
-       "(#{inventory})"
-end
+# Both raw answers reach stderr on every path that decides (issue #94):
+# the first run of this gate answered NONE and logged nothing about what
+# the queries had returned, so a wrong answer and a wrong decision were
+# indistinguishable from the CI log. Each line carries the record count
+# and every record's own identifiers, so the reader can check the verdict
+# against the answer it came from. stdout stays the verdict alone.
+version_inventory = versions.map do |r|
+  "#{r.dig('attributes', 'versionString') || '?'}=#{r.dig('attributes', 'appStoreState') || 'UNKNOWN'}"
+end.join(', ')
+submission_inventory = submissions.map do |s|
+  "#{s['id'] || '?'}=#{submission_state.call(s) || 'UNKNOWN'}"
+end.join(', ')
+warn "appStoreVersions for app #{APP_ID} looking for #{version}: #{versions.length} record(s): " \
+     "#{version_inventory.empty? ? '(none)' : version_inventory}"
+warn "reviewSubmissions for app #{APP_ID}: #{submissions.length} record(s): " \
+     "#{submission_inventory.empty? ? '(none)' : submission_inventory}"
 
 if active.any?
   states = active.map { |s| submission_state.call(s) || 'UNKNOWN' }.uniq.join(', ')
