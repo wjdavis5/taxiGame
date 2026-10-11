@@ -122,6 +122,10 @@ void main() {
       expect(b.drivenSeconds, a.drivenSeconds);
       expect(b.crashDistancesPx, a.crashDistancesPx);
       expect(b.survived, a.survived);
+      expect(b.fareStops.length, a.fareStops.length);
+      expect(b.closeCallDistancesPx, a.closeCallDistancesPx,
+          reason: 'the close-call ledger is seed-deterministic too '
+              '(issue #276)');
     });
 
     test('different seeds give different shifts', () {
@@ -142,6 +146,30 @@ void main() {
         // budget is the whole death mechanic.
         if (!run.survived) {
           expect(run.crashDistancesPx, hasLength(3));
+        }
+      }
+    });
+
+    test('close calls are recorded in pass order, inside their runs '
+        '(issue #276)', () {
+      // The tip economy rides this ledger: the batch must actually clear
+      // passes (a rule that pays nothing would hide here), each pass must
+      // land inside its run, and the distances must be strictly ordered
+      // so ShiftEarnings' single forward cursor can price them.
+      final allPasses = [
+        for (final run in estimate.runs) ...run.closeCallDistancesPx,
+      ];
+      expect(allPasses, isNotEmpty,
+          reason: 'the reflex driver threads real traffic');
+
+      for (final run in estimate.runs) {
+        var previous = -1.0;
+        for (final pass in run.closeCallDistancesPx) {
+          expect(pass, greaterThan(previous),
+              reason: 'passes arrive in driving order');
+          expect(pass, greaterThanOrEqualTo(0.0));
+          expect(pass, lessThanOrEqualTo(run.distancePx + 1e-6));
+          previous = pass;
         }
       }
     });

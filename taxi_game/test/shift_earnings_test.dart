@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
+import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/systems/run_length_simulator.dart';
 import 'package:taxi_game/game/systems/shift_earnings.dart';
 
@@ -54,7 +55,39 @@ void main() {
     expect(earnings.faresCoins, rewards.fold(0, (a, b) => a + b));
     expect(earnings.bankedScore, expectedScore);
     expect(earnings.bestChain, 6, reason: '1x, then +2 per fare');
-    expect(earnings.totalCoins, earnings.faresCoins + expectedScore);
+    // The 3x and 5x deliveries rode a live chain (issue #276): each
+    // tips its CLEAN CHAIN coins, and the total carries them.
+    expect(earnings.tipsCoins, 2 * TipRule.cleanChainCoins);
+    expect(earnings.totalCoins,
+        earnings.faresCoins + earnings.tipsCoins + expectedScore);
+  });
+
+  test('close calls with a fare aboard tip through the same per-fare cap '
+      '(issue #276)', () {
+    // Passes at 500/700/900 px all fall inside fare 0's priced cycle
+    // (start to its stop at 1000 px): three THRILL PASSES = 12 coins,
+    // exactly the cap. The pass at 1200 px is fare 1's — 4 thrill coins
+    // plus its 3x clean chain — and the pass at 3000 px lands past the
+    // last recorded stop, so no fare ever pays it.
+    final earnings = ShiftEarnings.forRun(SimulatedRun(
+      seed: seed,
+      distancePx: 5000,
+      drivenSeconds: 1,
+      crashDistancesPx: const [],
+      survived: true,
+      fareStops: [
+        stop(1000, cycleSeconds: 1),
+        stop(2400, cycleSeconds: 1),
+      ],
+      closeCallDistancesPx: const [500, 700, 900, 1200, 3000],
+    ));
+
+    expect(earnings.faresDelivered, 2);
+    expect(earnings.tipsCoins,
+        TipRule.maxTipCoins + TipRule.thrillPassCoins + TipRule.cleanChainCoins,
+        reason: 'fare 0 is capped at 12; fare 1 pays 4 + 4');
+    expect(earnings.tipsCoins,
+        lessThanOrEqualTo(earnings.faresDelivered * TipRule.maxTipCoins));
   });
 
   test('a crash breaks the chain: the next fare scores at 1x again', () {

@@ -2,6 +2,7 @@
 // framework.
 // ignore_for_file: avoid_print
 import 'package:flutter_test/flutter_test.dart';
+import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/systems/run_length_simulator.dart';
 import 'package:taxi_game/game/systems/shift_earnings.dart';
 
@@ -91,6 +92,7 @@ void main() {
       final banks = sorted((e) => e.bankedScore);
       final fares = sorted((e) => e.faresDelivered);
       final chains = sorted((e) => e.bestChain);
+      final tips = sorted((e) => e.tipsCoins);
 
       final median = pct(totals, 0.5);
       medians[label] = median;
@@ -112,6 +114,10 @@ void main() {
       emit('  fares-only floor   : '
           'p25 ${pct(floors, 0.25)}  median ${pct(floors, 0.5)}  '
           'p75 ${pct(floors, 0.75)}');
+      emit('  ride tips          : '
+          'p25 ${pct(tips, 0.25)}  median ${pct(tips, 0.5)}  '
+          'p75 ${pct(tips, 0.75)}  '
+          '(capped at ${TipRule.maxTipCoins} per fare)');
       emit('  brink-banked score : '
           'p25 ${pct(banks, 0.25)}  median ${pct(banks, 0.5)}  '
           'p75 ${pct(banks, 0.75)}');
@@ -121,7 +127,7 @@ void main() {
       emit('');
     }
 
-    emit('Shift total = fares-only floor + brink-banked chain score (1:1). '
+    emit('Shift total = fares + ride tips + brink-banked chain score (1:1). '
         'Perfect-foresight banking is the ceiling; a real player\'s wallet '
         'lands between the floor and the ceiling.');
   }, timeout: const Timeout(Duration(minutes: 3)));
@@ -202,5 +208,34 @@ void main() {
     );
     expect(medians['new']!, lessThan(medians['median']!),
         reason: 'a first-session driver must out-earn nothing');
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('ride tips are included and bounded (issue #276)', () {
+    // The same rule the live dropoff pays, priced from the simulator's
+    // own close-call ledger: recomputing each run's earnings must carry
+    // tip coins, and no shift may ever tip past the per-fare cap.
+    final earnings = [
+      for (final label in ['new', 'median', 'good'])
+        for (final run in profileRuns[label]!) ShiftEarnings.forRun(run),
+    ];
+    expect(earnings, isNotEmpty, reason: 'the table above must run first');
+
+    for (final e in earnings) {
+      expect(e.tipsCoins, greaterThanOrEqualTo(0));
+      expect(e.tipsCoins,
+          lessThanOrEqualTo(e.faresDelivered * TipRule.maxTipCoins),
+          reason: 'tips are capped per fare — the bound is structural');
+      expect(e.totalCoins, e.faresCoins + e.tipsCoins + e.bankedScore,
+          reason: 'the shift total must include the tip, not hide it');
+      expect(e.wreckCoins, e.faresCoins + e.tipsCoins,
+          reason: 'the never-banked floor takes its tips too');
+    }
+
+    // The effect is included, not zeroed out: the batch's drivers do
+    // clear close calls with fares aboard (and clean chain deliveries),
+    // so the instrument would catch a tip rule that paid nothing.
+    final tipped = earnings.where((e) => e.tipsCoins > 0).length;
+    expect(tipped, greaterThan(0),
+        reason: 'at least some simulated shifts must earn a tip');
   }, timeout: const Timeout(Duration(minutes: 3)));
 }
