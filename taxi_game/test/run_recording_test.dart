@@ -133,6 +133,14 @@ void main() {
           reason: 'over a second of live driving was ticked');
       expect(record.durationSeconds, lessThan(1.5));
       expect(record.endedAtMs, greaterThan(0));
+      expect(record.seed, 42,
+          reason: 'the record carries the seed the run was played on '
+              '(issue #278): the board recomputes weather from it');
+      expect(record.vehicleId, 'taxi_yellow',
+          reason: 'the record carries the car the shift was driven in '
+              '(issue #278)');
+      expect(record.vehicleId, gameState.selectedVehicle,
+          reason: 'the recorded car is the selected one the player drove');
     });
 
     test('the aggregate reads the shift immediately', () async {

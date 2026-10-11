@@ -18,6 +18,8 @@ void main() {
         nearMisses: 11,
         acceptedByKind: {'standard': 5, 'vip': 2},
         declinedByKind: {'vip': 1, 'awkward': 3},
+        seed: 20261011,
+        vehicleId: 'compact_red',
       );
 
   group('RunRecord JSON round-trip', () {
@@ -40,6 +42,10 @@ void main() {
       expect(restored.acceptedByKind, {'standard': 5, 'vip': 2},
           reason: 'the per-kind contract answers survive (issue #279)');
       expect(restored.declinedByKind, {'vip': 1, 'awkward': 3});
+      expect(restored.seed, 20261011,
+          reason: 'the run seed survives for the City License board (#278)');
+      expect(restored.vehicleId, 'compact_red',
+          reason: 'the driven car survives for the board (#278)');
     });
 
     test('a clean banked run round-trips too', () {
@@ -90,6 +96,10 @@ void main() {
       expect(record.acceptedByKind, isEmpty,
           reason: 'records older than issue #279 kept no kind counts');
       expect(record.declinedByKind, isEmpty);
+      expect(record.seed, 0,
+          reason: 'records older than issue #278 carry no run seed');
+      expect(record.vehicleId, '',
+          reason: 'records older than issue #278 carry no car id');
     });
   });
 }

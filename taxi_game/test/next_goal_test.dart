@@ -80,9 +80,9 @@ void main() {
     expect(goal.id, 'cleanBank',
         reason: 'board order: the first objective is the first goal');
     expect(goal.title, 'CLEAN BANK');
-    expect(goal.detail, 'BANK A SHIFT WITHOUT CRASHING');
+    expect(goal.detail, 'BANK A SHIFT WITH 0 CRASHES');
     expect(goal.line,
-        'NEXT GOAL \u00b7 CLEAN BANK \u2014 BANK A SHIFT WITHOUT CRASHING');
+        'NEXT GOAL \u00b7 CLEAN BANK \u2014 BANK A SHIFT WITH 0 CRASHES');
   });
 
   test('a completed objective drops out for the next open one', () {

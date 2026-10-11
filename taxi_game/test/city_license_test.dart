@@ -94,6 +94,17 @@ void main() {
           reason: 'stable ids must be unique — they are the save keys');
     });
 
+    test('every brief names the threshold its rule enforces', () {
+      // The rule reads its threshold field and the card quotes it, so a
+      // re-tuned number that leaves the old text behind fails here: the
+      // card can never lie with the suite green.
+      for (final rule in CityLicense.board) {
+        expect(rule.brief, contains('${rule.threshold}'),
+            reason: '${rule.id} enforces ${rule.threshold}; its card must '
+                'name the number the rule reads');
+      }
+    });
+
     test('the vehicle rules name cars the garage actually sells', () {
       for (final rule in CityLicense.board) {
         final id = rule.requiredVehicleId;
@@ -395,6 +406,29 @@ void main() {
       ));
       expect(gameStateService.isLicenseObjectiveComplete('cleanBank'), isTrue,
           reason: 'a replay may complete an objective again, never clear it');
+    });
+
+    test('the completed count counts board ids, never stray save entries',
+        () async {
+      final save = SaveData.createDefault()
+        ..licenseObjectives['cleanBank'] = true
+        // An id no build of this board knows: a future objective, or a
+        // hand edit. It must not inflate the progress line.
+        ..licenseObjectives['future_objective'] = true;
+      SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey: jsonEncode(save.toJson()),
+      });
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+      await gameStateService.loadSaveData();
+
+      expect(gameStateService.completedLicenseObjectiveCount, 1,
+          reason: 'one board id is complete; the stray entry is not one');
+      expect(gameStateService.completedLicenseObjectiveIds,
+          containsAll(<String>['cleanBank', 'future_objective']),
+          reason: 'the map keeps whatever it holds; only the count is '
+              'scoped to the board');
     });
 
     test('a save written before the board loads as an empty board', () {

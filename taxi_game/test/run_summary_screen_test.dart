@@ -180,6 +180,30 @@ void main() {
         findsOneWidget);
   });
 
+  testWidgets('an open license objective is the next goal on the summary '
+      '(issue #278)', (tester) async {
+    // The fleet is complete and the board is untouched: the post-tutorial
+    // board leads, and the summary names its first objective.
+    final save = SaveData.createDefault();
+    save.unlockedVehicles
+      ..clear()
+      ..addAll(VehicleCatalog.vehicles.map((v) => v.id));
+    SharedPreferences.setMockInitialValues({
+      StorageService.saveDataKey: jsonEncode(save.toJson()),
+    });
+    final storage = StorageService();
+    await storage.init();
+    gameState = GameStateService(storage);
+    await gameState.loadSaveData();
+
+    await showPanel(tester, endlessGame(), bankedSummary);
+
+    expect(find.byKey(const ValueKey('run_summary_next_goal')), findsOneWidget,
+        reason: 'the decision to drive again is where the board belongs');
+    expect(find.text('NEXT GOAL \u00b7 CLEAN BANK \u2014 BANK A SHIFT WITH 0 '
+        'CRASHES'), findsOneWidget);
+  });
+
   testWidgets('a completed save shows no next-goal line on the summary '
       '(issue #282)', (tester) async {
     // Nothing left to chase: the panel must render no line rather than a

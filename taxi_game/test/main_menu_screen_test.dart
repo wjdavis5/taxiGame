@@ -810,8 +810,8 @@ void main() {
       await tester.pump();
 
       expect(
-          find.text('NEXT GOAL \u00b7 CLEAN BANK \u2014 BANK A SHIFT WITHOUT '
-              'CRASHING'),
+          find.text('NEXT GOAL \u00b7 CLEAN BANK \u2014 BANK A SHIFT WITH 0 '
+              'CRASHES'),
           findsOneWidget);
     });
 
