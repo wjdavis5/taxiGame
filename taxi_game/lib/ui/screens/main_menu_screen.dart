@@ -8,6 +8,7 @@ import '../../services/haptics_service.dart';
 import '../widgets/cab_button.dart';
 import '../widgets/day_key_builder.dart';
 import 'credits_screen.dart';
+import 'city_license_screen.dart';
 import 'daily_screen.dart';
 import 'game_screen.dart';
 import 'garage_screen.dart';
@@ -171,6 +172,27 @@ class MainMenuScreen extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (context) => const GarageScreen(),
+                        ),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // City License board (issue #278): the post-tutorial
+                  // challenge board — named, replayable objectives across
+                  // banking, close calls, fare kinds, weather, and vehicle
+                  // tradeoffs. It sits beside the garage because that is
+                  // where its car objectives send a player back to.
+                  _MenuButton(
+                    buttonKey: const Key('license_button'),
+                    icon: Icons.badge,
+                    label: 'CITY LICENSE',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const CityLicenseScreen(),
                         ),
                       );
                     },
