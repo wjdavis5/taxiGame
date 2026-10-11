@@ -67,7 +67,8 @@ class NextGoal {
   }
 
   /// The sources, in priority order. Issue #278's license objective plugs
-  /// in here as one more function; nothing else in this class moves.
+  /// in here as one more function, alongside the query and kind fields it
+  /// needs; this class is where that seam lives.
   static final List<NextGoal? Function(_GoalQuery)> _sources = [
     _nextVehicle,
     _nextAchievement,

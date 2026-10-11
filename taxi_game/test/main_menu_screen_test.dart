@@ -676,11 +676,14 @@ void main() {
       );
     });
 
-    testWidgets('the Daily History button reads its label exactly once to '
-        'semantics', (tester) async {
+    testWidgets('the Daily History button reads its label exactly once and '
+        'stays activatable to semantics', (tester) async {
       // The explicit Semantics label is the button's whole semantics;
       // without excludeSemantics the visible Text adds a labeled child
-      // node and a screen reader announces the label twice.
+      // node and a screen reader announces the label twice. And the tap
+      // action must sit on the same node: excludeSemantics drops the
+      // GestureDetector's subtree, so a node without its own onTap is
+      // announced but cannot be activated.
       final semantics = tester.ensureSemantics();
       final storageService = StorageService();
       await storageService.init();
@@ -692,6 +695,8 @@ void main() {
       final node = tester.getSemantics(
           find.byKey(const ValueKey('daily_history_button')));
       expect(node.label, 'DAILY HISTORY');
+      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue,
+          reason: 'the button must stay activatable, not just announced');
       final labeledChildren = <String>[];
       node.visitChildren((child) {
         labeledChildren.add(child.label);
@@ -703,6 +708,23 @@ void main() {
       // Disposed in the body, not a tear-down: the binding checks for
       // live handles before tear-downs run.
       semantics.dispose();
+    });
+
+    testWidgets('the Daily History link is the compact face with a 44 pt '
+        'tap target', (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      final link = find.byKey(const ValueKey('daily_history_button'));
+      expect(tester.widget<CabButton>(link).compact, isTrue,
+          reason: 'the link is the compact face, not a mode-sized button');
+      expect(tester.getSize(link).height, greaterThanOrEqualTo(44),
+          reason: 'the TextButton it replaced enforced a 48 px hit area; '
+              'the custom face must keep at least the 44 pt iOS minimum');
     });
 
     testWidgets('ENDLESS SHIFT names the three-crash and bank-or-push rule '

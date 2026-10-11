@@ -42,10 +42,14 @@ class CabButton extends StatelessWidget {
     return Semantics(
       button: true,
       label: label,
-      // The explicit label is the button's whole semantics. Without
-      // this, the visible Text below adds its own labeled node inside
-      // the button's, and a screen reader announces the label twice.
+      // The explicit label is the button's whole semantics, and the tap
+      // action must live on this node too: excludeSemantics drops the
+      // GestureDetector's subtree — where the only tap wiring sits — and
+      // a Semantics node gains SemanticsAction.tap only from its own
+      // onTap. Without it the button is announced but dead to VoiceOver
+      // and TalkBack.
       excludeSemantics: true,
+      onTap: onPressed,
       child: GestureDetector(
         // Opaque so the whole face — padding and the gap around the
         // icon included — is the tap target, not just the painted text.
@@ -53,7 +57,10 @@ class CabButton extends StatelessWidget {
         onTap: onPressed,
         child: Container(
           padding: compact
-              ? const EdgeInsets.symmetric(horizontal: 14, vertical: 8)
+              // 12, not 8: with the 16 px icon and 2 px rim this keeps
+              // the compact face at the 44 pt minimum tap target the
+              // TextButton it replaced enforced.
+              ? const EdgeInsets.symmetric(horizontal: 14, vertical: 12)
               : EdgeInsets.symmetric(
                   horizontal: primary ? 26 : 22,
                   vertical: primary ? 14 : 11,
