@@ -25,6 +25,7 @@ import 'components/life_lost_pop.dart';
 import 'components/speed_lines.dart';
 import 'components/virtual_stick.dart';
 import 'levels/level.dart';
+import '../models/achievements.dart';
 import '../models/passenger_data.dart';
 import '../models/fare_type.dart';
 import '../models/run_record.dart';
@@ -338,6 +339,18 @@ class TaxiGame extends FlameGame
   /// flat one the level file still carries. Null until a level completes
   /// without banking; cleared when a new run starts.
   int? lastCompletionPayout;
+
+  /// The graduation bonus the most recent level completion paid (issue
+  /// #283), for the completion panel's own line. Set only when the
+  /// ladder's final rung was just finished; null for every other
+  /// completion. Cleared when a new run starts, like the payout above.
+  int? lastCompletionBonus;
+
+  /// The achievements the most recent level completion earned (issue
+  /// #283), drained in the same call stack that settled the level so the
+  /// completion panel can announce them — the run summary's own pattern.
+  /// Empty for every completion that earned nothing.
+  List<AchievementDef> lastCompletionUnlocks = const [];
 
   /// The most recent fare settlement (issue #270): what the dropoff paid
   /// and what it left at risk. The dropoff feedback names it, and the HUD
@@ -842,6 +855,8 @@ class TaxiGame extends FlameGame
     _dismissBankPrompt();
     lastBankedScore = null;
     lastCompletionPayout = null;
+    lastCompletionBonus = null;
+    lastCompletionUnlocks = const [];
     lastRunSummary = null;
     lastSettlement = null;
     _settlementAge = 0;
@@ -992,6 +1007,8 @@ class TaxiGame extends FlameGame
     // loaded after it.
     lastBankedScore = null;
     lastCompletionPayout = null;
+    lastCompletionBonus = null;
+    lastCompletionUnlocks = const [];
     lastSettlement = null;
     _settlementAge = 0;
     _settlementPop = null;
@@ -1740,7 +1757,13 @@ class TaxiGame extends FlameGame
             ? math.max(fareChain.score, currentLevel.coinReward)
             : currentLevel.coinReward;
     if (!banked) lastCompletionPayout = payout;
-    gameState.completeLevel(currentLevelNumber, payout);
+    // The completion is the save's gameplay event (issue #283): the
+    // graduation bonus and the ladder's record both land here, and the
+    // unlock queue is drained in this same call stack so the panel the
+    // overlay is about to show can announce them.
+    final bonus = gameState.completeLevel(currentLevelNumber, payout);
+    if (bonus > 0) lastCompletionBonus = bonus;
+    lastCompletionUnlocks = gameState.takePendingAchievementUnlocks();
 
     overlays.add('levelComplete');
   }

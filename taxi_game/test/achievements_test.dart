@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/data/vehicle_catalog.dart';
+import 'package:taxi_game/game/levels/level.dart';
 import 'package:taxi_game/models/achievements.dart';
 import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/models/run_record.dart';
@@ -34,22 +35,26 @@ void main() {
     bool banked = true,
     int livesLost = 0,
     int fares = 1,
+    int nearMisses = 0,
+    int score = 120,
   }) {
     return RunRecord(
       endedAtMs: 0,
       distancePx: distancePx,
-      score: 120,
+      score: score,
       faresDelivered: fares,
       longestChain: chain,
       livesLost: livesLost,
       lifeLossDistancesPx: List.filled(livesLost, 500.0),
       banked: banked,
       durationSeconds: 60,
+      nearMisses: nearMisses,
     );
   }
 
   group('the catalog', () {
-    test('covers the five tracks the issue names', () {
+    test('covers the five original tracks and issue #283\'s mastery '
+        'tracks', () {
       final ids = AchievementCatalog.all.map((a) => a.id).toSet();
       expect(ids, containsAll(<String>[
         // Chain milestones.
@@ -62,8 +67,18 @@ void main() {
         'cars_2', 'cars_4', 'cars_7',
         // Daily streaks.
         'streak_3', 'streak_7', 'streak_30',
+        // Lifetime close calls (issue #283).
+        'close_call_10', 'close_call_100', 'close_call_500',
+        // Score tiers (issue #283).
+        'score_500', 'score_2000', 'score_5000',
+        // Nonconsecutive daily participation (issue #283).
+        'daily_10', 'daily_50', 'daily_200',
+        // Lifetime driving volume (issue #283).
+        'lifetime_25km', 'lifetime_100km', 'lifetime_500km',
+        // The ladder's finish (issue #283).
+        'tutorial_complete',
       ]));
-      expect(AchievementCatalog.all.length, 15);
+      expect(AchievementCatalog.all.length, 28);
     });
 
     test('ids are unique — the achievements map keys on them', () {
@@ -144,6 +159,10 @@ void main() {
         cleanBankedShifts: 0,
         unlockedVehicleCount: 0,
         longestDailyStreak: 0,
+        totalNearMisses: 0,
+        completedDailyCount: 0,
+        lifetimeDistanceMetres: 0,
+        tutorialComplete: false,
       );
       expect(AchievementCatalog.chain8.progress(state), 8,
           reason: '"9/8" is noise; earned reads 8/8 or EARNED');
@@ -360,6 +379,140 @@ void main() {
     });
   });
 
+  group('the mastery tracks (issue #283)', () {
+    test('lifetime close calls fold across shifts and unlock their tier',
+        () async {
+      await gameState.recordEndlessRun(run(nearMisses: 6));
+      await gameState.recordEndlessRun(run(nearMisses: 4));
+
+      expect(gameState.achievementState.totalNearMisses, 10,
+          reason: 'the counter folds every shift, not just the latest');
+      expect(gameState.isAchievementUnlocked('close_call_10'), isTrue);
+      expect(gameState.isAchievementUnlocked('close_call_100'), isFalse);
+      expect(
+        gameState
+            .takePendingAchievementUnlocks()
+            .map((a) => a.id),
+        contains('close_call_10'),
+        reason: 'the shift that reached the tier queues its banner',
+      );
+    });
+
+    test('score tiers read the best banked score', () async {
+      await gameState.recordEndlessRun(run(score: 600));
+      expect(gameState.isAchievementUnlocked('score_500'), isTrue);
+      expect(gameState.isAchievementUnlocked('score_2000'), isFalse);
+
+      // A wreck's forfeited score is not a bank (personal_bests.dart):
+      // the tier measures money that reached the wallet.
+      await gameState.recordEndlessRun(
+          run(score: 9000, banked: false, livesLost: 3));
+      expect(gameState.achievementState.bestBankedScore, 600);
+      expect(gameState.isAchievementUnlocked('score_5000'), isFalse,
+          reason: 'a wrecked 9000 never banked, so no tier');
+    });
+
+    test('daily participation counts completed dailies, gaps included',
+        () async {
+      DailyResult daily(String dateKey) => DailyResult(
+            dateKey: dateKey,
+            score: 100,
+            banked: true,
+            completedAtMs: 0,
+          );
+
+      // Ten days, every other one: nothing consecutive, so the streak
+      // tiers stay locked while the participation tier fills.
+      for (var i = 1; i <= 10; i++) {
+        final day = (2 * i).toString().padLeft(2, '0');
+        await gameState.recordDailyResult(daily('2026-01-$day'));
+      }
+
+      expect(gameState.achievementState.completedDailyCount, 10);
+      expect(gameState.isAchievementUnlocked('daily_10'), isTrue);
+      expect(gameState.isAchievementUnlocked('daily_50'), isFalse);
+      expect(gameState.isAchievementUnlocked('streak_3'), isFalse,
+          reason: 'gaps break the streak, never the participation count');
+    });
+
+    test('lifetime volume tiers read the stored totals', () async {
+      // 25 km across 25 shifts — each 1 km, under the single-shift
+      // tiers' reach — so the tier can only be reading the lifetime sum.
+      for (var i = 0; i < 25; i++) {
+        await gameState.recordEndlessRun(run(distancePx: 10000));
+      }
+
+      expect(gameState.achievementState.lifetimeDistanceMetres, 25000);
+      expect(gameState.isAchievementUnlocked('lifetime_25km'), isTrue);
+      expect(gameState.isAchievementUnlocked('lifetime_100km'), isFalse);
+    });
+
+    test('finishing the ladder earns its record and pays its bonus once',
+        () async {
+      for (var rung = 1; rung < GameLevel.ladderLength; rung++) {
+        expect(gameState.completeLevel(rung, 0), 0,
+            reason: 'only the final rung pays the graduation bonus');
+      }
+      final coinsBefore = gameState.totalCoins;
+      final bonus = gameState.completeLevel(GameLevel.ladderLength, 0);
+
+      expect(bonus, GameStateService.tutorialGraduationBonus);
+      expect(gameState.totalCoins, coinsBefore + bonus,
+          reason: 'the reward is visible in the wallet');
+      expect(gameState.tutorialComplete, isTrue);
+      expect(gameState.isAchievementUnlocked('tutorial_complete'), isTrue);
+      expect(
+        gameState.takePendingAchievementUnlocks().map((a) => a.id),
+        contains('tutorial_complete'),
+        reason: 'the completion panel that finished the rung must be able '
+            'to banner the record',
+      );
+
+      // The save now sits past the rung, so a replay can never double-pay
+      // (the branch only runs while the rung is still the current one).
+      expect(gameState.completeLevel(GameLevel.ladderLength, 0), 0);
+      expect(gameState.totalCoins, coinsBefore + bonus);
+    });
+
+    test('a pre-#283 save seeds its close-call counter and retro-awards '
+        'from the window', () async {
+      // The migration case: the totals block exists (issue #183) but was
+      // written before the close-call counter did, and the history —
+      // which has carried nearMisses since issue #23 — is the only
+      // record of the close calls.
+      final history = <Map<String, dynamic>>[
+        for (var i = 0; i < 12; i++) run(nearMisses: 1).toJson(),
+      ];
+      final save = SaveData.createDefault().toJson();
+      (save['lifetimeRunTotals'] as Map<String, dynamic>)
+          .remove('totalNearMisses');
+
+      SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey: jsonEncode(save),
+        StorageService.runHistoryKey: jsonEncode(history),
+      });
+      final storage = StorageService();
+      await storage.init();
+      final migrated = GameStateService(storage);
+      await migrated.loadSaveData();
+
+      expect(migrated.achievementState.totalNearMisses, 12,
+          reason: 'the window\'s close calls seed the lifetime counter');
+      expect(migrated.isAchievementUnlocked('close_call_10'), isTrue,
+          reason: 'twelve close calls retro-award the first tier on load');
+      expect(migrated.takePendingAchievementUnlocks(), isEmpty,
+          reason: 'a retro-award from a load never banners');
+
+      // The seed reached the disk: a restart reads the stored number
+      // straight from the save.
+      final reloadedStorage = StorageService();
+      await reloadedStorage.init();
+      final reloaded = GameStateService(reloadedStorage);
+      await reloaded.loadSaveData();
+      expect(reloaded.achievementState.totalNearMisses, 12);
+    });
+  });
+
   group('the state snapshot', () {
     test('measures read the records, history, garage, and dailies',
         () async {
@@ -379,6 +532,11 @@ void main() {
       expect(state.unlockedVehicleCount, 1,
           reason: 'the starter cab counts');
       expect(state.longestDailyStreak, 0);
+      expect(state.totalNearMisses, 0);
+      expect(state.completedDailyCount, 0);
+      expect(state.lifetimeDistanceMetres, 1500,
+          reason: 'the lifetime sum, the same single shift');
+      expect(state.tutorialComplete, isFalse);
     });
   });
 }

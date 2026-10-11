@@ -624,6 +624,26 @@ class _LevelCompleteOverlayState extends State<LevelCompleteOverlay> {
                 ),
               ),
             ),
+            // The ladder's graduation reward (issue #283): finishing the
+            // final rung pays a bonus of its own, named here beside the
+            // rung's payout — the visible reward that keeps rung ten from
+            // being a dead end. Its own scale-down box, the payout line's
+            // idiom, so it stays one line on a 320 pt phone.
+            if (game.lastCompletionBonus != null) ...[
+              const SizedBox(height: 4),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  'TUTORIAL BONUS +${game.lastCompletionBonus} Coins',
+                  key: const ValueKey('level_complete_bonus'),
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.yellow,
+                  ),
+                ),
+              ),
+            ],
             // The run's fare-chain score (issue #12): the number a replay
             // tries to beat.
             Text(
@@ -644,6 +664,66 @@ class _LevelCompleteOverlayState extends State<LevelCompleteOverlay> {
                   color: Colors.white,
                 ),
               ),
+            ],
+            // The records this completion earned (issue #283): the
+            // ladder's finish is the one gameplay event whose unlock
+            // banner belongs on this panel, drained by the game in the
+            // same call stack that settled the rung. The run summary's
+            // banner shape, one screen over.
+            if (game.lastCompletionUnlocks.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              for (final achievement in game.lastCompletionUnlocks)
+                Container(
+                  key: ValueKey('level_complete_unlock_${achievement.id}'),
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade700,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.emoji_events,
+                        size: 28,
+                        color: Colors.black,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'ACHIEVEMENT UNLOCKED',
+                              key: ValueKey('level_complete_unlock_label'),
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.2,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                achievement.title,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
             ],
             // The failed advance's explanation (issue #241): the rung
             // the bundle declares but cannot hand over. The panel stays,

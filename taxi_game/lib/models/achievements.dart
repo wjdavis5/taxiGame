@@ -36,6 +36,25 @@ class AchievementState {
   /// was done, not of what is still alive.
   final int longestDailyStreak;
 
+  /// Close calls cleared across every shift ever ended (issue #283) —
+  /// the near-miss economy's lifetime count, folded into the save's
+  /// totals like the clean-bank counter, never counted over the window.
+  final int totalNearMisses;
+
+  /// Completed Daily Shifts, consecutive or not (issue #283): the
+  /// participation measure the streak tiers cannot say — a lapsed streak
+  /// still keeps every day that was played.
+  final int completedDailyCount;
+
+  /// Distance driven across every shift ever ended, in whole metres
+  /// (floored, like [furthestDistanceMetres]) (issue #283).
+  final int lifetimeDistanceMetres;
+
+  /// True once the tutorial ladder is finished (issue #283): the save
+  /// sits past its last rung. The ladder's record hangs off this one
+  /// fact, never off an asset probe.
+  final bool tutorialComplete;
+
   const AchievementState({
     required this.bestBankedScore,
     required this.longestChain,
@@ -44,6 +63,10 @@ class AchievementState {
     required this.cleanBankedShifts,
     required this.unlockedVehicleCount,
     required this.longestDailyStreak,
+    required this.totalNearMisses,
+    required this.completedDailyCount,
+    required this.lifetimeDistanceMetres,
+    required this.tutorialComplete,
   });
 }
 
@@ -93,6 +116,12 @@ class AchievementDef {
 /// The achievement set (issue #21): fifteen awards across the five
 /// tracks the issue names — chain milestones, distance milestones,
 /// banking discipline, cars collected, and daily streaks.
+///
+/// Issue #283 grows it into the mastery set: the tracks the systems the
+/// game celebrates were missing — lifetime close calls, score tiers,
+/// daily participation without a streak, lifetime driving volume, and
+/// the tutorial ladder's own finish. Every new measure reads data the
+/// save already recorded.
 ///
 /// Pure constants — no Flutter, no I/O, no clock — so every rule is unit
 /// testable like the rest of the models.
@@ -222,8 +251,119 @@ class AchievementCatalog {
     measure: _longestDailyStreak,
   );
 
-  /// Every achievement, in records-screen order (chain, distance,
-  /// banking, cars, streaks).
+  // --- Close calls (lifetime near-miss mastery, issue #283) ---------------
+
+  static const closeCall10 = AchievementDef(
+    id: 'close_call_10',
+    title: 'CLOSE SHAVE',
+    description: 'Clear 10 close calls across your shifts.',
+    threshold: 10,
+    measure: _totalNearMisses,
+  );
+  static const closeCall100 = AchievementDef(
+    id: 'close_call_100',
+    title: 'SHAVE ARTIST',
+    description: 'Clear 100 close calls across your shifts.',
+    threshold: 100,
+    measure: _totalNearMisses,
+  );
+  static const closeCall500 = AchievementDef(
+    id: 'close_call_500',
+    title: 'THREADING THE NEEDLE',
+    description: 'Clear 500 close calls across your shifts.',
+    threshold: 500,
+    measure: _totalNearMisses,
+  );
+
+  // --- Score tiers (best banked score, issue #283) ------------------------
+
+  // The share card's rank bands (score_card.dart), banked: the same names
+  // a run earns when it settles, now records of what reached the wallet.
+  static const score500 = AchievementDef(
+    id: 'score_500',
+    title: 'CERTIFIED HUSTLER',
+    description: 'Bank 500 in a single shift.',
+    threshold: 500,
+    measure: _bestBankedScore,
+  );
+  static const score2000 = AchievementDef(
+    id: 'score_2000',
+    title: 'TRAFFIC MENACE',
+    description: 'Bank 2000 in a single shift.',
+    threshold: 2000,
+    measure: _bestBankedScore,
+  );
+  static const score5000 = AchievementDef(
+    id: 'score_5000',
+    title: 'GIG-LEGEND',
+    description: 'Bank 5000 in a single shift.',
+    threshold: 5000,
+    measure: _bestBankedScore,
+  );
+
+  // --- Daily participation (total completed dailies, issue #283) ----------
+
+  static const daily10 = AchievementDef(
+    id: 'daily_10',
+    title: 'DAILY DRIVER',
+    description: 'Complete the Daily Shift on 10 days.',
+    threshold: 10,
+    measure: _completedDailyCount,
+  );
+  static const daily50 = AchievementDef(
+    id: 'daily_50',
+    title: 'CITY REGULAR',
+    description: 'Complete the Daily Shift on 50 days.',
+    threshold: 50,
+    measure: _completedDailyCount,
+  );
+  static const daily200 = AchievementDef(
+    id: 'daily_200',
+    title: 'RITUAL KEEPER',
+    description: 'Complete the Daily Shift on 200 days.',
+    threshold: 200,
+    measure: _completedDailyCount,
+  );
+
+  // --- Lifetime volume (distance across every shift, issue #283) ----------
+
+  static const lifetime25km = AchievementDef(
+    id: 'lifetime_25km',
+    title: 'FAMILIAR ROADS',
+    description: 'Drive 25 km across all your shifts.',
+    threshold: 25000,
+    measure: _lifetimeDistanceMetres,
+  );
+  static const lifetime100km = AchievementDef(
+    id: 'lifetime_100km',
+    title: 'CENTURY CLUB',
+    description: 'Drive 100 km across all your shifts.',
+    threshold: 100000,
+    measure: _lifetimeDistanceMetres,
+  );
+  static const lifetime500km = AchievementDef(
+    id: 'lifetime_500km',
+    title: 'ROAD VETERAN',
+    description: 'Drive 500 km across all your shifts.',
+    threshold: 500000,
+    measure: _lifetimeDistanceMetres,
+  );
+
+  // --- The ladder's finish (issue #283) -----------------------------------
+
+  static const tutorialComplete = AchievementDef(
+    id: 'tutorial_complete',
+    title: 'LICENSED DRIVER',
+    description: 'Complete all ten tutorial levels.',
+    threshold: 1,
+    measure: _tutorialComplete,
+  );
+
+  /// Every achievement, in records-screen order — the five original
+  /// tracks (chain, distance, banking, cars, streaks), then issue #283's
+  /// mastery tracks (close calls, score, dailies, lifetime volume, the
+  /// ladder). Appending keeps every existing tie-break and progress
+  /// order stable.
   static const List<AchievementDef> all = [
     chain3,
     chain5,
@@ -240,6 +380,19 @@ class AchievementCatalog {
     streak3,
     streak7,
     streak30,
+    closeCall10,
+    closeCall100,
+    closeCall500,
+    score500,
+    score2000,
+    score5000,
+    daily10,
+    daily50,
+    daily200,
+    lifetime25km,
+    lifetime100km,
+    lifetime500km,
+    tutorialComplete,
   ];
 
   /// The definition with [id], or null when no such achievement exists.
@@ -261,6 +414,14 @@ class AchievementCatalog {
       state.unlockedVehicleCount;
   static int _longestDailyStreak(AchievementState state) =>
       state.longestDailyStreak;
+  static int _totalNearMisses(AchievementState state) => state.totalNearMisses;
+  static int _bestBankedScore(AchievementState state) => state.bestBankedScore;
+  static int _completedDailyCount(AchievementState state) =>
+      state.completedDailyCount;
+  static int _lifetimeDistanceMetres(AchievementState state) =>
+      state.lifetimeDistanceMetres;
+  static int _tutorialComplete(AchievementState state) =>
+      state.tutorialComplete ? 1 : 0;
 
   /// The longest run of consecutive calendar days in [results] — the
   /// daily-streak measure. Computed from the on-device daily history
