@@ -519,6 +519,219 @@ void main() {
     });
   });
 
+  group('the passenger tip (issue #276)', () {
+    test('the tip contract is literally 4 coins an event, 12 a fare', () {
+      // The PR states these numbers as the rule, so they are pinned
+      // literally here: a silent retune (4 to 3, 12 to 15) must go red,
+      // not hide behind the constants every other assertion references.
+      expect(TipRule.thrillPassCoins, 4);
+      expect(TipRule.cleanChainCoins, 4);
+      expect(TipRule.maxTipCoins, 12);
+
+      // And once through the rule itself, not just the constants: one
+      // THRILL PASS pays the literal 4; a spree pays the literal 12.
+      final single = FareChain();
+      final passenger = fareOf('single', 400, -300);
+      single.startFare(passenger);
+      single.awardNearMiss();
+      expect(single.completeFare(passenger, fareValue: 50).tipCoins, 4);
+
+      final spree = FareChain();
+      final spreeRider = fareOf('spree', 400, -300);
+      spree.startFare(spreeRider);
+      for (var i = 0; i < 4; i++) {
+        spree.awardNearMiss();
+      }
+      expect(spree.completeFare(spreeRider, fareValue: 50).tipCoins, 12);
+    });
+
+    test('a THRILL PASS with a fare aboard pays at the dropoff', () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+
+      // The pass pays the chain exactly as it always did...
+      final points = chain.awardNearMiss();
+      expect(points, FareChain.nearMissScore, reason: 'the live chain is 1x');
+      expect(chain.nearMisses, 1);
+      expect(chain.thrillPasses, 1,
+          reason: 'the pass landed with a live fare aboard');
+
+      // ...and the ride tips the flat THRILL PASS coins at the kerb.
+      final settlement = chain.completeFare(passenger, fareValue: 50);
+      expect(settlement.tipCoins, TipRule.thrillPassCoins);
+      expect(settlement.thrillPasses, 1);
+      expect(settlement.scoreAwarded, 50,
+          reason: 'the tip is wallet coins, never chain score');
+      expect(settlement.scoreTotal, 50 + FareChain.nearMissScore);
+      expect(chain.score, 50 + FareChain.nearMissScore,
+          reason: 'the tip never entered the at-risk total');
+    });
+
+    test('a close call with nobody aboard pays no tip', () {
+      final chain = FareChain();
+      chain.awardNearMiss();
+      expect(chain.nearMisses, 1, reason: 'the chain still pays for it');
+      expect(chain.thrillPasses, 0, reason: 'no passenger felt it');
+
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+      final settlement = chain.completeFare(passenger, fareValue: 50);
+      expect(settlement.tipCoins, 0);
+      expect(settlement.thrillPasses, 0);
+    });
+
+    test('the tip is deterministic: the same ride, the same coins', () {
+      int tipFor() {
+        final chain = FareChain();
+        final passenger = fareOf('a', 400, -300);
+        chain.startFare(passenger);
+        chain.awardNearMiss();
+        chain.update(0.5); // a frame passes; the meter still runs
+        chain.awardNearMiss();
+        return chain.completeFare(passenger, fareValue: 50).tipCoins;
+      }
+
+      expect(tipFor(), 2 * TipRule.thrillPassCoins);
+      expect(tipFor(), tipFor(),
+          reason: 'no draws, no clock: the same script pays the same tip');
+    });
+
+    test('the tip is capped per fare however many passes land', () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+      for (var i = 0; i < 5; i++) {
+        chain.awardNearMiss();
+      }
+
+      final settlement = chain.completeFare(passenger, fareValue: 50);
+      expect(5 * TipRule.thrillPassCoins, greaterThan(TipRule.maxTipCoins),
+          reason: 'the fixture must out-earn the cap for the test to bite');
+      expect(settlement.tipCoins, TipRule.maxTipCoins);
+      expect(settlement.thrillPasses, 5,
+          reason: 'every pass is still recorded, only the coins are capped');
+    });
+
+    test('a CLEAN CHAIN delivery at 2x or better tips', () {
+      final chain = FareChain();
+      final first = fareOf('first', 400, -300);
+      chain.startFare(first);
+      final firstSettlement = chain.completeFare(first, fareValue: 50);
+      expect(firstSettlement.multiplier, 1);
+      expect(firstSettlement.tipCoins, 0,
+          reason: 'the first fare of a run rides at 1x — no chain to clean');
+
+      final second = fareOf('second', 400, -300);
+      chain.startFare(second);
+      final secondSettlement = chain.completeFare(second, fareValue: 50);
+      expect(secondSettlement.multiplier, 2);
+      expect(secondSettlement.tipCoins, TipRule.cleanChainCoins);
+    });
+
+    test('a late delivery never tips the clean chain', () {
+      final chain = FareChain();
+      final first = fareOf('first', 400, -300);
+      chain.startFare(first);
+      chain.completeFare(first, fareValue: 50); // the chain rides at 2x
+
+      final late = fareOf('late', 400, -300);
+      chain.startFare(late);
+      chain.update(FareChain.secondsForRide(700) + 5);
+      final settlement = chain.completeFare(late, fareValue: 50);
+
+      expect(settlement.outcome, FareOutcome.late);
+      expect(settlement.tipCoins, 0,
+          reason: 'a late ride is no clean chain, whatever it rode past');
+    });
+
+    test('the thrill tip and the clean chain share the one cap', () {
+      final chain = FareChain();
+      final first = fareOf('first', 400, -300);
+      chain.startFare(first);
+      chain.completeFare(first, fareValue: 50); // the chain rides at 2x
+
+      final second = fareOf('second', 400, -300);
+      chain.startFare(second);
+      for (var i = 0; i < 3; i++) {
+        chain.awardNearMiss(); // 3 x 4 = 12: already at the ceiling
+      }
+      final settlement = chain.completeFare(second, fareValue: 50);
+
+      expect(3 * TipRule.thrillPassCoins + TipRule.cleanChainCoins,
+          greaterThan(TipRule.maxTipCoins),
+          reason: 'the fixture must exceed the cap through both events');
+      expect(settlement.tipCoins, TipRule.maxTipCoins);
+    });
+
+    test('an expired rider keeps the thrill it earned while live and '
+        'tips nothing more', () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+      chain.awardNearMiss();
+      expect(chain.timerFor(passenger)!.tipCoins, TipRule.thrillPassCoins);
+
+      // The meter runs out; a later pass is no longer this ride's thrill.
+      chain.update(FareChain.secondsForRide(700) + 5);
+      chain.awardNearMiss();
+      expect(chain.timerFor(passenger)!.tipCoins, TipRule.thrillPassCoins);
+      expect(chain.thrillPasses, 1);
+
+      final settlement = chain.completeFare(passenger, fareValue: 50);
+      expect(settlement.outcome, FareOutcome.late);
+      expect(settlement.tipCoins, TipRule.thrillPassCoins,
+          reason: 'the thrill was real; the late chain adds no clean tip');
+    });
+
+    test('every live fare aboard rides the same thrill pass', () {
+      final chain = FareChain();
+      final first = fareOf('first', 400, -300);
+      final second = fareOf('second', 400, -600);
+      chain.startFare(first);
+      chain.startFare(second);
+      chain.awardNearMiss();
+
+      final firstSettlement = chain.completeFare(first, fareValue: 50);
+      expect(firstSettlement.tipCoins, TipRule.thrillPassCoins);
+
+      final secondSettlement = chain.completeFare(second, fareValue: 50);
+      expect(secondSettlement.tipCoins,
+          TipRule.thrillPassCoins + TipRule.cleanChainCoins,
+          reason: 'its own thrill pass, plus the clean chain it rode at 2x');
+    });
+
+    test('reset clears the thrill pass record with the rest', () {
+      final chain = FareChain();
+      chain.startFare(fareOf('a', 400, -300));
+      chain.awardNearMiss();
+      expect(chain.thrillPasses, 1);
+
+      chain.reset();
+      expect(chain.thrillPasses, 0);
+      expect(chain.nearMisses, 0);
+    });
+
+    test('the tutorial ladder pays no tip (tipsEnabled: false)', () {
+      // The ladder's authored payout is exactly max(score, reward), once
+      // — its rungs teach their lessons without a second income — so the
+      // level dropoff gates the tip off while the ride still accrues it.
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+      chain.awardNearMiss();
+
+      final settlement = chain.completeFare(
+        passenger,
+        fareValue: 50,
+        tipsEnabled: false,
+      );
+      expect(settlement.tipCoins, 0);
+      expect(settlement.thrillPasses, 1,
+          reason: 'the record of the pass survives; only the coins gate');
+    });
+  });
+
   group('a level run scores its fares', () {
     late GameStateService gameState;
 

@@ -340,11 +340,36 @@ void main() {
           findsOneWidget);
     });
 
+    testWidgets('a tipped settlement names the tip on the line (issue #276)',
+        (tester) async {
+      final game = levelGame();
+      game.lastSettlement = const FareSettlement(
+        outcome: FareOutcome.onTime,
+        fareValue: 50,
+        multiplier: 2,
+        chainStepBonus: 0,
+        scoreAwarded: 100,
+        scoreTotal: 150,
+        tipCoins: 8,
+        thrillPasses: 2,
+      );
+      await tester.pumpWidget(hudFor(game));
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(
+        find.text(
+            'ON TIME  50 \u00d72  \u00b7  +100 \u00b7 AT RISK 150  \u00b7  +8 TIP'),
+        findsOneWidget,
+        reason: 'the ride\'s tip is named where the settlement lands',
+      );
+    });
+
     testWidgets('the line stays one unwrapped line on the smallest phone '
         '(issue #270)', (tester) async {
       // 320 pt is the oldest supported iPhone width, and the widest
       // settlement the economy can print is a long-haul chain bonus on
-      // four-digit numbers — the crowding case the issue names.
+      // four-digit numbers with a capped tip on top (issue #276) — the
+      // crowding case the issues name.
       tester.view.physicalSize = const Size(320, 568);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -356,6 +381,8 @@ void main() {
         chainStepBonus: 2,
         scoreAwarded: 119988,
         scoreTotal: 999999,
+        tipCoins: TipRule.maxTipCoins,
+        thrillPasses: 5,
       );
       final game = levelGame();
       game.lastSettlement = worstCase;

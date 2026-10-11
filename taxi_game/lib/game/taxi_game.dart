@@ -365,9 +365,15 @@ class TaxiGame extends FlameGame
   RunSummary? lastRunSummary;
 
   /// Coins credited to the wallet during the current run (issue #15):
-  /// each delivered fare's base reward, plus the banked payout if the
-  /// shift ends in a bank. The summary's "earned" line.
+  /// each delivered fare's base reward, each ride's tip (issue #276),
+  /// plus the banked payout if the shift ends in a bank. The summary's
+  /// "earned" line.
   int _runCoinsEarned = 0;
+
+  /// Of [_runCoinsEarned], the part passengers handed over as tips
+  /// (issue #276) — the summary's "Tips" line, a subset of coins earned
+  /// rather than a second pot.
+  int _runTipsEarned = 0;
 
   /// How far into the current shift each life was lost, in world px, in
   /// loss order (issue #17) — the "where" of the stats record. One entry
@@ -847,6 +853,7 @@ class TaxiGame extends FlameGame
     _settlementAge = 0;
     _settlementPop = null;
     _runCoinsEarned = 0;
+    _runTipsEarned = 0;
     _lifeLossDistancesPx.clear();
     _runDrivenSeconds = 0;
 
@@ -1167,9 +1174,14 @@ class TaxiGame extends FlameGame
     // on top of the existing economy — and no coins pop here: the level
     // wallet is credited at completion, so the pops wait for it (issue
     // #284) and this kerb pays in at-risk score, which the settlement
-    // names.
-    final settlement =
-        fareChain.completeFare(passenger, fareValue: passenger.reward);
+    // names. Tips are an endless-shift rule (issue #276): the ladder's
+    // authored payout stays exactly max(score, reward), so the lesson
+    // rungs keep their one income.
+    final settlement = fareChain.completeFare(
+      passenger,
+      fareValue: passenger.reward,
+      tipsEnabled: false,
+    );
     _settleFare(settlement, passenger.dropoffLocation);
 
     // Blue-and-gold burst: the fare is paid (issue #7).
@@ -1216,12 +1228,22 @@ class TaxiGame extends FlameGame
   /// pops the breakdown at the kerb, and gives the dropoff its chime and
   /// its hand — a late fare lands with its own weight, never the clean
   /// dropoff's thud (issue #273).
+  ///
+  /// The tip rides the same frame (issue #276): the settlement's tip
+  /// coins are credited to the wallet here, so the pop that names them
+  /// and the wallet that takes them land on one beat — the #284 rule,
+  /// applied to the tip.
   void _settleFare(FareSettlement settlement, Vector2 at) {
     lastSettlement = settlement;
     _settlementAge = 0;
     final pop = FareSettlementPop(position: at, settlement: settlement);
     _settlementPop = pop;
     world.add(pop);
+    if (settlement.tipCoins > 0) {
+      gameState.addCoins(settlement.tipCoins);
+      _runCoinsEarned += settlement.tipCoins;
+      _runTipsEarned += settlement.tipCoins;
+    }
     audio?.playDropoffSound();
     if (settlement.isLate) {
       haptics?.lateDelivery();
@@ -1596,6 +1618,8 @@ class TaxiGame extends FlameGame
       bestChain: fareChain.bestMultiplier,
       faresDelivered: faresDelivered,
       nearMisses: fareChain.nearMisses,
+      thrillPasses: fareChain.thrillPasses,
+      tipsEarned: _runTipsEarned,
       distancePx: runDistance,
       coinsEarned: _runCoinsEarned,
       isPersonalBest: isPersonalBest,

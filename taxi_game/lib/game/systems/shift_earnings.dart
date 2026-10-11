@@ -23,6 +23,11 @@ import 'run_length_simulator.dart';
 ///    collects [FareChain.pushBonusStep] on every fare but the last;
 ///  - a crash breaks the chain ([FareChain.breakChain] — issue #14) without
 ///    touching the score;
+///  - the tip (issue #276): each fare pays [TipRule]'s THRILL PASS coins
+///    for the close calls cleared while its meter ran, plus a CLEAN CHAIN
+///    award for an on-time delivery at 2x or better, capped per fare —
+///    the same rule the live dropoff pays, priced from the simulator's
+///    own close-call ledger;
 ///  - banking converts the chain score to coins 1:1 and ends the shift.
 ///
 /// **How the simulated shift is read:** the course for the run's own seed
@@ -32,7 +37,8 @@ import 'run_length_simulator.dart';
 /// bounds below are reported:
 ///
 ///  - *optimistic:* no fare is ever declined (a careful player refuses
-///    VIPs on a busy screen) and near-miss points are never scored;
+///    VIPs on a busy screen) and close calls pay their tip but never the
+///    chain score a live pass would add — the driver does not chase them;
 ///  - *conservative:* the meter is read over the whole stop-to-stop cycle
 ///    — kerb approach, boarding, and merge included — not just the ride,
 ///    so a fare only counts as on time when the entire cycle beat it.
@@ -49,6 +55,7 @@ class ShiftEarnings {
   ShiftEarnings._({
     required this.faresDelivered,
     required this.faresCoins,
+    required this.tipsCoins,
     required this.bankedScore,
     required this.chainBreaks,
     required this.bestChain,
@@ -57,8 +64,14 @@ class ShiftEarnings {
   /// Fares delivered before the shift ended.
   final int faresDelivered;
 
-  /// Coins paid on the spot, per delivery. Earned however the shift ends.
+  /// Fare coins paid on the spot, per delivery. Earned however the shift
+  /// ends.
   final int faresCoins;
+
+  /// Tip coins the rides handed over (issue #276), priced by [TipRule]
+  /// from the run's own close calls and clean chain deliveries — capped
+  /// per fare like the live dropoff. Wallet money, never chain score.
+  final int tipsCoins;
 
   /// The chain score at the brink bank — what banking 1:1 would have paid
   /// on top of [faresCoins]. Zero only for a shift whose every delivery
@@ -73,12 +86,12 @@ class ShiftEarnings {
   /// once held.
   final int bestChain;
 
-  /// The shift's ceiling: fares plus the brink bank. What a player with
-  /// perfect timing takes from this seed.
-  int get totalCoins => faresCoins + bankedScore;
+  /// The shift's ceiling: fares plus tips plus the brink bank. What a
+  /// player with perfect timing takes from this seed.
+  int get totalCoins => faresCoins + tipsCoins + bankedScore;
 
-  /// The shift's floor: fares only, if the score was never banked.
-  int get wreckCoins => faresCoins;
+  /// The shift's floor: fares and tips, if the score was never banked.
+  int get wreckCoins => faresCoins + tipsCoins;
 
   /// Prices the fare stops of [run] against the course [run]'s own seed
   /// deals, under the world that seed draws.
@@ -98,9 +111,11 @@ class ShiftEarnings {
     var multiplier = 1;
     var score = 0;
     var faresCoins = 0;
+    var tipsCoins = 0;
     var chainBreaks = 0;
     var bestChain = 1;
     var crashIndex = 0;
+    var passIndex = 0;
 
     var priced = 0;
     for (final stop in run.fareStops) {
@@ -127,6 +142,7 @@ class ShiftEarnings {
       final onTime = stop.cycleSeconds <= budget;
 
       // FareChain.completeFare, verbatim.
+      final appliedMultiplier = onTime ? multiplier : 1;
       if (onTime) {
         score += fare.reward * multiplier;
         multiplier += FareChain.multiplierStep + fare.fareType.chainStepBonus;
@@ -137,6 +153,29 @@ class ShiftEarnings {
       }
       faresCoins += fare.reward;
       if (multiplier > bestChain) bestChain = multiplier;
+
+      // The tip (issue #276), priced by the same [TipRule] the dropoff
+      // pays: this fare's THRILL PASS close calls plus a CLEAN CHAIN
+      // award when it delivered on time at 2x or better, capped per
+      // fare. The harness reads each fare's meter over the whole
+      // stop-to-stop cycle, so its tip reads the same span: a pass in
+      // the cycle ending at this stop is one cleared with this fare
+      // aboard. The multiplier is the one the fare actually scored at,
+      // exactly as completeFare judges the clean chain.
+      //
+      // One deliberate divergence from the live rule: the ledger carries
+      // no expiry clock, so every pass in the cycle is priced even if
+      // this fare's meter had already run out when the pass landed — the
+      // live game skips expired timers (FareChain.awardNearMiss). The
+      // direction is over-pay only, and the per-fare cap bounds it.
+      var tip = 0;
+      while (passIndex < run.closeCallDistancesPx.length &&
+          run.closeCallDistancesPx[passIndex] <= stop.distancePx) {
+        tip += TipRule.thrillPassCoins;
+        passIndex++;
+      }
+      if (onTime && appliedMultiplier >= 2) tip += TipRule.cleanChainCoins;
+      tipsCoins += TipRule.capped(tip);
       priced++;
 
       // The bank-or-push prompt's default resolution (issue #13): every
@@ -153,6 +192,7 @@ class ShiftEarnings {
     return ShiftEarnings._(
       faresDelivered: priced,
       faresCoins: faresCoins,
+      tipsCoins: tipsCoins,
       bankedScore: score,
       chainBreaks: chainBreaks,
       bestChain: bestChain,

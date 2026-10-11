@@ -1,11 +1,13 @@
 import 'dart:math' as math;
 
+import 'package:flame/components.dart';
 import 'package:meta/meta.dart';
 
 import '../../data/vehicle_catalog.dart';
 import '../../models/traffic_pattern.dart';
 import '../components/player_vehicle.dart' show PlayerVehicle;
 import 'collision_rules.dart';
+import 'near_miss.dart';
 import 'run_environment.dart';
 
 /// One fare stop the simulated driver completed: the distance the shift
@@ -42,6 +44,7 @@ class SimulatedRun {
     required this.crashDistancesPx,
     required this.survived,
     this.fareStops = const [],
+    this.closeCallDistancesPx = const [],
   });
 
   final int seed;
@@ -65,6 +68,12 @@ class SimulatedRun {
   /// each boarding — the moment the real game starts a fare's meter and
   /// banks a delivery.
   final List<FareStop> fareStops;
+
+  /// How far into the shift each qualifying close call landed, in pass
+  /// order (issue #276) — the passes [NearMissRules.isCloseCall] ruled
+  /// in on a car the driver never touched, judged exactly as the live
+  /// game judges them. The tip's THRILL PASS raw material.
+  final List<double> closeCallDistancesPx;
 
   double get distanceMetres => distancePx / 10.0; // RunSummary.pixelsPerMetre
 }
@@ -224,7 +233,12 @@ class PresetTrafficVehicle {
 ///    [reactionInterval] (not every frame — people are not 60 Hz), dodges
 ///    to the clear lane when threatened, brakes when both lanes are, keeps
 ///    following distance off a slow blocker, and must physically travel
-///    between lanes at its car's steering speed.
+///    between lanes at its car's steering speed;
+///  - the tip's close calls (issue #276): every pass cleared inside
+///    [NearMissRules]' window at speed is recorded, judged with the live
+///    game's own geometry. The driver never chases them — the policy is
+///    untouched — so the count is what lane-keeping meets, not what a
+///    showman earns.
 ///
 /// **What it deliberately does not model:** fares. Collecting them weaves
 /// the taxi out to the kerbs and adds exposure the policy never takes, so
@@ -358,6 +372,13 @@ class RunLengthSimulator {
     final fareStops = <FareStop>[];
     var lastStopPx = 0.0;
     var lastStopSeconds = 0.0;
+
+    // The close-call ledger (issue #276): every pass this driver clears
+    // inside the live game's award window, recorded at the distance it
+    // landed. The driver does not chase them — the policy is unchanged —
+    // but the tip rule prices the ones it clears, and the pass is judged
+    // with the live game's own geometry and speed floor.
+    final closeCallDistances = <double>[];
 
     final playerHalfW = stats.width * CollisionRules.playerHitboxScale / 2;
     final playerHalfH = stats.height * CollisionRules.playerHitboxScale / 2;
@@ -847,6 +868,30 @@ class RunLengthSimulator {
         // and mis-measure the deep-run pressure around every narrowing.
         v.x = v.xAtY(v.y);
       }
+      // --- Close calls (issue #276) ---
+      // The live game's pass ruling, mirrored: the frame the taxi's y
+      // sinks past a car it never touched, inside [NearMissRules]' award
+      // window at speed, is the pass — judged once, however it rules,
+      // and never re-armed. The gap comes from [NearMissRules.lateralGap]
+      // itself, never a copy of its arithmetic, so the ledger reads the
+      // one geometry the live game reads. No RNG and no motion: the same
+      // deterministic run, with its qualifying passes recorded for the
+      // tip economy.
+      for (final v in vehicles) {
+        if (v.nearMissJudged || v.y < y) continue;
+        v.nearMissJudged = true;
+        if (v.contacted) continue;
+        final gap = NearMissRules.lateralGap(
+          playerPosition: Vector2(x, y),
+          playerSize: Vector2(stats.width, stats.height),
+          vehiclePosition: Vector2(v.x, v.y),
+          vehicleSize: v.type.size,
+        );
+        if (NearMissRules.isCloseCall(gap: gap, playerForwardSpeed: speed)) {
+          closeCallDistances.add(math.max(0.0, -y));
+        }
+      }
+
       // Cull: off either edge of the view band — 1000 px below the
       // player (oncoming, past) or 1000 px above it (same-direction,
       // dropped). The old ahead clause was spawn-relative, 3000 px past
@@ -970,6 +1015,7 @@ class RunLengthSimulator {
       crashDistancesPx: List.unmodifiable(crashDistances),
       survived: survived,
       fareStops: List.unmodifiable(fareStops),
+      closeCallDistancesPx: List.unmodifiable(closeCallDistances),
     );
   }
 
@@ -1157,6 +1203,12 @@ class _SimVehicle {
   }
 
   bool rulingActive = false;
+
+  /// True once this car has been judged at the pass (issue #276),
+  /// mirroring `TrafficVehicle._nearMissJudged`: the first frame the
+  /// taxi's y sinks past the car is the one chance to rule, and the
+  /// verdict — close call or not — is never revisited.
+  bool nearMissJudged = false;
 
   /// True once this vehicle has ever ruled on a contact (issue #42):
   /// [rulingActive] resets when the overlap ends, and a closing vehicle

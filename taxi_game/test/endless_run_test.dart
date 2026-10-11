@@ -650,8 +650,14 @@ void main() {
           reason: 'score accrues as fare value x current multiplier — '
               'driving straight through the prompt pays the push '
               '(issue #186)');
-      expect(gameState.totalCoins, coinsBefore + fare0.reward + fare1.reward,
-          reason: 'coins pay unbunched: the economy is unchanged');
+      expect(
+          gameState.totalCoins,
+          coinsBefore +
+              fare0.reward +
+              fare1.reward +
+              TipRule.cleanChainCoins,
+          reason: 'the fares pay unbunched; the second ride adds the '
+              'clean-chain tip its 3x delivery earned (issue #276)');
     });
 
     test('letting the meter run out breaks the chain back to 1x', () async {

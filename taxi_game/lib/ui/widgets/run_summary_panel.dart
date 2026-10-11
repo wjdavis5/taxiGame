@@ -277,8 +277,13 @@ class RunSummaryPanel extends StatelessWidget {
               _statRow('Best chain', '\u00d7${summary.bestChain}'),
               _statRow('Fares delivered', '${summary.faresDelivered}'),
               _statRow('Close calls', '${summary.nearMisses}'),
+              // The tip's own line (issue #276): the named skill event
+              // that paid it, then the coins themselves — a shift whose
+              // rides thrilled is a shift the wallet noticed.
+              _statRow('Thrill passes', '${summary.thrillPasses}'),
               _statRow('Distance', summary.distanceLabel),
               _statRow('Coins earned', '${summary.coinsEarned}'),
+              _statRow('Tips', '${summary.tipsEarned}'),
               // The next reachable goal (issue #282): the summary is
               // where the player decides whether to drive again, so it
               // is where the chase belongs — the next car, the next open
