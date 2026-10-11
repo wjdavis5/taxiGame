@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../game/components/economy_pops.dart';
 import '../../game/systems/fare_chain.dart';
 import '../../game/systems/lives.dart';
 import '../../game/taxi_game.dart';
@@ -318,6 +319,11 @@ class _PauseButtonState extends State<_PauseButton> {
     }
     return IconButton(
       onPressed: () {
+        // The only interactive control on the road with no click or tick
+        // (issue #273): the pause is a menu button like any other, and it
+        // answers like one.
+        widget.game.audio?.playButtonSound();
+        widget.game.haptics?.buttonPress();
         widget.game.pauseGame();
       },
       icon: const Icon(
@@ -536,6 +542,32 @@ class _ScoringBarState extends State<_ScoringBar> {
             !widget.game.bankPanelOustsGhostBadge) ...[
           const SizedBox(height: 6),
           _GhostBadge(gapMetres: widget.game.ghostGapMetres!),
+        ],
+        // The fare settlement (issue #270): the last dropoff's breakdown
+        // holds for a few seconds where the player looks after the kerb —
+        // on time or late, the value times the multiplier, any chain
+        // bonus, and the at-risk total it left standing. Its own line
+        // under the row, like the ghost badge, because the row has no
+        // horizontal room to spare; the scale-down box keeps it one line
+        // on a 320 pt phone (the #187 idiom).
+        if (widget.game.showsSettlement) ...[
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: _HudPill(
+              key: const ValueKey('fare_settlement_panel'),
+              child: Text(
+                FareSettlementPop.hudLine(widget.game.lastSettlement!),
+                style: TextStyle(
+                  color: FareSettlementPop.colorFor(
+                      widget.game.lastSettlement!),
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+          ),
         ],
       ],
     );

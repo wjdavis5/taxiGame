@@ -1,7 +1,9 @@
-// Generates the three self-made audio files the game ships:
+// Generates the five self-made audio files the game ships:
 //
 //   assets/audio/sfx/engine_loop.wav   idle-to-mid engine rumble (seamless loop)
 //   assets/audio/sfx/brake.wav         short tyre squeal (one-shot)
+//   assets/audio/sfx/push.wav          rising two-tone "ride on" (one-shot)
+//   assets/audio/sfx/chain_break.wav   falling two-tone "lost it" (one-shot)
 //   assets/audio/music/shift_loop.wav  mellow backing track (seamless loop)
 //
 // Everything here is procedural synthesis — no sampled third-party audio — so
@@ -21,6 +23,8 @@ import 'dart:typed_data' show BytesBuilder;
 void main() {
   writeEngineLoop();
   writeBrake();
+  writePush();
+  writeChainBreak();
   writeMusicLoop();
 }
 
@@ -220,6 +224,66 @@ void writeBrake() {
 
   normalize(out, 0.8);
   writeWav('assets/audio/sfx/brake.wav', sampleRate, out);
+}
+
+// --- economy one-shots ------------------------------------------------------
+
+/// A two-note one-shot: [freqs] play in sequence, each with a fast attack
+/// and a short exponential tail that overlaps the next note. Rising notes
+/// read as "onward" (the push bonus), falling ones as "lost it" (the
+/// chain break) — the two economy beats of issue #273.
+void writeTwoTone({
+  required String path,
+  required List<double> freqs,
+  required double noteSeconds,
+}) {
+  const sampleRate = 44100;
+  final count = (sampleRate * (noteSeconds * freqs.length + 0.14)).round();
+  final out = List<double>.filled(count, 0);
+  final attack = (0.006 * sampleRate).round();
+
+  for (var n = 0; n < freqs.length; n++) {
+    final freq = freqs[n];
+    final start = (n * noteSeconds * sampleRate).round();
+    final length = (noteSeconds * 1.4 * sampleRate).round();
+    for (var i = 0; i < length; i++) {
+      final idx = start + i;
+      if (idx >= count) break;
+      final t = i / sampleRate;
+      var env = exp(-t / (noteSeconds * 0.7));
+      if (i < attack) env *= i / attack;
+      // A touch of second harmonic so the blip carries on a phone speaker.
+      out[idx] +=
+          0.5 * env * (sin(2 * pi * freq * t) + 0.25 * sin(4 * pi * freq * t));
+    }
+  }
+
+  // Hard-zero the last 2 ms: no click at the tail.
+  const tail = sampleRate * 0.002 ~/ 1;
+  for (var i = count - tail; i < count; i++) {
+    out[i] *= (count - i) / tail;
+  }
+
+  normalize(out, 0.8);
+  writeWav(path, sampleRate, out);
+}
+
+/// The push bonus (issue #273): a rising two-tone "ride on".
+void writePush() {
+  writeTwoTone(
+    path: 'assets/audio/sfx/push.wav',
+    freqs: [392.0, 587.33],
+    noteSeconds: 0.12,
+  );
+}
+
+/// A chain break (issue #273): a falling two-tone "lost it".
+void writeChainBreak() {
+  writeTwoTone(
+    path: 'assets/audio/sfx/chain_break.wav',
+    freqs: [659.26, 440.0],
+    noteSeconds: 0.15,
+  );
 }
 
 // --- music loop -------------------------------------------------------------

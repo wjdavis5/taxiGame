@@ -324,7 +324,16 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                               children: [
                                 Expanded(
                                   child: ElevatedButton(
-                                    onPressed: widget.game.bankShift,
+                                    onPressed: () {
+                                      // Every interactive control answers
+                                      // its press (issue #273): the two
+                                      // choices click and tick like the
+                                      // menu's buttons before the
+                                      // consequence lands.
+                                      widget.game.audio?.playButtonSound();
+                                      widget.game.haptics?.buttonPress();
+                                      widget.game.bankShift();
+                                    },
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor:
                                           Colors.amber.shade700,
@@ -347,7 +356,11 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: OutlinedButton(
-                                    onPressed: widget.game.pushOn,
+                                    onPressed: () {
+                                      widget.game.audio?.playButtonSound();
+                                      widget.game.haptics?.buttonPress();
+                                      widget.game.pushOn();
+                                    },
                                     style: OutlinedButton.styleFrom(
                                       foregroundColor: Colors.white,
                                       side: const BorderSide(

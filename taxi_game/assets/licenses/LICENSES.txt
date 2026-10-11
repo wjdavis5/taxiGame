@@ -36,13 +36,15 @@ Moment jingles — `assets/audio/music/`:
 
 ### Generated audio (self-made in-repo, no third-party rights)
 
-Three files are synthesized by `tool/make_generated_audio.dart` — procedural
+Five files are synthesized by `tool/make_generated_audio.dart` — procedural
 generation, no sampled third-party audio — so they carry no license
 obligation at all. Regenerate with `dart run tool/make_generated_audio.dart`
 from `taxi_game/`; the RNG is seeded and the output is byte-stable.
 
   assets/audio/sfx/engine_loop.wav    — engine hum loop (volume tracks speed)
   assets/audio/sfx/brake.wav          — tyre squeal on a deliberate brake
+  assets/audio/sfx/push.wav           — rising two-tone for the push bonus
+  assets/audio/sfx/chain_break.wav    — falling two-tone for a chain break
   assets/audio/music/shift_loop.wav   — the music track, loops under play
 
 ---

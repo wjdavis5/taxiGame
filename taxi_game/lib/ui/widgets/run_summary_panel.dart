@@ -302,6 +302,10 @@ class RunSummaryPanel extends StatelessWidget {
               ElevatedButton(
                 key: const ValueKey('retry_button'),
                 onPressed: () {
+                  // Summary actions answer their presses like every other
+                  // button (issue #273).
+                  game.audio?.playButtonSound();
+                  game.haptics?.buttonPress();
                   // Straight back behind the wheel: a fresh shift on a new
                   // seed, without touching the menu stack (issue #15). After
                   // a daily (issue #19) retryShift demotes to free play —
@@ -357,6 +361,8 @@ class RunSummaryPanel extends StatelessWidget {
                 ElevatedButton.icon(
                   key: const ValueKey('race_ghost_button'),
                   onPressed: () {
+                    game.audio?.playButtonSound();
+                    game.haptics?.buttonPress();
                     // In place, never stacked (issue #73): the button
                     // used to push a second GameScreen over this
                     // finished one, and the hidden game kept ticking —
@@ -392,6 +398,8 @@ class RunSummaryPanel extends StatelessWidget {
               const SizedBox(height: 8),
               TextButton(
                 onPressed: () {
+                  game.audio?.playButtonSound();
+                  game.haptics?.buttonPress();
                   // MAIN MENU means the menu (issue #222): a run started
                   // from the Daily screen sits two routes above it, and a
                   // bare pop landed back on that Daily screen under this

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/burst_particles.dart';
 import 'package:taxi_game/game/components/coin_pop.dart';
 import 'package:taxi_game/game/components/dropoff_zone.dart';
+import 'package:taxi_game/game/components/economy_pops.dart';
 import 'package:taxi_game/game/components/pickup_zone.dart';
 import 'package:taxi_game/game/components/speed_lines.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
@@ -430,8 +431,8 @@ void main() {
       expect(game.hitStop.isActive, isFalse);
     });
 
-    test('a dropoff bursts, pops coins at the HUD, and completes the level',
-        () async {
+    test('a dropoff bursts and settles, and the completion pops the payout '
+        'coins', () async {
       final game = await mountGame(freshGame());
       final player = game.player;
       player.velocity = Vector2.zero();
@@ -448,8 +449,13 @@ void main() {
 
       // Pickup burst still airborne + the dropoff burst.
       expect(game.world.children.whereType<BurstParticles>().length, 2);
-      // Three dropoff coins plus the six-coin level-complete volley.
-      expect(game.world.children.whereType<CoinPop>().length, 9);
+      // The dropoff names its settlement, and no coins pop until the
+      // wallet is credited (issue #284): the completion volley's six are
+      // all that fly at a level kerb.
+      expect(game.world.children.whereType<FareSettlementPop>().length, 1);
+      expect(game.world.children.whereType<CoinPop>().length, 6,
+          reason: 'the dropoff claims no coins; the completion credits and '
+              'pops them together');
       expect(game.overlays.activeOverlays, contains('levelComplete'));
     });
 

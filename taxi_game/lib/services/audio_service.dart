@@ -39,6 +39,8 @@ class AudioService {
     'level_complete': 'music/jingle_complete.wav',
     'level_failed': 'music/jingle_wrecked.wav',
     'banked': 'music/jingle_banked.wav',
+    'push': 'sfx/push.wav',
+    'chain_break': 'sfx/chain_break.wav',
   };
 
   /// The one looping music track (issue #4): a mellow shift backing loop.
@@ -82,6 +84,8 @@ class AudioService {
     'level_complete': 0.75,
     'level_failed': 0.75,
     'banked': 0.75,
+    'push': 0.65,
+    'chain_break': 0.7,
   };
 
   /// The iOS audio session context (issue #39): category `.ambient`.
@@ -768,6 +772,10 @@ class AudioService {
   void playLevelCompleteSound() => playSound('level_complete');
   void playLevelFailedSound() => playSound('level_failed');
   void playBankedJingle() => playSound('banked');
+  /// The push bonus landing (issue #273): a rising two-tone.
+  void playPushSound() => playSound('push');
+  /// A chain break (issue #273): a falling two-tone.
+  void playChainBreakSound() => playSound('chain_break');
 }
 
 /// One sound's voice pool: the players ready to replay, how many more are

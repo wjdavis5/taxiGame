@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/bank_prompt.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
+import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/systems/lives.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/services/game_state_service.dart';
@@ -444,6 +445,54 @@ void main() {
       game.fareChain.score = 1000;
       await tester.pump(const Duration(milliseconds: 150));
       expectSingleLine(find.text('BANK 1000'), 'the four-digit BANK label');
+    });
+
+    testWidgets('the bank prompt and the settlement line share a 320 pt '
+        'screen without crowding (issue #270)', (tester) async {
+      // The frame the issue names: a dropoff just settled (the HUD is
+      // holding its settlement line) and the choice is up on the same
+      // 320 pt screen. Both must fit; neither may shove the other off or
+      // overflow.
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final fare0 = EndlessCourse(seed: 42).fare(0);
+      final game = await armedGame(tester, fare0);
+      game.lastSettlement = FareSettlement(
+        outcome: FareOutcome.onTime,
+        fareValue: fare0.reward,
+        multiplier: 2,
+        chainStepBonus: 0,
+        scoreAwarded: fare0.reward * 2,
+        scoreTotal: fare0.reward * 2,
+      );
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<GameStateService>.value(
+          value: gameState,
+          child: MaterialApp(
+            home: Scaffold(
+              body: Stack(
+                children: [
+                  HudOverlay(game: game),
+                  BankPromptOverlay(game: game),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150)); // poll tick
+
+      expect(find.byKey(const ValueKey('bank_prompt_panel')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('fare_settlement_panel')),
+        findsOneWidget,
+        reason: 'the settlement the dropoff just named is still up',
+      );
+      expect(tester.takeException(), isNull,
+          reason: 'no overflow stripe: the two share the short screen');
     });
 
     testWidgets('renders nothing while no choice is open', (tester) async {

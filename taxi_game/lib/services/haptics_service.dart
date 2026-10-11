@@ -50,8 +50,30 @@ class HapticsService {
   /// A passenger boarded: a solid, shortened thud.
   void pickup() => _fire('pickup_medium', HapticFeedback.mediumImpact);
 
-  /// A fare paid: the twin of [pickup].
+  /// A fare paid on time: the twin of [pickup].
   void dropoff() => _fire('dropoff_medium', HapticFeedback.mediumImpact);
+
+  /// A fare paid late (issue #273): the clean dropoff's thud is wrong for a
+  /// fare that lost the chain, so the late settlement lands with its own
+  /// weight.
+  void lateDelivery() =>
+      _fire('late_delivery_medium', HapticFeedback.mediumImpact);
+
+  /// A chain break by countdown expiry (issue #273): the run's biggest
+  /// non-crash loss, confirmed in the hand as such.
+  void chainBreak() => _fire('chain_break_heavy', HapticFeedback.heavyImpact);
+
+  /// The push bonus landing (issue #273): a light tick for riding on.
+  void push() => _fire('push_light', HapticFeedback.lightImpact);
+
+  /// A banked payout (issue #273): the shift's winnings confirmed in the
+  /// hand under the banked jingle.
+  void bank() => _fire('bank_medium', HapticFeedback.mediumImpact);
+
+  /// The Daily attempt settling (issue #273): the day's one shot is spent,
+  /// banked or wrecked alike.
+  void dailySettled() =>
+      _fire('daily_settled_medium', HapticFeedback.mediumImpact);
 
   /// A close call cleared (issue #23): a medium thump confirming the
   /// shave in the hand. Routed through the gate like every other buzz

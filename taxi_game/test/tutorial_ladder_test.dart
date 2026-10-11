@@ -1375,6 +1375,20 @@ void main() {
           findsNothing);
     });
 
+    testWidgets('the payout line names exactly what the completion credited '
+        '(issue #284)', (tester) async {
+      final game = await panelGame(tester, 9);
+      // A pushed finish credits max(score, reward) — the number the panel
+      // must name, never the level file's flat reward (issue #155).
+      game.lastCompletionPayout = 420;
+      await showPanel(tester, game);
+
+      expect(find.text('+420 Coins'), findsOneWidget,
+          reason: 'the panel reconciles with the credited amount');
+      expect(find.text('+${game.currentLevel.coinReward} Coins'), findsNothing,
+          reason: 'the flat reward is not what the wallet received');
+    });
+
     testWidgets('tapping START SHIFT begins the first endless shift',
         (tester) async {
       final game = await panelGame(tester, GameLevel.ladderLength);
