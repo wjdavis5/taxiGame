@@ -15,6 +15,7 @@ void main() {
     int fares = 0,
     int livesLost = 0,
     double durationSeconds = 0,
+    int nearMisses = 0,
     Map<String, int> acceptedByKind = const {},
     Map<String, int> declinedByKind = const {},
   }) {
@@ -28,6 +29,7 @@ void main() {
       lifeLossDistancesPx: List<double>.filled(livesLost, 100),
       banked: livesLost == 0,
       durationSeconds: durationSeconds,
+      nearMisses: nearMisses,
       acceptedByKind: acceptedByKind,
       declinedByKind: declinedByKind,
     );
@@ -42,6 +44,7 @@ void main() {
         fares: 3,
         livesLost: 1,
         durationSeconds: 90,
+        nearMisses: 4,
       ));
 
       expect(totals.shiftsEnded, 1);
@@ -51,18 +54,25 @@ void main() {
       expect(totals.totalFares, 3);
       expect(totals.totalLivesLost, 1);
       expect(totals.totalDurationSeconds, 90);
+      expect(totals.totalNearMisses, 4,
+          reason: 'the close-call counter folds too (issue #283)');
     });
 
     test('accumulates shift over shift, in every counter', () {
       final totals = LifetimeRunTotals();
-      totals.applyRun(
-          rec(distancePx: 1000, score: 10, fares: 1, durationSeconds: 30));
+      totals.applyRun(rec(
+          distancePx: 1000,
+          score: 10,
+          fares: 1,
+          durationSeconds: 30,
+          nearMisses: 2));
       totals.applyRun(rec(
           distancePx: 2000,
           score: 20,
           fares: 2,
           livesLost: 3,
-          durationSeconds: 40));
+          durationSeconds: 40,
+          nearMisses: 5));
 
       expect(totals.shiftsEnded, 2);
       expect(totals.totalScore, 30);
@@ -70,6 +80,7 @@ void main() {
       expect(totals.totalFares, 3);
       expect(totals.totalLivesLost, 3);
       expect(totals.totalDurationSeconds, 70);
+      expect(totals.totalNearMisses, 7);
     });
 
     test('folds the per-kind accepted and declined counts', () {
@@ -96,13 +107,19 @@ void main() {
       // full history: nothing stored, the window is everything.
       final totals = LifetimeRunTotals();
       final window = [
-        rec(distancePx: 1000, score: 10, fares: 1, durationSeconds: 30),
+        rec(
+            distancePx: 1000,
+            score: 10,
+            fares: 1,
+            durationSeconds: 30,
+            nearMisses: 3),
         rec(
             distancePx: 2000,
             score: 20,
             fares: 2,
             livesLost: 2,
-            durationSeconds: 40),
+            durationSeconds: 40,
+            nearMisses: 4),
       ];
 
       expect(totals.seedFromWindow(window), isTrue,
@@ -113,6 +130,8 @@ void main() {
       expect(totals.totalFares, 3);
       expect(totals.totalLivesLost, 2);
       expect(totals.totalDurationSeconds, 70);
+      expect(totals.totalNearMisses, 7,
+          reason: 'the window has carried nearMisses since issue #23');
     });
 
     test('a post-migration save keeps its larger numbers — nothing falls',
@@ -127,6 +146,7 @@ void main() {
         totalFares: 700,
         totalLivesLost: 210,
         totalDurationSeconds: 35000,
+        totalNearMisses: 700,
       );
       final window = List.generate(
         200,
@@ -142,6 +162,7 @@ void main() {
       expect(totals.totalFares, 700);
       expect(totals.totalLivesLost, 210);
       expect(totals.totalDurationSeconds, 35000);
+      expect(totals.totalNearMisses, 700);
     });
 
     test('the max is per field: a save ahead on one counter takes the window\'s larger on another',
@@ -192,6 +213,7 @@ void main() {
         totalFares: 42,
         totalLivesLost: 9,
         totalDurationSeconds: 4567.5,
+        totalNearMisses: 31,
         acceptedFaresByKind: {'vip': 3, 'standard': 12},
         declinedFaresByKind: {'longHaul': 2},
       );
@@ -205,6 +227,8 @@ void main() {
       expect(restored.totalFares, 42);
       expect(restored.totalLivesLost, 9);
       expect(restored.totalDurationSeconds, 4567.5);
+      expect(restored.totalNearMisses, 31,
+          reason: 'the close-call counter survives the round trip');
       expect(restored.acceptedFaresByKind, {'vip': 3, 'standard': 12},
           reason: 'the per-kind counts survive (issue #279)');
       expect(restored.declinedFaresByKind, {'longHaul': 2});
@@ -220,6 +244,7 @@ void main() {
       expect(totals.totalFares, 0);
       expect(totals.totalLivesLost, 0);
       expect(totals.totalDurationSeconds, 0.0);
+      expect(totals.totalNearMisses, 0);
       expect(totals.acceptedFaresByKind, isEmpty);
       expect(totals.declinedFaresByKind, isEmpty);
     });
