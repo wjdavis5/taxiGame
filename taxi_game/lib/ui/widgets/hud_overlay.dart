@@ -48,12 +48,18 @@ class _HudOverlayState extends State<HudOverlay> {
   /// wherever the row parks it (issue #188).
   final GlobalKey _coinChipKey = GlobalKey(debugLabel: 'hud_coin_chip');
 
+  /// On the settlement pill (issue #270), so its measured band can be
+  /// published for [BankPromptOverlay] to park below.
+  final GlobalKey _settlementLineKey =
+      GlobalKey(debugLabel: 'hud_settlement_line');
+
   @override
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
       if (!mounted) return;
       _publishCoinChipRect();
+      _publishSettlementBand();
     });
   }
 
@@ -62,8 +68,10 @@ class _HudOverlayState extends State<HudOverlay> {
     _timer?.cancel();
     // The published rect describes this overlay's chip; once the overlay
     // is gone it is stale, and [CoinPop] must fall back rather than aim
-    // at a chip that no longer exists.
+    // at a chip that no longer exists. The settlement band is stale the
+    // same way — the bank prompt must fall back to its base park.
     widget.game.coinChipGlobalRect = null;
+    widget.game.settlementLineBandBottom = null;
     super.dispose();
   }
 
@@ -83,6 +91,33 @@ class _HudOverlayState extends State<HudOverlay> {
         renderObject.hasSize) {
       widget.game.coinChipGlobalRect =
           renderObject.localToGlobal(Offset.zero) & renderObject.size;
+    }
+  }
+
+  /// Publishes how far the settlement line's painted bottom sits below the
+  /// HUD root (issue #270 follow-up): [BankPromptOverlay] parks its panel
+  /// below this band while the line is up, so the panel never paints over
+  /// the settlement the dropoff just named. The bank prompt's own origin
+  /// is the same overlay stack's top-left, so a root-relative band is the
+  /// number it needs — no frame conversion. Measured off the painted box
+  /// (the FittedBox's scale included), so a line scaled down on a small
+  /// phone still reports the band the player actually sees. Null while the
+  /// line is not built or laid out.
+  void _publishSettlementBand() {
+    final root = context.findRenderObject();
+    final line = _settlementLineKey.currentContext?.findRenderObject();
+    if (root is RenderBox &&
+        line is RenderBox &&
+        root.attached &&
+        root.hasSize &&
+        line.attached &&
+        line.hasSize) {
+      final rootTop = root.localToGlobal(Offset.zero).dy;
+      final lineBottom =
+          line.localToGlobal(line.size.bottomRight(Offset.zero)).dy;
+      widget.game.settlementLineBandBottom = lineBottom - rootTop;
+    } else {
+      widget.game.settlementLineBandBottom = null;
     }
   }
 
@@ -201,7 +236,7 @@ class _HudOverlayState extends State<HudOverlay> {
             // Scoring bar: run score, chain multiplier, and the active
             // fare countdown (issue #12).
             const SizedBox(height: 10),
-            _ScoringBar(game: game),
+            _ScoringBar(game: game, settlementLineKey: _settlementLineKey),
 
             // The fare offer bar (issue #25): what kind of fare is
             // waiting ahead, and the decline that makes it a choice.
@@ -395,9 +430,14 @@ class _EndlessDistanceBadgeState extends State<_EndlessDistanceBadge> {
 /// [_EndlessDistanceBadge], it polls the game on a short timer — the fare
 /// clock only reads to a tenth of a second, so that is plenty.
 class _ScoringBar extends StatefulWidget {
-  const _ScoringBar({required this.game});
+  const _ScoringBar({required this.game, required this.settlementLineKey});
 
   final TaxiGame game;
+
+  /// The HUD root's key for the settlement pill (issue #270), so
+  /// [_HudOverlayState] can measure and publish its band while this bar
+  /// owns the widget.
+  final Key settlementLineKey;
 
   @override
   State<_ScoringBar> createState() => _ScoringBarState();
@@ -554,16 +594,19 @@ class _ScoringBarState extends State<_ScoringBar> {
           const SizedBox(height: 6),
           FittedBox(
             fit: BoxFit.scaleDown,
-            child: _HudPill(
-              key: const ValueKey('fare_settlement_panel'),
-              child: Text(
-                FareSettlementPop.hudLine(widget.game.lastSettlement!),
-                style: TextStyle(
-                  color: FareSettlementPop.colorFor(
-                      widget.game.lastSettlement!),
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
+            child: KeyedSubtree(
+              key: widget.settlementLineKey,
+              child: _HudPill(
+                key: const ValueKey('fare_settlement_panel'),
+                child: Text(
+                  FareSettlementPop.hudLine(widget.game.lastSettlement!),
+                  style: TextStyle(
+                    color: FareSettlementPop.colorFor(
+                        widget.game.lastSettlement!),
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ),
             ),

@@ -319,6 +319,14 @@ class TaxiGame extends FlameGame
   /// falls back to the old inset.
   Rect? coinChipGlobalRect;
 
+  /// How far the settlement line's painted bottom sits below the HUD
+  /// root, as measured by [HudOverlay] on its polling timer (issue #270
+  /// follow-up). The bank prompt parks its panel below this band while
+  /// the line is up, so the two never paint over each other on the
+  /// smallest phone. Null while the line is not on screen — or not yet
+  /// laid out — and then the panel falls back to its base park.
+  double? settlementLineBandBottom;
+
   /// What the most recent bank paid out, in coins, for the banked-shift
   /// panel. Null until a shift is banked; cleared when a new run starts.
   int? lastBankedScore;
@@ -1136,8 +1144,10 @@ class TaxiGame extends FlameGame
     // primer: on device its freeze makes this unreachable — the cab
     // cannot move to a kerb while the world is stopped — and the tests
     // that pin it drive the cab by hand straight through the paused
-    // primer, exactly as they always have.
-    if (bankPrompt.isActive) pushOn();
+    // primer, exactly as they always have. Cue off (issue #270
+    // follow-up): this delivery's settlement pop names the pushed
+    // multiplier on the same beat, so a second pop would paint over it.
+    if (bankPrompt.isActive) pushOn(cue: false);
 
     passengersDelivered++;
     player.hasPassenger =
@@ -1222,8 +1232,9 @@ class TaxiGame extends FlameGame
     // Same rule as the level dropoff above (issue #186): the open prompt
     // resolves as its default push before this fare scores, so driving
     // straight to the next kerb pays exactly what waiting each window
-    // out pays — never less.
-    if (bankPrompt.isActive) pushOn();
+    // out pays — never less. Cue off for the same reason: this fare's
+    // settlement pop names the pushed multiplier (issue #270 follow-up).
+    if (bankPrompt.isActive) pushOn(cue: false);
 
     player.hasPassenger = fareController?.hasActivePickup ?? false;
 
@@ -1383,20 +1394,33 @@ class TaxiGame extends FlameGame
   /// and — since issue #186 — the next delivery superseding an
   /// still-open prompt. Pushing is the default, and it must pay the same
   /// however it happens: chosen, allowed, or driven straight through.
-  void pushOn() {
+  ///
+  /// [cue] false is the superseding-delivery path (issue #270 follow-up):
+  /// the multiplier step still lands, but the pop is suppressed because
+  /// the same frame's settlement pop already names the pushed multiplier
+  /// at the same kerb, and two pops on one beat paint over each other.
+  /// The sting and tick still fire — every push keeps its own feedback.
+  void pushOn({bool cue = true}) {
     if (bankPrompt.push() == null) return;
-    _applyPushBonus();
+    _applyPushBonus(cue: cue);
   }
 
-  void _applyPushBonus() {
+  void _applyPushBonus({bool cue = true}) {
     fareChain.applyPushBonus();
     // The push has its own beat (issue #273): the step the player just
-    // bought, named where the cab is, with its own sting and tick — the
-    // button, the window timing out, and a delivery superseding an open
-    // prompt all land here, and they must all feel like the same choice.
-    if (_playerReady) {
+    // bought, named where the cab is, with its own sting and tick. The
+    // button and the window timing out show the pop; a delivery that
+    // supersedes the prompt shows only the settlement, which carries the
+    // pushed multiplier in its own numbers (issue #270 follow-up).
+    if (cue && _playerReady) {
+      // A settlement pop still climbing would sit under this one — the
+      // player can answer a window inside the settlement's 1.1 s life —
+      // so the push pop starts a line higher and both read.
+      final settlementOnScreen = lastSettlement != null &&
+          _settlementAge < FareSettlementPop.lifetime;
       world.add(PushPop(
-        position: player.position.clone(),
+        position: player.position.clone() +
+            (settlementOnScreen ? Vector2(0, -pushPopSettlementOffset) : Vector2.zero()),
         multiplier: fareChain.multiplier,
       ));
     }
@@ -1404,6 +1428,11 @@ class TaxiGame extends FlameGame
     haptics?.push();
     _dismissBankPrompt();
   }
+
+  /// How far above a live settlement pop the push pop starts, in world px
+  /// (issue #270 follow-up): the settlement's two lines are ~36 px tall
+  /// and the push's one ~18, so this clears them with a few px to spare.
+  static const double pushPopSettlementOffset = 34.0;
 
   /// Freezes the shift and pays the banked score out. The score itself
   /// stays readable for the panel until the next run resets it.
@@ -2294,8 +2323,10 @@ class TaxiGame extends FlameGame
       _scrapeFeedbackCooldown = math.max(0.0, _scrapeFeedbackCooldown - dt);
     }
 
-    // The settlement's HUD hold runs on the live clock, so a pause or a
-    // panel freezes it with everything else (issue #270).
+    // The settlement's HUD hold runs on the live clock: a pause stops
+    // update with the world and freezes the hold too, while an end-of-run
+    // panel leaves the ticker running and the hold simply ages out behind
+    // the summary (issue #270).
     if (lastSettlement != null) {
       _settlementAge += dt;
     }

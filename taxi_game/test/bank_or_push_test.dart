@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/economy_pops.dart';
 import 'package:taxi_game/game/systems/bank_prompt.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
@@ -345,6 +346,66 @@ void main() {
           reason: 'issue #186: driving straight to the next dropoff pays '
               'exactly what waiting each window out pays');
     });
+
+    test('a superseding delivery shows the settlement pop, not a second '
+        'push pop (issue #270 follow-up)', () async {
+      final game = await mountGame(endlessGame(42));
+      // No primer: a save that has seen a prompt runs its windows over
+      // live traffic — the only way a delivery can supersede one. (The
+      // primer's freeze stops the world, so world-space pops would not
+      // age either.)
+      gameState.markBankPromptSeen();
+      await tickAndSettle(game);
+
+      /// Ticks until a settlement pop matching [test] is in the tree (the
+      /// delivery frame queues its adds; a mount can take a few ticks).
+      Future<FareSettlementPop> awaitPop(
+        bool Function(FareSettlementPop) test,
+      ) async {
+        for (var i = 0; i < 12; i++) {
+          game.update(1 / 60);
+          await drain();
+          final match = game.world.children
+              .whereType<FareSettlementPop>()
+              .where(test)
+              .toList();
+          if (match.isNotEmpty) return match.first;
+        }
+        fail('no settlement pop mounted within the wait');
+      }
+
+      // Fare 0 opens the window and settles; keep the pop it showed.
+      deliverFare(game, game.course!.fare(0));
+      final firstPop = await awaitPop((_) => true);
+      expect(game.bankPrompt.isActive, isTrue,
+          reason: 'precondition: fare 0\'s window is open');
+
+      // Fare 1 drives straight through the open window: the superseded
+      // push and the new settlement land on the same frame at the same
+      // kerb. The push's add — if the path cued one — precedes the
+      // settlement's in the queue, so mounting the settlement proves the
+      // push pop would have mounted too.
+      deliverFare(game, game.course!.fare(1));
+      final newSettlement =
+          await awaitPop((pop) => !identical(pop, firstPop));
+      expect(
+        game.world.children.whereType<PushPop>(),
+        isEmpty,
+        reason: 'the superseded push is named by the settlement\'s own '
+            'multiplier — a second pop would paint over it for its whole '
+            'life',
+      );
+
+      // The chosen push keeps its own pop, and starts above the
+      // settlement still on screen rather than under it.
+      game.pushOn();
+      game.update(1 / 60);
+      await drain();
+      final pushPop = game.world.children.whereType<PushPop>().single;
+      expect(pushPop.position.y, lessThan(newSettlement.position.y),
+          reason: 'the push pop starts a line above the settlement it '
+              'would otherwise cover');
+    });
   });
 
   group('the prompt widget', () {
@@ -452,7 +513,9 @@ void main() {
       // The frame the issue names: a dropoff just settled (the HUD is
       // holding its settlement line) and the choice is up on the same
       // 320 pt screen. Both must fit; neither may shove the other off or
-      // overflow.
+      // overflow — and the panel must not paint over the line, which is
+      // the occlusion this test exists to catch: existence and a null
+      // exception both pass while the panel sits on top of the pill.
       tester.view.physicalSize = const Size(320, 568);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -493,6 +556,20 @@ void main() {
       );
       expect(tester.takeException(), isNull,
           reason: 'no overflow stripe: the two share the short screen');
+
+      // The pin the existence checks cannot make: the two painted rects
+      // must not intersect. On the pre-fix layout the panel parks at the
+      // HUD's old 120 pt band and covers the pill (~112-141), which is
+      // exactly the crowding the issue names.
+      final panelRect =
+          tester.getRect(find.byKey(const ValueKey('bank_prompt_panel')));
+      final settlementRect =
+          tester.getRect(find.byKey(const ValueKey('fare_settlement_panel')));
+      expect(panelRect.overlaps(settlementRect), isFalse,
+          reason: 'the panel parks below the settlement line, not over it: '
+              'panel $panelRect vs settlement $settlementRect');
+      expect(settlementRect.bottom, lessThanOrEqualTo(panelRect.top),
+          reason: 'the whole settlement line stays visible above the panel');
     });
 
     testWidgets('renders nothing while no choice is open', (tester) async {
