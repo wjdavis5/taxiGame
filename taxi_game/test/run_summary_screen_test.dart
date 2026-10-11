@@ -164,6 +164,17 @@ void main() {
         reason: 'nothing was paid out at a wreck');
   });
 
+  testWidgets('the settled shift names the next reachable goal (issue #282)',
+      (tester) async {
+    final game = endlessGame();
+    await showPanel(tester, game, bankedSummary);
+
+    expect(find.byKey(const ValueKey('run_summary_next_goal')), findsOneWidget,
+        reason: 'the decision to drive again is where the chase belongs');
+    expect(find.text('NEXT GOAL \u00b7 CITY COMPACT \u2014 5000 COINS TO GO'),
+        findsOneWidget);
+  });
+
   testWidgets('a beaten best gets the banner', (tester) async {
     final game = endlessGame();
     await showPanel(tester, game, bankedSummary);
@@ -363,6 +374,12 @@ void main() {
         mockShareChannel(calls);
         await showPanel(tester, dailyGame(), bankedSummary);
 
+        // The next-goal row (issue #282) lengthened the panel; on the
+        // 800x600 test surface the share button now sits below the fold
+        // of its scroll view, exactly like a small phone.
+        await tester.ensureVisible(
+            find.byKey(const ValueKey('share_score_button')));
+        await tester.pump();
         await tester.tap(find.byKey(const ValueKey('share_score_button')));
         // Done when the channel has actually been handed the card (issue
         // #46) — not after a guess at how long the raster takes.
@@ -451,6 +468,9 @@ void main() {
           seed: DailyShift.seedForDateKey(DailyShift.todayKey));
       await showPanel(tester, game, bankedSummary);
 
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('race_ghost_button')));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('race_ghost_button')));
       await tester.pump();
 
@@ -499,6 +519,9 @@ void main() {
       DailyShift.clock = () => calendarDaysFromNow(1);
       addTearDown(() => DailyShift.clock = DateTime.now);
 
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('race_ghost_button')));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('race_ghost_button')));
       await tester.pump();
 

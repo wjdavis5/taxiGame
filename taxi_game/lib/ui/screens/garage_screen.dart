@@ -98,6 +98,24 @@ class GarageScreen extends StatelessWidget {
                   ],
                 ),
               ),
+              // What the bars mean (issue #282): the cards showed four
+              // fleet-normalized bars with no sentence anywhere saying
+              // they change the drive, so a purchase read as a stat rise.
+              // One line at the top of the list, in the order the bars
+              // are drawn, names each axis and the trade.
+              const Padding(
+                padding: EdgeInsets.fromLTRB(24, 0, 24, 4),
+                child: Text(
+                  'The bars change how the car drives \u2014 top speed, '
+                  'acceleration, steering, and how big a target the body '
+                  'is. No cab wins them all.',
+                  key: Key('garage_handling_explainer'),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
               Expanded(
                 child: Consumer<GameStateService>(
                   builder: (context, gameState, _) => ListView.separated(
