@@ -484,6 +484,31 @@ class _ScoringBarState extends State<_ScoringBar> {
             ),
           ],
         ),
+        // The close-call lesson (issue #269): while the loaded rung still
+        // owes the shave its completion waits on, the HUD says what the
+        // lesson asks for — a pass that is close (a shave) and at speed.
+        // Its own line, like the ghost badge below, because the row above
+        // has no horizontal room to spare. Stands down once the run has
+        // settled — the failure panel words the miss itself.
+        if (!widget.game.isEndless &&
+            !widget.game.isShiftOver &&
+            widget.game.lessonCloseCallOwed) ...[
+          const SizedBox(height: 6),
+          const FittedBox(
+            fit: BoxFit.scaleDown,
+            child: _HudPill(
+              child: Text(
+                'CLOSE CALL TO FINISH \u2014 SHAVE A CAR AT SPEED',
+                style: TextStyle(
+                  color: Color(0xFF4DD0E1),
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+          ),
+        ],
         // The ghost gap (issue #20): live +/- metres against the
         // translucent car on the road, so the race reads even when the
         // ghost has scrolled off screen. On its own line under the row

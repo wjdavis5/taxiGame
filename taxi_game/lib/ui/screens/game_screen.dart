@@ -681,9 +681,10 @@ class _LevelCompleteOverlayState extends State<LevelCompleteOverlay> {
 }
 
 /// The level-failure overlay. Names what ended the run — a crash, from
-/// the telemetry recorded at the moment of contact (issue #6), or a fare
-/// stranded behind the one-way cab (issue #112) — and offers the rung
-/// again: RETRY restarts it from below every zone.
+/// the telemetry recorded at the moment of contact (issue #6), a fare
+/// stranded behind the one-way cab (issue #112), or the close-call
+/// lesson reaching the street's end without its shave (issue #269) —
+/// and offers the rung again: RETRY restarts it from below every zone.
 class LevelFailedOverlay extends StatelessWidget {
   const LevelFailedOverlay({super.key, required this.game});
 
@@ -691,10 +692,13 @@ class LevelFailedOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The two endings share the panel's machinery and differ in every
+    // The endings share the panel's machinery and differ in every
     // word: a missed fare is the player's own route gone wrong, not
-    // something traffic did to them.
+    // something traffic did to them; a missed close call is the lesson's
+    // requirement, not a collision.
     final missedFare = game.lastFailReason == LevelFailReason.fareMissed;
+    final missedCloseCall =
+        game.lastFailReason == LevelFailReason.closeCallMissed;
     return Center(
       child: Container(
         padding: const EdgeInsets.all(20),
@@ -722,7 +726,11 @@ class LevelFailedOverlay extends StatelessWidget {
             FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                missedFare ? 'FARE MISSED!' : 'CRASH!',
+                missedCloseCall
+                    ? 'CLOSE CALL MISSED!'
+                    : missedFare
+                        ? 'FARE MISSED!'
+                        : 'CRASH!',
                 style: const TextStyle(
                   fontSize: 32,
                   fontWeight: FontWeight.bold,
@@ -732,11 +740,14 @@ class LevelFailedOverlay extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Text(
-              missedFare
-                  ? 'Pull over to the kerb to collect and drop off fares — '
-                      'the street only runs one way.'
-                  : game.lastImpact?.headline ??
-                      'You collided with traffic.',
+              missedCloseCall
+                  ? 'The street ended before you shaved a car \u2014 this '
+                      'level needs one close call at speed.'
+                  : missedFare
+                      ? 'Pull over to the kerb to collect and drop off '
+                          'fares — the street only runs one way.'
+                      : game.lastImpact?.headline ??
+                          'You collided with traffic.',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 14,

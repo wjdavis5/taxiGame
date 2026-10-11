@@ -145,9 +145,12 @@ void main() {
       // no crash can end the level mid-drive, and the fares so the
       // stranded-fare verdict (issue #112) cannot either — this drive
       // sails past every zone on purpose, which would otherwise be a
-      // miss, not a road-end test.
+      // miss, not a road-end test. Rung 8 is also the close-call lesson
+      // (issue #269): satisfy its requirement too, or reaching the
+      // clamp would fire the road-end verdict and cut the drive short.
       game.trafficSpawner.clear();
       game.passengers.clear();
+      game.fareChain.awardNearMiss();
       final player = game.player;
 
       player.startAccelerating();
@@ -158,6 +161,13 @@ void main() {
         game.update(1 / 60);
         minY = math.min(minY, player.position.y);
       }
+
+      // The premise, pinned: the requirement was satisfied, so the drive
+      // ran to the clamp live — without the award above the road-end
+      // verdict would have settled the run mid-loop.
+      expect(game.isGameActive, isTrue,
+          reason: 'the lesson requirement is satisfied — no road-end '
+              'verdict may settle this drive');
 
       // (a) The taxi never left the extended road, however long the
       // throttle stayed down.
@@ -271,6 +281,10 @@ void main() {
       // would end the level and pause the spawner, proving nothing
       // about the end itself.
       game.passengers.clear();
+      // Rung 8 is also the close-call lesson (issue #269): satisfy its
+      // requirement up front, or parking at the clamp would fire the
+      // road-end verdict and pause the spawner, proving nothing again.
+      game.fareChain.awardNearMiss();
       final spawner = await installFloodSpawner(game, 7);
 
       // Park the taxi against the street end; the camera follows it
@@ -293,6 +307,13 @@ void main() {
       for (var i = 0; i < 1200; i++) {
         game.update(1 / 60);
       }
+      // The premise, pinned: the requirement was satisfied, so the run
+      // stayed live and this window really exercised the spawn gate —
+      // without the award above the road-end verdict would have paused
+      // the spawner and the count below would prove nothing.
+      expect(game.isGameActive, isTrue,
+          reason: 'the lesson requirement is satisfied — no road-end '
+              'verdict may pause this spawner');
       expect(spawner.activeVehicleCount, 0);
       expect(game.world.children.whereType<TrafficVehicle>(), isEmpty);
     }, timeout: const Timeout(Duration(minutes: 3)));

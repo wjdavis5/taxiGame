@@ -47,12 +47,14 @@ import '../services/game_state_service.dart';
 import '../services/haptics_service.dart';
 import '../services/level_loader_service.dart';
 
-/// Why a tutorial level failed (issue #112): a judged crash, or a fare
-/// the level still needs stranded behind the one-way cab. The failure
-/// panel words itself from this. Endless runs never fail this way —
-/// their stranded dropoffs are relocated instead (issue #28) — so only
-/// [TaxiGame.onLevelFailed] and the missed-fare check ever set it.
-enum LevelFailReason { crash, fareMissed }
+/// Why a tutorial level failed (issue #112): a judged crash, a fare the
+/// level still needs stranded behind the one-way cab, or — on the
+/// close-call lesson (issue #269) — the street ending before the rung's
+/// required shave landed. The failure panel words itself from this.
+/// Endless runs never fail this way — their stranded dropoffs are
+/// relocated instead (issue #28) — so only [TaxiGame.onLevelFailed] and
+/// the two level checks ever set it.
+enum LevelFailReason { crash, fareMissed, closeCallMissed }
 
 /// Main game class that manages the entire game loop and components
 class TaxiGame extends FlameGame
@@ -370,6 +372,24 @@ class TaxiGame extends FlameGame
   /// them. A plain nullable field, not `currentLevel.name`: `currentLevel`
   /// is late and the HUD reads before the world exists.
   String? currentLevelName;
+
+  /// The loaded rung's close-call requirement (issue #269), mirrored
+  /// out of [currentLevel] the same way [currentLevelName] is: the HUD
+  /// polls [lessonCloseCallOwed] on its short tick, and [currentLevel]
+  /// is late — a poll before the level lands must not touch it. Zero
+  /// outside level mode and on every rung but the lesson's.
+  int _lessonCloseCallsRequired = 0;
+
+  /// Whether the loaded rung still owes the close calls its completion
+  /// waits on (issue #269). False when no level is loaded and on every
+  /// rung but the lesson's, so the HUD's lesson line is level-gated.
+  bool get lessonCloseCallOwed =>
+      _lessonCloseCallsRequired > fareChain.nearMisses;
+
+  /// True once the loaded rung's close-call requirement is met (issue
+  /// #269): a rung with no requirement is met from the start.
+  bool get _closeCallObjectiveMet =>
+      fareChain.nearMisses >= _lessonCloseCallsRequired;
 
   /// Whether a level follows the one on screen (issue #16). Set at every
   /// [loadLevel] from the ladder itself — [GameLevel.ladderLength] — never
@@ -733,6 +753,8 @@ class TaxiGame extends FlameGame
     _levelCameraLead = null;
     // And no ladder name either: the shift is not a level.
     currentLevelName = null;
+    // The lesson's requirement belongs to a rung, not a shift (issue #269).
+    _lessonCloseCallsRequired = 0;
     passengers.clear();
     passengersDelivered = 0;
     fareChain.reset();
@@ -839,6 +861,7 @@ class TaxiGame extends FlameGame
 
     currentLevel = await levelLoader.loadLevel(levelNumber);
     currentLevelName = currentLevel.name;
+    _lessonCloseCallsRequired = currentLevel.closeCallsRequired;
     debugPrint('[run] level start $levelNumber \'${currentLevel.name}\'');
     _liveRunSeconds = 0;
     _heartbeatSeconds = 0;
@@ -1073,7 +1096,15 @@ class TaxiGame extends FlameGame
     haptics?.dropoff();
 
     if (passengersDelivered >= passengers.length) {
-      _completeLevel();
+      // The close-call lesson (issue #269): the last delivery completes
+      // the rung only once its required shave is in. Until then the run
+      // stays live so the shave can still land — the street past the
+      // final dropoff still supplies passes for a while: waves keep
+      // spawning until the taxi is ~650 px from the road top (the spawn
+      // gate's last accepted point, half a body inside the end). The
+      // last ~600 px to the end clamp accept no new waves, and
+      // [_checkForCloseCallLessonEnd] answers the clamp with the verdict.
+      if (_closeCallObjectiveMet) _completeLevel();
     } else if (currentLevel.bankPromptEnabled) {
       // The banking lesson (issue #16): on the levels that teach it, every
       // dropoff still leaving fares undelivered asks the same timed
@@ -1649,10 +1680,39 @@ class TaxiGame extends FlameGame
   /// RETRY is the recovery: [restartLevel] re-runs the rung from its
   /// start, below every zone again.
   void _failLevelForMissedFare() {
+    _failLevel(
+      LevelFailReason.fareMissed,
+      'fare missed: a zone this level still needs is behind the cab',
+    );
+  }
+
+  /// Fails the close-call lesson once the street has ended with its
+  /// required shave still owed (issue #269). By the clamp the street
+  /// has stopped supplying new chances: [TrafficSpawner] last accepted
+  /// a wave when the taxi was ~650 px from the road top, a
+  /// same-direction car's path ends one body below the road top
+  /// (issue #31), and the clamp leaves no reverse. Only a car already
+  /// on the road could still be met — a slow same-direction car that
+  /// fell behind is culled behind the cab, where it can never be
+  /// shaved — and the clamp is where the lesson stops waiting for one.
+  /// Without this verdict the run could neither complete nor fail in
+  /// place, and quitting to the menu was the only exit. RETRY re-runs
+  /// the rung, where the traffic is.
+  void _failLevelForCloseCallMissed() {
+    _failLevel(
+      LevelFailReason.closeCallMissed,
+      'close call missed: the street ended before the required shave',
+    );
+  }
+
+  /// The shared level-failure settle: run over, cab halted, spawner
+  /// paused, engine off, any open bank choice dismissed, and the reason
+  /// the panel words itself from.
+  void _failLevel(LevelFailReason reason, String logLine) {
     if (!isGameActive) return;
-    lastFailReason = LevelFailReason.fareMissed;
-    debugPrint('[level] fare missed: a zone this level still needs is '
-        'behind the cab (cab y ${player.position.y.toStringAsFixed(0)})');
+    lastFailReason = reason;
+    debugPrint('[level] $logLine '
+        '(cab y ${player.position.y.toStringAsFixed(0)})');
     _dismissBankPrompt();
     _shiftOver = true;
     isGameActive = false;
@@ -1661,6 +1721,21 @@ class TaxiGame extends FlameGame
     audio?.setEngineRunning(false);
     overlays.add('levelFailed');
     audio?.playLevelFailedSound();
+  }
+
+  /// The close-call lesson's end deadline (issue #269): the taxi is
+  /// clamped one car length inside the road's top (issue #31) and
+  /// cannot reverse; the last ~600 px before the clamp accepted no new
+  /// waves, so the clamp is where the lesson stops asking. The verdict
+  /// is failure — the same dead end the stranded-fare verdict (issue
+  /// #112) answers, for the lesson's own requirement.
+  void _checkForCloseCallLessonEnd() {
+    if (!lessonCloseCallOwed) return;
+    final roadTopY = levelRoadTopY;
+    if (roadTopY == null) return;
+    if (player.position.y <= roadTopY + player.vehicleSize.y + 0.01) {
+      _failLevelForCloseCallMissed();
+    }
   }
 
   // --- Three strikes (issue #14) ------------------------------------------
@@ -1885,7 +1960,22 @@ class TaxiGame extends FlameGame
       lifetime: 0.35,
       gravity: 40,
     ));
-    world.add(CloseCallPop(position: midPoint, points: points));
+    world.add(CloseCallPop(
+      position: midPoint,
+      points: points,
+      // The first award of a run also says what made it pay (issue #269).
+      firstAward: fareChain.nearMisses == 1,
+    ));
+
+    // The lesson's shave can be the completion (issue #269): when every
+    // fare is already delivered and this pass lands the rung's required
+    // close call, the run settles on the award that taught it.
+    if (!isEndless &&
+        isGameActive &&
+        passengersDelivered >= passengers.length &&
+        _closeCallObjectiveMet) {
+      _completeLevel();
+    }
 
     // Haptic thump plus the OS click (the game ships no audio assets —
     // see [CloseCallFeedback]) under the save's existing settings: the
@@ -1999,7 +2089,17 @@ class TaxiGame extends FlameGame
       // hit-stop, or any panel — only while the level is actually being
       // driven. Endless is exempt by route: its fares are offers, and a
       // passed dropoff relocates (issue #28) instead of failing.
-      if (!isEndless) _checkForMissedFares();
+      if (!isEndless) {
+        _checkForMissedFares();
+        // The close-call lesson's own deadline (issue #269): once the
+        // taxi is pressed against the course's end with the required
+        // shave still owed, the verdict is failure. The street past the
+        // final dropoff still supplies passes until the spawn gate
+        // stops (~650 px from the road top), but the last ~600 px to
+        // the clamp accept no new waves, and the clamp is where the
+        // lesson stops waiting.
+        _checkForCloseCallLessonEnd();
+      }
 
       // The diagnostics heartbeat: one line of where the run stands per
       // heartbeatInterval of live play — the trail a hard kill cuts off.

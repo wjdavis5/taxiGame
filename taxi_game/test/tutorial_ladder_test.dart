@@ -4,19 +4,26 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/close_call_pop.dart';
 import 'package:taxi_game/game/components/dropoff_zone.dart';
 import 'package:taxi_game/game/components/pickup_zone.dart';
+import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/levels/level.dart';
 import 'package:taxi_game/game/systems/collision_rules.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/systems/lives.dart';
+import 'package:taxi_game/game/systems/near_miss.dart';
 import 'package:taxi_game/game/taxi_game.dart';
+import 'package:taxi_game/game/vehicle_sprites.dart';
 import 'package:taxi_game/models/save_data.dart';
+import 'package:taxi_game/models/traffic_pattern.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
 import 'package:taxi_game/services/storage_service.dart';
 import 'package:taxi_game/ui/screens/game_screen.dart';
+import 'package:taxi_game/ui/widgets/hud_overlay.dart';
 
 /// The tutorial ladder (issue #16): the ten hand-made levels are the
 /// onboarding that teaches Endless — hold-and-steer, pickup and dropoff,
@@ -465,6 +472,268 @@ void main() {
       expect(game.bankPrompt.isActive, isFalse);
       expect(game.overlays.isActive('bankOrPush'), isFalse);
       expect(game.isGameActive, isTrue);
+    });
+  });
+
+  group('the close-call lesson (issue #269)', () {
+    // Rung 8 — "Keep the Chain" before this issue — is the repurposed
+    // lesson: its completion waits on one qualifying close call, and the
+    // first award of the run states the rule the economy rests on.
+
+    late GameStateService saveAtEight;
+
+    setUp(() async {
+      saveAtEight = await gameStateAtLevel(8);
+    });
+
+    /// The lesson rung mounted and settled.
+    Future<TaxiGame> mountLesson() async {
+      final game = await mountGame(ladderGame(saveAtEight));
+      await game.loadLevel(8);
+      await tickAndSettle(game);
+      return game;
+    }
+
+    /// Puts the traffic sprites in the game's image cache so a
+    /// test-added vehicle's `onLoad` completes after a microtask hop
+    /// (the near-miss tests' determinism trick).
+    Future<void> preloadTrafficSprites(TaxiGame game) async {
+      for (final type in TrafficVehicleType.values) {
+        await game.images.load(VehicleSprites.trafficSpritePath(type));
+      }
+    }
+
+    /// A sedan parked in the player's path: zero speed, straight path,
+    /// so the test controls the pass geometry exactly.
+    TrafficVehicle parkedSedan(Vector2 position) => TrafficVehicle(
+          position: position.clone(),
+          vehicleType: TrafficVehicleType.sedan,
+          baseSpeed: 0,
+          path: [position.clone(), Vector2(position.x, position.y + 3000)],
+        );
+
+    /// Collects every fare, then rides each to its kerb — the whole
+    /// route, with nobody shaved.
+    Future<void> rideEveryFare(TaxiGame game) async {
+      final level = game.currentLevel;
+      for (final pickup in level.pickupPoints) {
+        game.player.position = Vector2(pickup.x, pickup.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+      for (final dropoff in level.dropoffPoints) {
+        game.player.position = Vector2(dropoff.x, dropoff.y + 30);
+        game.update(1 / 60);
+        await drain();
+      }
+    }
+
+    test('the ladder stays ten rungs and only the lesson requires a shave',
+        () async {
+      expect(GameLevel.ladderLength, 10);
+
+      for (var i = 1; i <= GameLevel.ladderLength; i++) {
+        final level = await levelLoader.loadLevel(i);
+        expect(level.closeCallsRequired, i == 8 ? 1 : 0,
+            reason: 'rung $i got the close-call requirement wrong');
+      }
+      final lesson = await levelLoader.loadLevel(8);
+      expect(lesson.name, 'Shave the Traffic');
+      expect(lesson.bankPromptEnabled, isFalse,
+          reason: 'banking still belongs to rungs 9 and 10');
+    });
+
+    test('the lesson pins the qualifying window and the award it pays', () {
+      // The five facts the lesson rests on (issue #269): a qualifying
+      // pass sits in a gap of (-9, 14] px at 95 px/s or more, a touch
+      // disqualifies (judged by the caller, pinned in near_miss_test),
+      // and the award is 15 points at the live multiplier.
+      expect(NearMissRules.gapThreshold, 14.0);
+      expect(NearMissRules.contactSlack, 9.0);
+      expect(NearMissRules.minPassSpeed, 95.0);
+      expect(
+        NearMissRules.isCloseCall(
+            gap: NearMissRules.gapThreshold, playerForwardSpeed: 95.0),
+        isTrue,
+        reason: 'the window top and the speed floor both count',
+      );
+      expect(
+        NearMissRules.isCloseCall(
+            gap: NearMissRules.gapThreshold + 0.5, playerForwardSpeed: 95.0),
+        isFalse,
+        reason: 'a wider pass is lane-keeping, not a shave',
+      );
+      expect(
+        NearMissRules.isCloseCall(gap: 10.0, playerForwardSpeed: 94.9),
+        isFalse,
+        reason: 'a slow pass never pays, however tight',
+      );
+      expect(FareChain.nearMissScore, 15);
+    });
+
+    test('delivering every fare does not complete the rung — the '
+        'qualifying shave does, and the first award explains it', () async {
+      final game = await mountLesson();
+      await preloadTrafficSprites(game);
+      final level = game.currentLevel;
+      expect(level.closeCallsRequired, 1);
+
+      // Collect every fare, then ride each to its kerb: the whole route,
+      // with nobody shaved.
+      await rideEveryFare(game);
+
+      expect(game.passengersDelivered, level.pickupPoints.length);
+      expect(game.fareChain.nearMisses, 0);
+      expect(game.fareChain.multiplier, 4,
+          reason: 'three on-time deliveries stepped the chain to \u00d74');
+      expect(game.isGameActive, isTrue,
+          reason: 'the rung is not done until its close call lands');
+      expect(game.overlays.isActive('levelComplete'), isFalse);
+
+      // Earn it: a sedan in the next lane over, 40 px ahead, so the pass
+      // clears with 10 px of daylight at full throttle.
+      game.player.position = Vector2(200, -900);
+      game.player.isAccelerating = true;
+      game.player.velocity = Vector2(0, -game.player.maxSpeed);
+      game.world.add(parkedSedan(Vector2(150, -940)));
+      await drain();
+
+      var frames = 0;
+      while (game.isGameActive &&
+          game.player.position.y > -940 &&
+          frames < 120) {
+        game.update(1 / 60);
+        frames++;
+      }
+      // The award's feedback was queued mid-update; one more tick mounts
+      // it (the near-miss tests' settle step).
+      game.update(1 / 60);
+      await drain();
+
+      expect(game.fareChain.nearMisses, 1);
+      expect(game.fareChain.score, 510,
+          reason: '75 at \u00d71, 150 at \u00d72, 225 at \u00d73, and the shave '
+              'at the live \u00d74 \u2014 15 \u00d7 4 = 60, into the at-risk '
+              'chain the deliveries built');
+      expect(game.overlays.isActive('levelComplete'), isTrue,
+          reason: 'the shave that lands the requirement completes the rung');
+      expect(game.isGameActive, isFalse);
+
+      // The first award states the rule (issue #269).
+      final pop = game.world.children.whereType<CloseCallPop>().single;
+      expect(
+        pop.text,
+        'CLOSE CALL +60\nSPEED + PROXIMITY FEED THE AT-RISK CHAIN',
+        reason: 'the first award must state that speed and proximity feed '
+            'the at-risk chain',
+      );
+
+      expect(saveAtEight.currentLevel, 9,
+          reason: 'the lesson completed and unlocked the next rung');
+    });
+
+    test('reaching the road end without the shave fails the rung, and '
+        'RETRY re-runs it', () async {
+      final game = await mountLesson();
+      final level = game.currentLevel;
+
+      await rideEveryFare(game);
+      expect(game.passengersDelivered, level.pickupPoints.length);
+      expect(game.fareChain.nearMisses, 0);
+      expect(game.isGameActive, isTrue);
+
+      // The street end (issue #31) is the lesson's deadline. Waves keep
+      // spawning until the taxi is ~650 px from the road top, so the
+      // stretch just past the final dropoff is still shaving ground —
+      // the completion test earns its shave there. The last ~600 px to
+      // the clamp accept no new waves and the cab cannot reverse, so
+      // only a car already on the road could still be met there — and
+      // the clamp is where the lesson stops waiting for one. The verdict
+      // is failure, not a dead end with only MAIN MENU as an exit.
+      final roadTop = game.levelRoadTopY!;
+      game.player.position = Vector2(
+          TaxiGame.roadCenterX, roadTop + game.player.vehicleSize.y + 1);
+      game.player.isAccelerating = true;
+      game.player.velocity = Vector2(0, -game.player.maxSpeed);
+      game.update(1 / 60);
+      await drain();
+
+      expect(game.isGameActive, isFalse,
+          reason: 'the lesson cannot be completed past the street end');
+      expect(game.lastFailReason, LevelFailReason.closeCallMissed);
+      expect(game.overlays.isActive('levelFailed'), isTrue);
+
+      // RETRY is the recovery the panel promises (the #112 pattern):
+      // the rung re-runs from below every zone, verdict cleared.
+      game.restartLevel();
+      for (var i = 0; i < 100 && !game.isGameActive; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(game.isGameActive, isTrue, reason: 'RETRY re-runs the rung');
+      expect(game.lastFailReason, isNull);
+      expect(game.overlays.isActive('levelFailed'), isFalse);
+      expect(game.fareChain.nearMisses, 0,
+          reason: 'the retry owes the shave again');
+    });
+
+    testWidgets('the HUD asks for the shave until the award lands',
+        (tester) async {
+      final game = (await tester.runAsync<TaxiGame>(() async {
+        return mountLesson();
+      }))!;
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<GameStateService>.value(
+          value: saveAtEight,
+          child: MaterialApp(home: Scaffold(body: HudOverlay(game: game))),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(
+        find.text('CLOSE CALL TO FINISH \u2014 SHAVE A CAR AT SPEED'),
+        findsOneWidget,
+        reason: 'the rung explains what its completion is waiting for',
+      );
+
+      game.fareChain.awardNearMiss();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(
+        find.text('CLOSE CALL TO FINISH \u2014 SHAVE A CAR AT SPEED'),
+        findsNothing,
+        reason: 'the ask stands down once the shave is in',
+      );
+    });
+
+    testWidgets('the HUD ask stands down behind the failure panel',
+        (tester) async {
+      final game = (await tester.runAsync<TaxiGame>(() async {
+        return mountLesson();
+      }))!;
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<GameStateService>.value(
+          value: saveAtEight,
+          child: MaterialApp(home: Scaffold(body: HudOverlay(game: game))),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(
+        find.text('CLOSE CALL TO FINISH \u2014 SHAVE A CAR AT SPEED'),
+        findsOneWidget,
+      );
+
+      // The run settles without the shave: the failure panel owns the
+      // screen, and the ask must not sit behind it — the pause button's
+      // isShiftOver stand-down (issue #52) applied to this line too.
+      game.onLevelFailed();
+      expect(game.lessonCloseCallOwed, isTrue,
+          reason: 'the shave is still owed; only the settled run hides it');
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(
+        find.text('CLOSE CALL TO FINISH \u2014 SHAVE A CAR AT SPEED'),
+        findsNothing,
+        reason: 'a settled run has no lesson line, owed or not',
+      );
     });
   });
 
@@ -1233,14 +1502,30 @@ void main() {
       expect(find.text('FARE MISSED!'), findsNothing);
     });
 
+    testWidgets('a missed close call names the lesson, not a crash',
+        (tester) async {
+      final game = await failureGame(tester);
+      game.lastFailReason = LevelFailReason.closeCallMissed;
+      await showPanel(tester, game);
+
+      expect(find.text('CLOSE CALL MISSED!'), findsOneWidget);
+      expect(
+          find.textContaining('needs one close call at speed'), findsOneWidget,
+          reason: 'the panel must say what the lesson wanted');
+      expect(find.text('CRASH!'), findsNothing);
+      expect(find.text('RETRY'), findsOneWidget,
+          reason: 'the recovery the panel promises');
+    });
+
     testWidgets('the failure title stays one centred line at every iPhone '
         'width (issue #187)', (tester) async {
       // The completion title's #159 sweep, applied to the failure panel's
       // own title: 'FARE MISSED!' is 384 px of bold type against the 200
       // px this panel's column offers on a 320 pt phone, and the bare
       // Text wrapped into two flush-left lines while the panel sat
-      // centred. Both branches ride the same scale-down box now, so both
-      // are pinned. Ahem advances a square per glyph — roughly twice
+      // centred. All three branches ride the same scale-down box now, so
+      // all three are pinned — 'CLOSE CALL MISSED!' (issue #269) is the
+      // longest of them. Ahem advances a square per glyph — roughly twice
       // Roboto — so the checks are strictly conservative (the garage
       // width-sweep reasoning, issue #156).
       addTearDown(tester.view.reset);
@@ -1252,6 +1537,7 @@ void main() {
 
         for (final (reason, title) in [
           (LevelFailReason.fareMissed, 'FARE MISSED!'),
+          (LevelFailReason.closeCallMissed, 'CLOSE CALL MISSED!'),
           (LevelFailReason.crash, 'CRASH!'),
         ]) {
           game.lastFailReason = reason;

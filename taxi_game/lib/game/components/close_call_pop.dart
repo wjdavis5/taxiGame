@@ -1,6 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
+import '../taxi_game.dart';
 import 'world_one_shot.dart';
 
 /// Floating world-space award for one close call (issue #23). Names the
@@ -9,12 +12,19 @@ import 'world_one_shot.dart';
 /// gap the taxi just threaded. Rises and shrinks, then removes itself —
 /// the same beat the scrape marker plays, in the close-call palette's
 /// cyan so the two touch-adjacent events never read alike.
+///
+/// The first award of a run also carries the lesson (issue #269): the
+/// pass paid because it was close (proximity) and fast (speed), and the
+/// points joined the run score the chain holds at risk until it is
+/// banked. Later awards in the same run keep the plain line — the
+/// lesson has already been said.
 class CloseCallPop extends TextComponent with WorldOneShot {
   CloseCallPop({
     required Vector2 position,
     required int points,
+    bool firstAward = false,
   }) : super(
-          text: 'CLOSE CALL +$points',
+          text: firstAward ? _firstAwardText(points) : 'CLOSE CALL +$points',
           anchor: Anchor.center,
           position: position.clone(),
           textRenderer: TextPaint(
@@ -24,7 +34,31 @@ class CloseCallPop extends TextComponent with WorldOneShot {
               fontWeight: FontWeight.w900,
             ),
           ),
-        );
+        ) {
+    // The award rises out of the gap it names (issue #23), and a
+    // kerb-side shave puts that gap near the road's edge — centred
+    // there, the lesson line ran half off the phone (issue #269). The
+    // camera is locked horizontally and the world fold moves y only, so
+    // world x is screen x and clamping here is exact for the pop's whole
+    // life (the [PassengerNote] idiom, issue #50).
+    const roadWidth = 2 * TaxiGame.roadCenterX;
+    final half = width / 2;
+    x = x.clamp(
+      math.min(edgeMargin + half, TaxiGame.roadCenterX),
+      math.max(roadWidth - edgeMargin - half, TaxiGame.roadCenterX),
+    );
+  }
+
+  /// The rule the first award states (issue #269): both halves of the
+  /// qualifying pass — speed and proximity — feed the at-risk chain.
+  static const String firstAwardLesson =
+      'SPEED + PROXIMITY FEED THE AT-RISK CHAIN';
+
+  static String _firstAwardText(int points) =>
+      'CLOSE CALL +$points\n$firstAwardLesson';
+
+  /// How far the award keeps clear of the screen's edges, in px.
+  static const double edgeMargin = 8.0;
 
   static const double lifetime = 0.8;
   static const double riseSpeed = 46.0;

@@ -29,6 +29,11 @@ class GameLevel {
   /// choice.
   final bool bankPromptEnabled;
 
+  /// How many close calls this rung's completion waits on (issue #269).
+  /// Zero on every rung but the close-call lesson: the player can deliver
+  /// every fare and the street stays live until the required shave lands.
+  final int closeCallsRequired;
+
   GameLevel({
     required this.levelNumber,
     required this.name,
@@ -37,6 +42,7 @@ class GameLevel {
     required this.coinReward,
     required this.difficulty,
     this.bankPromptEnabled = false,
+    this.closeCallsRequired = 0,
     TrafficPattern? trafficPattern,
   }) : trafficPattern = trafficPattern ?? TrafficPattern.light;
 
@@ -75,6 +81,9 @@ class GameLevel {
       // Levels written before the banking lesson predate the flag; a
       // missing key means "this rung does not teach banking".
       bankPromptEnabled: (json['bankPrompt'] as bool?) ?? false,
+      // Levels written before the close-call lesson (issue #269) predate
+      // the key; a missing one means "no shave required to complete".
+      closeCallsRequired: (json['closeCallsRequired'] as int?) ?? 0,
       trafficPattern: json['trafficPattern'] != null
           ? TrafficPattern.fromJson(json['trafficPattern'])
           : TrafficPattern.light,
@@ -90,6 +99,7 @@ class GameLevel {
       'coinReward': coinReward,
       'difficulty': difficulty.name,
       'bankPrompt': bankPromptEnabled,
+      'closeCallsRequired': closeCallsRequired,
       'trafficPattern': trafficPattern.toJson(),
     };
   }
