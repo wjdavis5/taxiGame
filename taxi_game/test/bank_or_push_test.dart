@@ -397,24 +397,32 @@ void main() {
       );
 
       // The chosen push keeps its own pop, and starts clear of the
-      // settlement still on screen rather than under it. The pin is the
-      // measured clearance between the two mounted pops, not just their
-      // order: shrinking [TaxiGame.pushPopSettlementOffset] below what a
-      // three-line settlement needs fails here.
+      // settlement still on screen rather than under it. Wait a beat
+      // first: the settlement climbs at 46 px/s, and the pin is that the
+      // clearance holds against its *live* position, not its spawn — an
+      // anchor to the spawn would overlap by now.
+      advanceGameTime(game, 0.4);
       game.pushOn();
       game.update(1 / 60);
       await drain();
       final pushPop = game.world.children.whereType<PushPop>().single;
       final settlementHalfHeight = newSettlement.height / 2;
       final pushHalfHeight = pushPop.height / 2;
-      final clearance = newSettlement.position.y -
+      double clearance() => newSettlement.position.y -
           pushPop.position.y -
           settlementHalfHeight -
           pushHalfHeight;
-      expect(clearance, greaterThan(4.0),
+      expect(clearance(), greaterThan(4.0),
           reason: 'the push pop must clear the settlement\'s three lines, '
-              'not just start above its centre: clearance ${clearance}px '
+              'not just start above its centre: clearance ${clearance()}px '
               'with offset ${TaxiGame.pushPopSettlementOffset}');
+
+      // Both pops rise at the same 46 px/s, so the clearance must hold as
+      // they climb together.
+      advanceGameTime(game, 0.3);
+      expect(clearance(), greaterThan(4.0),
+          reason: 'the clearance must not erode while the settlement '
+              'climbs: ${clearance()}px');
     });
   });
 
@@ -572,16 +580,28 @@ void main() {
       // the occlusion this test exists to catch: existence and a null
       // exception both pass while the panel sits on top of the pill.
       //
-      // The save has seen a prompt, so the pause button is on screen: in
-      // the primer state it is hidden and the top row is short enough
-      // that the pre-fix 120 pt park already cleared the pill, which is
-      // why this pin must run post-primer to fail on that layout.
+      // The save has seen a prompt, so the pause button is on screen —
+      // asserted below, because the button is what makes the top HUD row
+      // tall enough for this pin to exercise the park, and a silent
+      // regression to the primer frame (which hides it) would leave the
+      // pin testing the wrong screen.
       tester.view.physicalSize = const Size(320, 568);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
       final game = await stagedCrowdingFrame(tester, primerSeen: true);
       await showPromptAndHud(tester, game);
+
+      // The pin below is only meaningful post-primer: the pause button is
+      // what makes the top HUD row tall enough for the settlement line to
+      // threaten the panel's park, and the primer hides it. If the save
+      // state ever silently degrades to the primer frame, this fails
+      // instead of the pin quietly testing the wrong screen.
+      expect(game.isBankPrimerActive, isFalse,
+          reason: 'precondition: the primer must not own this frame');
+      expect(find.byIcon(Icons.pause), findsOneWidget,
+          reason: 'precondition: the post-primer HUD shows its pause '
+              'button, the control that makes this pin exercise the park');
 
       expect(find.byKey(const ValueKey('bank_prompt_panel')), findsOneWidget);
       expect(
@@ -609,11 +629,11 @@ void main() {
 
     testWidgets('the primer state keeps the same promise on a 320 pt '
         'screen (issue #270)', (tester) async {
-      // The fresh-save frame: the primer freeze hides the pause button,
-      // and the pill still crosses the old 120 pt park in this tree (its
-      // painted bottom lands ~132), so this case fails on the old layout
-      // too. The post-primer test above is the state the audit named;
-      // this one keeps the other shared state pinned.
+      // The companion case: the fresh-save primer freeze, with the pause
+      // button hidden (asserted below). It pins that this state also
+      // shares the short screen without overlap or overflow; the
+      // post-primer test above is the one whose precondition guarantees
+      // the park itself is exercised.
       tester.view.physicalSize = const Size(320, 568);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -622,6 +642,9 @@ void main() {
       expect(game.isBankPrimerActive, isTrue,
           reason: 'precondition: the primer owns the world');
       await showPromptAndHud(tester, game);
+
+      expect(find.byIcon(Icons.pause), findsNothing,
+          reason: 'precondition: the primer hides the pause button');
 
       expect(tester.takeException(), isNull);
       final panelRect =
