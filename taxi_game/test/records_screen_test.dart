@@ -97,7 +97,7 @@ void main() {
     );
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('records_lifetime_dailies')))
+          .widget<Text>(find.byKey(const Key('records_recent_dailies')))
           .data,
       '0',
     );
@@ -241,11 +241,14 @@ void main() {
     );
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('records_lifetime_dailies')))
+          .widget<Text>(find.byKey(const Key('records_recent_dailies')))
           .data,
       '1',
       reason: 'participation is visible without a streak',
     );
+    expect(find.text('Daily shifts (last 400)'), findsOneWidget,
+        reason: 'the windowed row says it is windowed — the card must not '
+            'pass it off as a lifetime total');
     expect(
       tester
           .widget<Text>(find.byKey(const Key('records_lifetime_shifts')))

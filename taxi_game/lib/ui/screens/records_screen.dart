@@ -145,9 +145,10 @@ class _PersonalBestsCard extends StatelessWidget {
 
 /// The lifetime totals (issue #283): the records the mastery achievements
 /// measure, on screen where their progress lives — close calls, volume
-/// driven, fares, daily participation, and the shifts it all happened
-/// over. Stored counters (issue #183), so no number here can fall as the
-/// history window trims.
+/// driven, fares, and the shifts it all happened over. Stored counters
+/// (issue #183), so no number here can fall as the history window trims.
+/// The daily row is the one exception and says so: the daily history is
+/// a 400-day window, so its count is recent play, not a lifetime total.
 class _LifetimeCard extends StatelessWidget {
   const _LifetimeCard({required this.gameState});
 
@@ -177,10 +178,14 @@ class _LifetimeCard extends StatelessWidget {
               '${totals.totalFares}',
               valueKey: const Key('records_lifetime_fares'),
             ),
+            // Windowed, so labelled as such: the count keeps the most
+            // recent 400 dailies, while every participation threshold
+            // (10/50/200) sits under the window and is reached long
+            // before a day can age out.
             _statRow(
-              'Daily shifts',
+              'Daily shifts (last 400)',
               '${gameState.dailyHistory.length}',
-              valueKey: const Key('records_lifetime_dailies'),
+              valueKey: const Key('records_recent_dailies'),
             ),
             _statRow(
               'Shifts ended',
