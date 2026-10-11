@@ -9,6 +9,7 @@ import '../models/personal_bests.dart';
 import '../models/run_record.dart';
 import '../models/run_stats.dart';
 import '../models/save_data.dart';
+import '../models/weekly_gauntlet_record.dart';
 import 'diagnostics.dart';
 import 'storage_service.dart';
 
@@ -199,6 +200,39 @@ class GameStateService extends ChangeNotifier {
   /// day's reward has not settled (issue #281).
   int? settledDailyStreakRewardFor(String dayKey) =>
       _saveData.dailyStreak.settledRewardFor(dayKey);
+
+  /// The persisted Weekly Gauntlet best (issue #288): the current week's
+  /// best per measured surface, or an empty record before the first
+  /// gauntlet run. The card reads its progress through the week's plan,
+  /// which owns the "another week means 0" rule.
+  WeeklyGauntletRecord get weeklyGauntlet => _saveData.weeklyGauntlet;
+
+  /// Folds one finished gauntlet run into the stored best (issue #288)
+  /// and persists it. A run for the record's own week keeps each field's
+  /// maximum; a run for a later week replaces the record; an older week
+  /// is ignored without a write. Strictly local — the objective and
+  /// modifier are derived from the week key, nothing here is ever sent
+  /// anywhere.
+  Future<void> recordGauntletRun({
+    required String weekKey,
+    required int score,
+    required int fares,
+    required int bestChain,
+    required int distanceMetres,
+  }) async {
+    final before = _saveData.weeklyGauntlet;
+    final after = before.afterRun(
+      weekKey: weekKey,
+      score: score,
+      fares: fares,
+      bestChain: bestChain,
+      distanceMetres: distanceMetres,
+    );
+    if (identical(after, before)) return;
+    _saveData.weeklyGauntlet = after;
+    notifyListeners();
+    await save();
+  }
 
   /// The completed Daily Shift recorded for [dateKey], or null.
   DailyResult? dailyResultFor(String dateKey) {

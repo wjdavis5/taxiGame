@@ -3,6 +3,7 @@ import 'package:flame/game.dart';
 import 'package:provider/provider.dart';
 
 import '../../game/taxi_game.dart';
+import '../../game/systems/weekly_gauntlet.dart';
 import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
 import '../../services/haptics_service.dart';
@@ -20,6 +21,9 @@ class GameScreen extends StatefulWidget {
     this.isDailyShift = false,
     this.isGhostRace = false,
     this.dailyDateKey,
+    this.isGauntlet = false,
+    this.gauntletWeekKey,
+    this.gauntletModifier,
   });
 
   /// When non-null, the screen runs an endless procedural shift seeded
@@ -44,6 +48,19 @@ class GameScreen extends StatefulWidget {
   /// attempt is spent, with the stored best run riding along as a
   /// translucent ghost. Records no daily result; keeps no retry.
   final bool isGhostRace;
+
+  /// True when this screen is a Weekly Gauntlet run (issue #288): the
+  /// week's derived course with the week's modifier in force, replayable
+  /// all week. The finished run folds into the week's stored best.
+  final bool isGauntlet;
+
+  /// The 'yyyy-Www' week [endlessSeed] was derived from, when this screen
+  /// is a gauntlet run — carried through so the run pins the week the
+  /// seed belongs to, exactly as [dailyDateKey] pins the daily's day.
+  final String? gauntletWeekKey;
+
+  /// The rule the week's plan picked (issue #288), carried to the game.
+  final GauntletModifier? gauntletModifier;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -84,6 +101,9 @@ class _GameScreenState extends State<GameScreen> {
         isDailyShift: widget.isDailyShift,
         isGhostRace: widget.isGhostRace,
         dailyDateKey: widget.dailyDateKey,
+        isGauntlet: widget.isGauntlet,
+        gauntletWeekKey: widget.gauntletWeekKey,
+        gauntletModifier: widget.gauntletModifier,
       );
 
   /// A fresh game for the failed load's RETRY (issue #241): a game whose

@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../game/systems/daily_shift.dart';
+import '../../game/systems/weekly_gauntlet.dart';
 import '../../models/daily_result.dart';
 import '../../models/ghost_trace.dart';
+import '../../models/weekly_gauntlet_record.dart';
 import '../../services/audio_service.dart';
 import '../../services/game_state_service.dart';
 import '../../services/haptics_service.dart';
@@ -74,47 +76,30 @@ class DailyScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              // Both cards below are snapshots of the day they were
-              // built for, and the day can change under a screen left
-              // open or an app resumed the next morning (issue #113):
-              // each rebuilds when the calendar day does, so a new day
-              // shows its own unplayed card and moves yesterday's
-              // result into the history below. The today card reads the
-              // same snapshot [dayKey] the history below filters by
-              // (issue #245), so a save-notification rebuild inside the
-              // midnight window cannot show the next day's empty card
-              // while the history still hides this day's result.
-              DayKeyBuilder(
-                builder: (context, dayKey) => Consumer<GameStateService>(
-                  builder: (context, gameState, _) => _TodayCard(
-                    dayKey: dayKey,
-                    result: gameState.dailyResultFor(dayKey),
-                    ghost: gameState.ghostFor(dayKey),
-                    streak: gameState.dailyStreakOn(dayKey),
-                    bestStreak: gameState.dailyBestStreak,
-                    upcomingReward: gameState.dailyStreakRewardOn(dayKey),
-                    settledReward:
-                        gameState.settledDailyStreakRewardFor(dayKey),
-                  ),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(24, 20, 24, 8),
-                child: Text(
-                  'HISTORY',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
-                    color: Colors.yellow,
-                  ),
-                ),
-              ),
+              // Everything below is a snapshot of the day it was built
+              // for, and the day can change under a screen left open or
+              // an app resumed the next morning (issue #113): it rebuilds
+              // when the calendar day does, so a new day shows its own
+              // unplayed card and moves yesterday's result into the
+              // history below. One builder now carries the whole column,
+              // so the today card, the gauntlet card derived from the
+              // same day, and the history filter can never disagree
+              // mid-rebuild (issue #245). The column scrolls (issue
+              // #288): the gauntlet card made the fixed stack taller
+              // than a short phone, and a calendar screen must never
+              // clip its own content.
               Expanded(
                 child: DayKeyBuilder(
-                  builder: (context, dayKey) =>
-                      Consumer<GameStateService>(
+                  builder: (context, dayKey) => Consumer<GameStateService>(
                     builder: (context, gameState, _) {
+                      // The week's plan keys on the same day snapshot the
+                      // cards and the history read (issue #288): the
+                      // week is derived from the day, so the midnight
+                      // rollover rebuild turns the gauntlet card over
+                      // with everything else.
+                      final plan = WeeklyGauntlet.planForWeek(
+                        WeeklyGauntlet.weekKeyForDateKey(dayKey),
+                      );
                       // The day whose result belongs to the history's
                       // "past" — the day this block was built for, so
                       // the rows can never disagree with the today card
@@ -126,18 +111,60 @@ class DailyScreen extends StatelessWidget {
                           .where((result) => result.dateKey != today)
                           .toList()
                         ..sort((a, b) => b.dateKey.compareTo(a.dateKey));
-                      return past.isEmpty
-                          ? _EmptyHistory(
-                              todayPlayed:
-                                  gameState.dailyResultFor(dayKey) != null,
-                            )
-                          : ListView.builder(
-                              padding:
-                                  const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                              itemCount: past.length,
-                              itemBuilder: (context, index) =>
-                                  _HistoryRow(result: past[index]),
-                            );
+                      return SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _TodayCard(
+                              dayKey: dayKey,
+                              result: gameState.dailyResultFor(dayKey),
+                              ghost: gameState.ghostFor(dayKey),
+                              streak: gameState.dailyStreakOn(dayKey),
+                              bestStreak: gameState.dailyBestStreak,
+                              upcomingReward:
+                                  gameState.dailyStreakRewardOn(dayKey),
+                              settledReward:
+                                  gameState.settledDailyStreakRewardFor(
+                                      dayKey),
+                            ),
+                            const SizedBox(height: 16),
+                            _WeeklyGauntletCard(
+                              plan: plan,
+                              record: gameState.weeklyGauntlet,
+                            ),
+                            const Padding(
+                              padding: EdgeInsets.fromLTRB(24, 20, 24, 8),
+                              child: Text(
+                                'HISTORY',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.2,
+                                  color: Colors.yellow,
+                                ),
+                              ),
+                            ),
+                            if (past.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 24, vertical: 32),
+                                child: _EmptyHistory(
+                                  todayPlayed:
+                                      gameState.dailyResultFor(dayKey) !=
+                                          null,
+                                ),
+                              )
+                            else
+                              for (final result in past)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 24),
+                                  child: _HistoryRow(result: result),
+                                ),
+                            const SizedBox(height: 24),
+                          ],
+                        ),
+                      );
                     },
                   ),
                 ),
@@ -432,6 +459,177 @@ class _TodayCard extends StatelessWidget {
                 ),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The Weekly Gauntlet card (issue #288): the week's objective, the rule
+/// it runs under, the best the player has set this week, and the one
+/// explanation the feature needs — that the device calendar, not any
+/// server, decides when the event turns over. The button starts the
+/// week's derived course with the week's modifier in force; the run is
+/// replayable all week, and every finished run folds into the best above.
+class _WeeklyGauntletCard extends StatelessWidget {
+  const _WeeklyGauntletCard({required this.plan, required this.record});
+
+  /// The week's objective, modifier, and course seed — derived from the
+  /// same day snapshot this screen was built for.
+  final GauntletPlan plan;
+
+  /// The stored gauntlet best. The card shows the week's own best; a
+  /// record from another week reads as "not played yet", because the
+  /// week it belongs to is over.
+  final WeeklyGauntletRecord record;
+
+  @override
+  Widget build(BuildContext context) {
+    final playedThisWeek = record.weekKey == plan.weekKey;
+    final progress = plan.progressIn(record);
+    final met = plan.objectiveMet(record);
+    // The record holds a week *later* than the one the clock reads: the
+    // device calendar moved backward under the save. The data layer
+    // already refuses to fold older-week runs into it, so a live START
+    // would silently discard every attempt while the card still invited
+    // one — the button turns dead and the card says why instead.
+    final staleClock = record.weekKey.isNotEmpty &&
+        record.weekKey.compareTo(plan.weekKey) > 0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        key: const Key('weekly_gauntlet_card'),
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.emoji_events,
+                    color: Colors.yellow, size: 22),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'WEEKLY GAUNTLET',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                Text(
+                  plan.weekKey,
+                  key: const Key('weekly_gauntlet_week'),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white70,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Objective: ${plan.objective.title}',
+              key: const Key('weekly_gauntlet_objective'),
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Modifier: ${plan.modifier.title}',
+              key: const Key('weekly_gauntlet_modifier'),
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.85),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              playedThisWeek
+                  ? met
+                      ? '${plan.objective.progressTitle(progress)} '
+                          '— objective met!'
+                      : plan.objective.progressTitle(progress)
+                  : 'No gauntlet run yet this week.',
+              key: const Key('weekly_gauntlet_best'),
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.yellow,
+              ),
+            ),
+            const SizedBox(height: 4),
+            if (staleClock)
+              Text(
+                'The device calendar is behind this gauntlet '
+                '(last counted ${record.weekKey}). Runs will not count '
+                'until it catches up.',
+                key: const Key('weekly_gauntlet_stale_clock'),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.orange.shade200,
+                ),
+              )
+            else
+              Text(
+                'The device calendar controls the event: a new gauntlet '
+                'arrives every Monday.',
+                key: const Key('weekly_gauntlet_calendar_note'),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.white.withValues(alpha: 0.85),
+                ),
+              ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              key: const Key('weekly_gauntlet_start_button'),
+              onPressed: staleClock
+                  ? null
+                  : () {
+                      // The same duplicate-push guard the daily button
+                      // carries (issue #220): a stray second tap from the
+                      // transition is refused before the dressing.
+                      if (ModalRoute.of(context)?.isCurrent != true) {
+                        return;
+                      }
+                      audioOf(context)?.playButtonSound();
+                      hapticsOf(context)?.buttonPress();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => GameScreen(
+                            endlessSeed: plan.seed,
+                            isGauntlet: true,
+                            gauntletWeekKey: plan.weekKey,
+                            gauntletModifier: plan.modifier,
+                          ),
+                        ),
+                      );
+                    },
+              icon: const Icon(Icons.play_arrow, size: 20),
+              label: const Text(
+                'START GAUNTLET',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.yellow,
+                foregroundColor: Colors.black,
+              ),
+            ),
           ],
         ),
       ),

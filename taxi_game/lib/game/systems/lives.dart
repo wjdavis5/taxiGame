@@ -32,8 +32,10 @@ class LivesTracker {
     return _remaining;
   }
 
-  /// Refills the budget for a fresh shift.
-  void reset() {
-    _remaining = maxLives;
+  /// Refills the budget for a fresh shift. [lives] is the budget to refill
+  /// to — the gauntlet's one-life weeks (issue #288) start a run on a
+  /// smaller budget — defaulting to the standard [maxLives].
+  void reset({int lives = maxLives}) {
+    _remaining = math.max(1, lives);
   }
 }
