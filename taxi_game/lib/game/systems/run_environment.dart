@@ -78,22 +78,55 @@ class RoadGeometry {
   }
 }
 
+/// The landmark a district raises above its roofline (issue #280). The
+/// [Background] paints one per profile; the enum itself stays free of
+/// Flutter so the environment remains importable as pure logic.
+enum DistrictLandmark { waterTower, clockTower, monument }
+
 /// One stretch of road's fixed cross-section. Widths bound how hard the
 /// road can get: the narrow profile still fits two lanes of traffic with a
 /// dodging gap, and the avenue's extra lane spreads the same traffic
 /// thinner — width and lane count are difficulty pressure and relief,
 /// folded into the run's rhythm like everything else.
+///
+/// Each profile is also a named district (issue #280), so a stretch of
+/// road reads as a place and not just a width. The identity travels on
+/// four axes, none of which adds a draw to the seeded stream — all four
+/// derive from the profile this enum already rolls:
+///
+///  - *silhouette* — the width and lane layout here, and the skyline the
+///    [Background] builds for [districtName];
+///  - *landmark* — the [landmark] shape over that skyline;
+///  - *palette* — the surface, kerb, and marking colours the renderers
+///    look up by profile;
+///  - *traffic behaviour* — the lane count and per-lane spread
+///    [RunEnvironment.trafficAt] lays the same difficulty core onto: a
+///    narrow two-lane street puts the same wave on the same two lanes a
+///    standard street does, while the avenue divides its same-direction
+///    share across two lanes and thins every lane's chance.
 enum RoadProfile {
-  standard(200.0, [0.25, 0.75]),
-  narrow(148.0, [0.25, 0.75]),
-  avenue(264.0, [1 / 6, 3 / 6, 5 / 6]);
+  standard(200.0, [0.25, 0.75], 'Midtown', DistrictLandmark.waterTower),
+  narrow(148.0, [0.25, 0.75], 'Old Town', DistrictLandmark.clockTower),
+  avenue(264.0, [1 / 6, 3 / 6, 5 / 6], 'Grand Avenue',
+      DistrictLandmark.monument);
 
-  const RoadProfile(this.width, this.laneFractions);
+  const RoadProfile(
+    this.width,
+    this.laneFractions,
+    this.districtName,
+    this.landmark,
+  );
 
   final double width;
 
   /// Lane centres as fractions of the drivable width (0 = left edge).
   final List<double> laneFractions;
+
+  /// The district this cross-section belongs to.
+  final String districtName;
+
+  /// The shape the district's skyline carries.
+  final DistrictLandmark landmark;
 
   int get laneCount => laneFractions.length;
 }

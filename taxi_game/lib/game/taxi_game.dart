@@ -883,6 +883,7 @@ class TaxiGame extends FlameGame
     gripMultiplier = 1.0;
     darkness = 0;
     _background.darkness = 0;
+    _background.profile = RoadProfile.standard;
     _dailyDateKey = null;
     // A level run is no daily course: no ghost recording, no ghost on
     // the road (issue #20).
@@ -2160,6 +2161,7 @@ class TaxiGame extends FlameGame
       gripMultiplier = 1.0;
       darkness = 0;
       _background.darkness = 0;
+      _background.profile = RoadProfile.standard;
       _environmentOverlay?.darkness = 0;
       _environmentOverlay?.rainIntensity = 0;
       _environmentOverlay?.fogIntensity = 0;
@@ -2174,6 +2176,10 @@ class TaxiGame extends FlameGame
     gripMultiplier = env.gripFor(weather);
     darkness = env.darknessAt(distance);
     _background.darkness = darkness;
+    // The district rides the road the taxi is on (issue #280): the same
+    // profile roll that sets the width and lanes also sets the skyline,
+    // landmark, and palette — one input, no extra draw.
+    _background.profile = env.roadAt(distance).profile;
     final overlay = _environmentOverlay;
     if (overlay != null) {
       overlay.darkness = darkness;
