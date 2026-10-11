@@ -387,6 +387,24 @@ class MainMenuScreen extends StatelessWidget {
             ),
           ),
         ),
+        const SizedBox(height: 6),
+        // The visible streak (issue #281): the current run and the best
+        // ever. Read for the snapshot day the card was built for, so a
+        // missed day reads 0 here without touching the stored run. Rides
+        // the scale-down box like the status line above it (#201's idiom).
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            'STREAK ${gameState.dailyStreakOn(dayKey)} \u00b7 '
+            'BEST ${gameState.dailyBestStreak}',
+            key: const ValueKey('daily_streak_status'),
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.yellow,
+            ),
+          ),
+        ),
         if (result == null)
           TextButton(
             key: const ValueKey('daily_history_button'),

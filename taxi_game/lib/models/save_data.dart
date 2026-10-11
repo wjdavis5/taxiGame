@@ -1,3 +1,4 @@
+import 'daily_streak.dart';
 import 'lifetime_run_totals.dart';
 import 'personal_bests.dart';
 
@@ -26,6 +27,13 @@ class SaveData {
   /// the history trims at 200 shifts, and totals that stop there then
   /// fall are the bug this block replaces.
   LifetimeRunTotals lifetimeRunTotals;
+
+  /// The visible Daily streak (issue #281): the current run of
+  /// consecutive completed dailies, the best ever, and the settlement
+  /// record for the one declared streak bonus. Stored, not derived from
+  /// the daily history: the history window trims at 400 days, and the
+  /// settlement record is what keeps the bonus at most once per date.
+  DailyStreak dailyStreak;
 
   /// The best score any endless shift has ever ended with, banked or
   /// forfeited (issue #15). Compared against at every shift end.
@@ -60,9 +68,11 @@ class SaveData {
     this.bankPromptSeen = false,
     PersonalBests? personalBests,
     LifetimeRunTotals? lifetimeRunTotals,
+    DailyStreak? dailyStreak,
     required this.settings,
   })  : personalBests = personalBests ?? PersonalBests(),
-        lifetimeRunTotals = lifetimeRunTotals ?? LifetimeRunTotals();
+        lifetimeRunTotals = lifetimeRunTotals ?? LifetimeRunTotals(),
+        dailyStreak = dailyStreak ?? const DailyStreak();
 
   /// Create default save data for new players
   factory SaveData.createDefault() {
@@ -103,6 +113,13 @@ class SaveData {
           ? LifetimeRunTotals()
           : LifetimeRunTotals.fromJson(
               json['lifetimeRunTotals'] as Map<String, dynamic>),
+      // Saves written before issue #281 have no streak block; a missing
+      // key means "no run recorded yet", not a corrupt save — the load
+      // path then seeds the block once from the daily history.
+      dailyStreak: json['dailyStreak'] == null
+          ? const DailyStreak()
+          : DailyStreak.fromJson(
+              json['dailyStreak'] as Map<String, dynamic>),
       // Saves written before issue #37 have no hint flag at all — and a
       // save that exists at all means its player has already driven.
       // A missing key therefore reads as dismissed: the stick hint is
@@ -134,6 +151,7 @@ class SaveData {
       'bankPromptSeen': bankPromptSeen,
       'personalBests': personalBests.toJson(),
       'lifetimeRunTotals': lifetimeRunTotals.toJson(),
+      'dailyStreak': dailyStreak.toJson(),
       'settings': settings.toJson(),
     };
   }

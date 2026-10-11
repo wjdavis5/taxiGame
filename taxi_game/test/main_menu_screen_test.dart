@@ -300,12 +300,62 @@ void main() {
       await tester.pumpWidget(buildMenu(gameStateService, storageService));
       await tester.pump();
 
+      // The streak line (issue #281) adds a row to the daily block; on
+      // the 800x600 test surface the link now sits just past the fold of
+      // the menu's scroll view, exactly like a small real phone.
+      await tester.ensureVisible(
+          find.byKey(const ValueKey('daily_history_button')));
+      await tester.pump();
       await tester
           .tap(find.byKey(const ValueKey('daily_history_button')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('daily_screen')), findsOneWidget,
           reason: 'history is reachable even before today\'s shift ends');
+    });
+  });
+
+  group('the visible streak (issue #281)', () {
+    testWidgets('the menu shows the current run and the best ever',
+        (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+      // A two-day run ending today.
+      for (var i = 1; i >= 0; i--) {
+        await gameStateService.recordDailyResult(DailyResult(
+          dateKey: DailyShift.dateKeyFor(calendarDaysFromNow(-i)),
+          score: 340,
+          banked: true,
+          completedAtMs: DateTime.now().millisecondsSinceEpoch,
+        ));
+      }
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(find.text('STREAK 2 \u00b7 BEST 2'), findsOneWidget);
+    });
+
+    testWidgets('a missed day shows 0 while the best stays', (tester) async {
+      final storageService = StorageService();
+      await storageService.init();
+      final gameStateService = GameStateService(storageService);
+      // A three-day run ending two days ago: nothing is alive today.
+      for (var i = 4; i >= 2; i--) {
+        await gameStateService.recordDailyResult(DailyResult(
+          dateKey: DailyShift.dateKeyFor(calendarDaysFromNow(-i)),
+          score: 340,
+          banked: true,
+          completedAtMs: DateTime.now().millisecondsSinceEpoch,
+        ));
+      }
+
+      await tester.pumpWidget(buildMenu(gameStateService, storageService));
+      await tester.pump();
+
+      expect(find.text('STREAK 0 \u00b7 BEST 3'), findsOneWidget,
+          reason: 'a missed day costs the visible run; the best is a record');
     });
   });
 
@@ -503,6 +553,8 @@ void main() {
         // and the key is what production and the other tests find it by.
         ('the daily status line',
             find.byKey(const ValueKey('daily_status'))),
+        ('the daily streak line',
+            find.byKey(const ValueKey('daily_streak_status'))),
         // #208: a fresh save shows the three widest button labels —
         // the on-ramp headline and both mode labels.
         ('START DRIVING', find.text('START DRIVING')),

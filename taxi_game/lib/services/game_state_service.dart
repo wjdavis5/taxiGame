@@ -3,6 +3,7 @@ import '../game/levels/level.dart';
 import '../game/systems/daily_shift.dart';
 import '../models/achievements.dart';
 import '../models/daily_result.dart';
+import '../models/daily_streak.dart';
 import '../models/ghost_trace.dart';
 import '../models/personal_bests.dart';
 import '../models/run_record.dart';
@@ -173,6 +174,32 @@ class GameStateService extends ChangeNotifier {
   /// spent, and the result stands until tomorrow's course arrives.
   bool get todayDailyComplete => todayDailyResult != null;
 
+  /// The current Daily streak (issue #281) as it stands today: the run
+  /// of consecutive completed dailies, 0 once a day has been missed.
+  int get dailyStreak => dailyStreakOn(DailyShift.todayKey);
+
+  /// The current Daily streak as it stands on the day named by [dayKey]
+  /// (issue #281). Day-scoped for the same reason the menu's card is
+  /// (issue #245): a screen built for one day must not read the streak
+  /// of another while the clock crosses midnight under it.
+  int dailyStreakOn(String dayKey) => _saveData.dailyStreak.currentOn(dayKey);
+
+  /// The best Daily streak ever completed (issue #281) — the stored
+  /// maximum, never lowered by a missed day.
+  int get dailyBestStreak => _saveData.dailyStreak.best;
+
+  /// The declared streak bonus the next completion pays, read on
+  /// [dayKey] (issue #281): the reward for the run a completion on that
+  /// day would reach. On an unplayed day it is that day's bonus; on a
+  /// played day, the next day's.
+  int dailyStreakRewardOn(String dayKey) =>
+      _saveData.dailyStreak.nextRewardOn(dayKey);
+
+  /// The streak bonus already settled for [dayKey], or null when the
+  /// day's reward has not settled (issue #281).
+  int? settledDailyStreakRewardFor(String dayKey) =>
+      _saveData.dailyStreak.settledRewardFor(dayKey);
+
   /// The completed Daily Shift recorded for [dateKey], or null.
   DailyResult? dailyResultFor(String dateKey) {
     for (final result in _dailyHistory) {
@@ -285,6 +312,8 @@ class GameStateService extends ChangeNotifier {
     // while the history — and the menu's BEST line — still showed the
     // better shift. Per-field max, folded into the one migration write.
     var migratedPbs = false;
+    // The visible streak block's seed (issue #281): see below.
+    var migratedStreak = false;
     if (data != null) {
       final windowCleanBanks = _runHistory
           .where((record) => record.banked && record.livesLost == 0)
@@ -295,6 +324,20 @@ class GameStateService extends ChangeNotifier {
       }
       migratedTotals = _saveData.lifetimeRunTotals.seedFromWindow(_runHistory);
       migratedPbs = _saveData.personalBests.seedFromWindow(_runHistory);
+      // A save written before the streak block existed stores nothing
+      // (issue #281), and its only record of the run is the daily
+      // history — the same source the hidden streak achievements count
+      // from. A virgin block on a save whose history is not empty is
+      // exactly such a save; the seed persists with the other
+      // migrations, before the history window can age a day out from
+      // under it. A non-virgin block is the truth and is never touched.
+      if (_saveData.dailyStreak.isVirgin && _dailyHistory.isNotEmpty) {
+        _saveData.dailyStreak = DailyStreak.fromHistory(
+          _dailyHistory,
+          todayKey: DailyShift.todayKey,
+        );
+        migratedStreak = true;
+      }
       // The ghost trace loads with everything else (issue #20); a missing
       // or corrupt one just means no ghost to race, never a crash.
       _dailyGhost = _storageService.loadDailyGhost();
@@ -305,7 +348,9 @@ class GameStateService extends ChangeNotifier {
     // from a load; the records screen simply shows them earned.
     _evaluateAchievements(announce: false);
     notifyListeners();
-    if (migratedCleanBanks || migratedTotals || migratedPbs) await save();
+    if (migratedCleanBanks || migratedTotals || migratedPbs || migratedStreak) {
+      await save();
+    }
   }
 
   /// True while [resetProgress]'s storage transaction is in flight
@@ -317,8 +362,12 @@ class GameStateService extends ChangeNotifier {
   /// flushes it — once — after the transaction settles.
   bool _saveRequestedDuringReset = false;
 
-  /// Save current data to storage
-  Future<void> save() async {
+  /// Save current data to storage. Returns whether the write reached the
+  /// platform (issue #281): `false` after a terminal failure, and also
+  /// while a reset defers the write — a caller whose next step depends on
+  /// the save having landed holds it back (the daily record's history
+  /// write). Every other caller ignores the answer, as before.
+  Future<bool> save() async {
     if (_resetInFlight) {
       // A save issued while the reset transaction runs (issue #246) is
       // deferred, not encoded: writing the current `_saveData` now would
@@ -327,9 +376,9 @@ class GameStateService extends ChangeNotifier {
       // next launch. The reset flushes one deferred save when it settles,
       // so a settings toggle made mid-window still reaches the disk.
       _saveRequestedDuringReset = true;
-      return;
+      return false;
     }
-    await _storageService.saveSaveData(_saveData);
+    return _storageService.saveSaveData(_saveData);
   }
 
   /// Runs one deferred [save] if a write was requested while the reset
@@ -433,12 +482,14 @@ class GameStateService extends ChangeNotifier {
   /// [maxRecordedDailyResults]. Strictly local — the shared course is
   /// derived from the date; nothing here is ever sent anywhere.
   ///
-  /// The daily is also where a streak extends (issue #21), so the
-  /// achievements are re-evaluated with the day in — before a shift-end
-  /// evaluation could reach the same conclusion one call late. Like
-  /// [recordEndlessRun], the evaluation precedes the first await: the
-  /// caller drains the unlock queue synchronously right after this
-  /// fire-and-forget call.
+  /// The same first record is what extends the visible streak and settles
+  /// its declared bonus (issue #281) — see [_settleDailyStreak] — and the
+  /// daily is also where the hidden streak achievements extend (issue
+  /// #21), so the achievements are re-evaluated with the day in — before
+  /// a shift-end evaluation could reach the same conclusion one call
+  /// late. Like [recordEndlessRun], the evaluation precedes the first
+  /// await: the caller drains the unlock queue synchronously right after
+  /// this fire-and-forget call.
   Future<void> recordDailyResult(DailyResult result) async {
     if (dailyResultFor(result.dateKey) != null) return;
     _dailyHistory.add(result);
@@ -446,9 +497,51 @@ class GameStateService extends ChangeNotifier {
       _dailyHistory.removeRange(
           0, _dailyHistory.length - maxRecordedDailyResults);
     }
+    _settleDailyStreak(result.dateKey);
     notifyListeners();
     _evaluateAchievements();
-    await _storageService.saveDailyHistory(_dailyHistory);
+    // The save lands before the history (issue #281's split-write
+    // window): the streak block and the day's coins are one write, and a
+    // kill between the two leaves the save ahead of the history — the
+    // settlement record intact, the run not one short. The day then
+    // replays safely, because the settlement guards refuse to extend or
+    // pay twice and the replay only fills the history back in. The
+    // history-first order left the opposite split, which the history
+    // guard then made permanent: the run read one short and the day's
+    // bonus could never settle.
+    //
+    // The history also *waits for the save* (issue #281's surviving
+    // producer): a terminal save failure — both retries refused — must
+    // not leave the history ahead of the save either, because the caller
+    // guard would then strand the day: unreplayable, the run one short,
+    // the bonus unpayable. Held back, a lost save is a lost record: the
+    // day replays from scratch and settles in full.
+    if (await save()) {
+      await _storageService.saveDailyHistory(_dailyHistory);
+    }
+  }
+
+  /// Extends the visible streak and settles the day's declared bonus
+  /// (issue #281). At most once per date, three ways over: a completion
+  /// older than the stored run's last day is a clock that moved backward
+  /// and is ignored outright — it can neither extend the run nor pay a
+  /// backdated bonus; the caller only reaches the rest for the first
+  /// result of a day; and the block's reward date key (with the last
+  /// counted day) is the replay guard — a date already counted or
+  /// already paid settles nothing, whatever re-runs. The coins ride the
+  /// same in-memory save as the streak, and the caller's [save] persists
+  /// both in one write, so a kill between the two cannot split them.
+  void _settleDailyStreak(String dateKey) {
+    final before = _saveData.dailyStreak;
+    if (before.isBeforeLast(dateKey)) return;
+    final after = before.afterCompletion(dateKey);
+    final alreadySettled = before.lastDateKey == dateKey ||
+        before.settledRewardFor(dateKey) != null;
+    final coins = alreadySettled
+        ? 0
+        : DailyStreak.rewardCoins(after.current);
+    _saveData.dailyStreak = after.withRewardSettled(dateKey, coins);
+    _saveData.totalCoins += coins;
   }
   
   /// Unlock a vehicle
