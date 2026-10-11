@@ -901,9 +901,9 @@ void main() {
       expect(game.overlays.isActive('levelComplete'), isTrue);
       expect(game.lastCompletionBonus, GameStateService.tutorialGraduationBonus,
           reason: 'the completion path hands the panel the bonus it paid');
-      expect(saveAtTen.totalCoins,
-          900 + GameStateService.tutorialGraduationBonus,
-          reason: 'the pushed finish paid 900, plus the 500 graduation');
+      expect(saveAtTen.totalCoins, 1400,
+          reason: 'a literal pin: the pushed finish paid 900, plus the '
+              'literal 500 graduation bonus');
       expect(game.gameState.tutorialComplete, isTrue);
       expect(game.gameState.isAchievementUnlocked('tutorial_complete'), isTrue);
       expect(
@@ -915,7 +915,8 @@ void main() {
       // A replay of the final rung pays the rung only: the save already
       // sits past it, so the bonus can never pay twice.
       expect(saveAtTen.completeLevel(GameLevel.ladderLength, 0), 0);
-      expect(saveAtTen.totalCoins, 900 + GameStateService.tutorialGraduationBonus);
+      expect(saveAtTen.totalCoins, 1400,
+          reason: 'the one-time bonus stays 500');
     });
 
     testWidgets('the completion panel shows the bonus line and the unlock '
@@ -940,10 +941,10 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text('TUTORIAL BONUS +'
-            '${GameStateService.tutorialGraduationBonus} Coins'),
+        find.text('TUTORIAL BONUS +500 Coins'),
         findsOneWidget,
-        reason: 'the reward is named where the finish lands',
+        reason: 'the reward is named where the finish lands, at the '
+            'literal 500 the product decision pinned',
       );
       expect(
         find.byKey(

@@ -119,15 +119,12 @@ void main() {
 
       // The card branches like the menu does: no "Level 11" exists to
       // show, and the coins still stand next to the finished-ladder
-      // wording — the rung payouts plus the graduation bonus the final
-      // rung paid (issue #283).
+      // wording — a literal pin on the whole walk: ten 10-coin rungs
+      // (100) plus the 500 graduation bonus.
       expect(find.textContaining('Level 11'), findsNothing);
       expect(find.textContaining('Tutorial complete'), findsOneWidget);
       expect(
-        find.textContaining(
-            'Tutorial complete · '
-            '${GameLevel.ladderLength * 10 + GameStateService.tutorialGraduationBonus} '
-            'coins'),
+        find.textContaining('Tutorial complete · 600 coins'),
         findsOneWidget,
         reason: 'the coins ride along, as they did beside the rung count',
       );

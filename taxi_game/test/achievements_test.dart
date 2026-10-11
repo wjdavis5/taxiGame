@@ -380,6 +380,14 @@ void main() {
   });
 
   group('the mastery tracks (issue #283)', () {
+    test('the graduation bonus is the pinned literal', () {
+      // The number is a product decision, not an implementation detail:
+      // the completion panel and the settings card both name it, so a
+      // retune must fail here rather than ride through assertions that
+      // derive their expected value from this same constant.
+      expect(GameStateService.tutorialGraduationBonus, 500);
+    });
+
     test('lifetime close calls fold across shifts and unlock their tier',
         () async {
       await gameState.recordEndlessRun(run(nearMisses: 6));
@@ -398,6 +406,17 @@ void main() {
       );
     });
 
+    test('the close-call tier waits for the tenth call', () async {
+      await gameState.recordEndlessRun(run(nearMisses: 9));
+      expect(gameState.achievementState.totalNearMisses, 9);
+      expect(gameState.isAchievementUnlocked('close_call_10'), isFalse,
+          reason: 'nine close calls are one below the bar');
+
+      await gameState.recordEndlessRun(run(nearMisses: 1));
+      expect(gameState.isAchievementUnlocked('close_call_10'), isTrue,
+          reason: 'the tenth call lands it');
+    });
+
     test('score tiers read the best banked score', () async {
       await gameState.recordEndlessRun(run(score: 600));
       expect(gameState.isAchievementUnlocked('score_500'), isTrue);
@@ -412,6 +431,17 @@ void main() {
           reason: 'a wrecked 9000 never banked, so no tier');
     });
 
+    test('the score tier waits for the banked 500', () async {
+      await gameState.recordEndlessRun(run(score: 499));
+      expect(gameState.achievementState.bestBankedScore, 499);
+      expect(gameState.isAchievementUnlocked('score_500'), isFalse,
+          reason: 'a banked 499 is one below the bar');
+
+      await gameState.recordEndlessRun(run(score: 500));
+      expect(gameState.isAchievementUnlocked('score_500'), isTrue,
+          reason: 'the banked 500 lands it');
+    });
+
     test('daily participation counts completed dailies, gaps included',
         () async {
       DailyResult daily(String dateKey) => DailyResult(
@@ -421,12 +451,17 @@ void main() {
             completedAtMs: 0,
           );
 
-      // Ten days, every other one: nothing consecutive, so the streak
-      // tiers stay locked while the participation tier fills.
-      for (var i = 1; i <= 10; i++) {
+      // Days every other one: nothing consecutive, so the streak tiers
+      // stay locked while the participation tier fills.
+      for (var i = 1; i <= 9; i++) {
         final day = (2 * i).toString().padLeft(2, '0');
         await gameState.recordDailyResult(daily('2026-01-$day'));
       }
+      expect(gameState.achievementState.completedDailyCount, 9);
+      expect(gameState.isAchievementUnlocked('daily_10'), isFalse,
+          reason: 'nine days are one below the bar');
+
+      await gameState.recordDailyResult(daily('2026-01-20'));
 
       expect(gameState.achievementState.completedDailyCount, 10);
       expect(gameState.isAchievementUnlocked('daily_10'), isTrue);
@@ -447,18 +482,32 @@ void main() {
       expect(gameState.isAchievementUnlocked('lifetime_100km'), isFalse);
     });
 
+    test('the volume tier waits for the 25th kilometre', () async {
+      // 24999 m — one metre short of the bar — then the metre that lands
+      // it. 10 px per metre (RunSummary.pixelsPerMetre).
+      await gameState.recordEndlessRun(run(distancePx: 249990));
+      expect(gameState.achievementState.lifetimeDistanceMetres, 24999);
+      expect(gameState.isAchievementUnlocked('lifetime_25km'), isFalse,
+          reason: 'one metre below the bar');
+
+      await gameState.recordEndlessRun(run(distancePx: 10));
+      expect(gameState.achievementState.lifetimeDistanceMetres, 25000);
+      expect(gameState.isAchievementUnlocked('lifetime_25km'), isTrue,
+          reason: 'the 25th kilometre lands it');
+    });
+
     test('finishing the ladder earns its record and pays its bonus once',
         () async {
       for (var rung = 1; rung < GameLevel.ladderLength; rung++) {
         expect(gameState.completeLevel(rung, 0), 0,
             reason: 'only the final rung pays the graduation bonus');
       }
-      final coinsBefore = gameState.totalCoins;
       final bonus = gameState.completeLevel(GameLevel.ladderLength, 0);
 
       expect(bonus, GameStateService.tutorialGraduationBonus);
-      expect(gameState.totalCoins, coinsBefore + bonus,
-          reason: 'the reward is visible in the wallet');
+      expect(gameState.totalCoins, 500,
+          reason: 'a literal pin: every rung paid 0, so the wallet holds '
+              'the 500 graduation bonus alone');
       expect(gameState.tutorialComplete, isTrue);
       expect(gameState.isAchievementUnlocked('tutorial_complete'), isTrue);
       expect(
@@ -471,7 +520,8 @@ void main() {
       // The save now sits past the rung, so a replay can never double-pay
       // (the branch only runs while the rung is still the current one).
       expect(gameState.completeLevel(GameLevel.ladderLength, 0), 0);
-      expect(gameState.totalCoins, coinsBefore + bonus);
+      expect(gameState.totalCoins, 500,
+          reason: 'the bonus stays a one-time 500');
     });
 
     test('a pre-#283 save seeds its close-call counter and retro-awards '
@@ -510,6 +560,27 @@ void main() {
       final reloaded = GameStateService(reloadedStorage);
       await reloaded.loadSaveData();
       expect(reloaded.achievementState.totalNearMisses, 12);
+    });
+
+    test('a save already past rung ten retro-earns the ladder record '
+        'silently', () async {
+      // The migration case for the ladder's own record: the save was
+      // finished by a build that had no LICENSED DRIVER to award.
+      final save = SaveData.createDefault()
+        ..currentLevel = GameLevel.ladderLength + 1;
+      SharedPreferences.setMockInitialValues({
+        StorageService.saveDataKey: jsonEncode(save.toJson()),
+      });
+      final storage = StorageService();
+      await storage.init();
+      final migrated = GameStateService(storage);
+      await migrated.loadSaveData();
+
+      expect(migrated.tutorialComplete, isTrue);
+      expect(migrated.isAchievementUnlocked('tutorial_complete'), isTrue,
+          reason: 'the ladder was finished before the record existed');
+      expect(migrated.takePendingAchievementUnlocks(), isEmpty,
+          reason: 'a retro-award from a load never banners');
     });
   });
 
