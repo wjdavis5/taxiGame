@@ -41,6 +41,7 @@ import 'systems/run_environment.dart';
 import 'systems/run_summary.dart';
 import 'systems/road_chunk_manager.dart';
 import 'systems/impact_fx.dart';
+import 'systems/weekly_gauntlet.dart';
 import 'systems/world_origin.dart';
 import '../services/audio_service.dart';
 import '../services/game_state_service.dart';
@@ -66,6 +67,9 @@ class TaxiGame extends FlameGame
     this.isDailyShift = false,
     this.isGhostRace = false,
     this.dailyDateKey,
+    this.isGauntlet = false,
+    this.gauntletWeekKey,
+    this.gauntletModifier,
   }) : super(
           camera: CameraComponent.withFixedResolution(width: 400, height: 800),
         );
@@ -118,6 +122,27 @@ class TaxiGame extends FlameGame
   /// cleared by [retryShift] — a drive on from here is free play.
   bool isGhostRace;
 
+  /// True when this game is running the Weekly Gauntlet (issue #288): an
+  /// endless run on the week's derived course, whose finished numbers are
+  /// folded into the week's stored best. The gauntlet is replayable all
+  /// week — unlike the daily, there is no one-attempt rule — so
+  /// [retryShift] demotes to free play for the same reason the daily's
+  /// does: the summary's DRIVE AGAIN is a fresh city, never a second
+  /// counted run behind one tap.
+  bool isGauntlet;
+
+  /// The week [gauntletWeekKey]'s course belongs to, carried from the
+  /// screen that derived the seed (the #248 rule, one calendar step up):
+  /// the run pins the week it started on, never a fresh clock read that
+  /// could cross a week boundary mid-run. Null for a run on no gauntlet
+  /// course; direct constructions fall back to the clock at start.
+  final String? gauntletWeekKey;
+
+  /// The rule the week's plan picked (issue #288). Read at run start for
+  /// the run's crash budget and its fare payout; null outside a gauntlet
+  /// run, and ignored once [isGauntlet] is cleared.
+  final GauntletModifier? gauntletModifier;
+
   /// The seed of the endless run in progress; null in level mode. Set by
   /// [startEndlessRun] — which is also how the tutorial handoff (issue
   /// #16) starts a shift on a game constructed for the ladder — so it,
@@ -129,6 +154,18 @@ class TaxiGame extends FlameGame
   /// on the road at midnight records to the day it was played. Null for
   /// any non-daily run.
   String? _dailyDateKey;
+
+  /// The week this gauntlet run belongs to (issue #288), as a 'yyyy-Www'
+  /// week key. Pinned when the run starts — the gauntlet's own version of
+  /// the daily's day pin — so a run still on the road when the week
+  /// turns records to the week it was played. Null outside gauntlet runs.
+  String? _gauntletWeekKey;
+
+  /// The modifier in force for the run on the road, or null in free play.
+  /// Gated on the pinned week, so a demoted retry carries no gauntlet
+  /// rule even though the game's constructor field still names one.
+  GauntletModifier? get _activeModifier =>
+      _gauntletWeekKey == null ? null : gauntletModifier;
 
   /// The calendar day the run on the road belongs to ('yyyy-MM-dd'),
   /// pinned at run start: the Daily Shift's day (issue #19), and by the
@@ -696,6 +733,14 @@ class TaxiGame extends FlameGame
     _ghostRecorder =
         _ghostDateKey != null ? GhostRecorder() : null;
 
+    // The gauntlet pins its week by the same carried-key rule (issue
+    // #288): the screen that derived the seed hands over the week it
+    // belongs to, and a direct construction without one falls back to
+    // the clock at start.
+    _gauntletWeekKey = isGauntlet
+        ? (gauntletWeekKey ?? WeeklyGauntlet.currentWeekKey)
+        : null;
+
     // Clear any impact juice left over from the previous run (issue #7),
     // along with the lives budget and any crash stall it was mid-way
     // through (issue #14): a fresh shift starts with three lives and no
@@ -706,7 +751,13 @@ class TaxiGame extends FlameGame
     _pendingOverlayName = null;
     _crashStallRemaining = 0;
     _shiftOver = false;
-    lives.reset();
+    // The gauntlet's sudden-death week refills to one life instead
+    // (issue #288); every other run gets the standard three.
+    lives.reset(
+      lives: _activeModifier == GauntletModifier.suddenDeath
+          ? 1
+          : LivesTracker.maxLives,
+    );
     _speedLines?.intensity = 0;
     _applyShake(0); // restores the viewport position, dropping any shake
 
@@ -1112,15 +1163,20 @@ class TaxiGame extends FlameGame
       colors: ImpactFxPalettes.dropoff,
     ));
     // Coins fly from the dropoff to the HUD counter, and the wallet is
-    // credited immediately — per-fare, the endless economy's unit.
+    // credited immediately — per-fare, the endless economy's unit. The
+    // gauntlet's double-fares week pays every fare twice (issue #288);
+    // the chain score above stays the fare's own value, so the modifier
+    // moves the wallet, not the mastery.
+    final payout = passenger.reward *
+        (_activeModifier == GauntletModifier.doubleFares ? 2 : 1);
     for (var i = 0; i < 3; i++) {
       world.add(CoinPop(
         startPosition: passenger.dropoffLocation,
         delay: 0.06 * i,
       ));
     }
-    gameState.addCoins(passenger.reward);
-    _runCoinsEarned += passenger.reward;
+    gameState.addCoins(payout);
+    _runCoinsEarned += payout;
 
     // The two-tone delivery chime (issue #4) over the delivery thud
     // (issue #5).
@@ -1352,6 +1408,22 @@ class TaxiGame extends FlameGame
       ));
     }
 
+    // A finished gauntlet run folds into the week's stored best (issue
+    // #288) — the gauntlet's own settlement, one calendar step up from
+    // the daily result beside it. Every ended gauntlet run counts, banked
+    // or wrecked: the objective measures the run's own numbers, and the
+    // week is replayable, so the best survives every attempt.
+    final gauntletWeek = _gauntletWeekKey;
+    if (gauntletWeek != null) {
+      gameState.recordGauntletRun(
+        weekKey: gauntletWeek,
+        score: fareChain.score,
+        fares: faresDelivered,
+        bestChain: fareChain.bestMultiplier,
+        distanceMetres: (runDistance / RunSummary.pixelsPerMetre).floor(),
+      );
+    }
+
     // Achievements the shift just earned (issue #21): drained here, one
     // call after the evaluations above, so the summary panel — the
     // screen the shift's ending already owns — is where the player
@@ -1400,12 +1472,15 @@ class TaxiGame extends FlameGame
   /// so the retry demotes the game to free play: a fresh-seed endless
   /// shift, never a replay of the day's shared course. A ghost race
   /// demotes the same way (issue #20) — racing your ghost is a choice,
-  /// not the default that waits behind a tap.
+  /// not the default that waits behind a tap. A gauntlet run demotes too
+  /// (issue #288): the week is replayable from its own card, and DRIVE
+  /// AGAIN is a fresh city, not a silently counted second attempt.
   void retryShift() {
     overlays.remove('shiftBanked');
     overlays.remove('shiftWrecked');
     isDailyShift = false;
     isGhostRace = false;
+    isGauntlet = false;
     startEndlessRun(seed: freshSeed());
   }
 

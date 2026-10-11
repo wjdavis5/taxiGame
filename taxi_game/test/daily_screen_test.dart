@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
+import 'package:taxi_game/game/systems/weekly_gauntlet.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/models/daily_result.dart';
 import 'package:taxi_game/models/daily_streak.dart';
@@ -650,6 +651,106 @@ void main() {
         findsOneWidget,
         reason: 'a broken run restarts at the day-one rate',
       );
+    });
+  });
+
+  group('the weekly gauntlet card (issue #288)', () {
+    /// The week's plan as the screen derives it — from today's day key,
+    /// through the same calendar the Daily reads.
+    GauntletPlan currentPlan() => WeeklyGauntlet.planForWeek(
+        WeeklyGauntlet.weekKeyForDateKey(DailyShift.todayKey));
+
+    testWidgets('names the week, the objective, the modifier, and that the '
+        'device calendar runs the event', (tester) async {
+      final plan = currentPlan();
+
+      await pumpScreen(tester);
+
+      expect(find.byKey(const Key('weekly_gauntlet_card')), findsOneWidget);
+      expect(find.text('WEEKLY GAUNTLET'), findsOneWidget);
+      expect(find.byKey(const Key('weekly_gauntlet_week')), findsOneWidget);
+      expect(find.text(plan.weekKey), findsOneWidget,
+          reason: 'the card names the week the event belongs to');
+      expect(find.text('Objective: ${plan.objective.title}'), findsOneWidget);
+      expect(find.text('Modifier: ${plan.modifier.title}'), findsOneWidget);
+      expect(
+        find.text('The device calendar controls the event: a new gauntlet '
+            'arrives every Monday.'),
+        findsOneWidget,
+        reason: 'the player must know the device calendar decides the event '
+            '— nothing is fetched',
+      );
+      expect(find.text('No gauntlet run yet this week.'), findsOneWidget);
+      expect(find.byKey(const Key('weekly_gauntlet_start_button')),
+          findsOneWidget);
+    });
+
+    testWidgets('the start button opens the week\'s course with the '
+        'modifier carried', (tester) async {
+      final plan = currentPlan();
+
+      await pumpScreen(tester);
+      await tester.ensureVisible(
+          find.byKey(const Key('weekly_gauntlet_start_button')));
+      await tester.tap(find.byKey(const Key('weekly_gauntlet_start_button')));
+      await tester.pump(); // the route push
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(GameScreen), findsOneWidget);
+      final game = tester
+          .widget<GameWidget<TaxiGame>>(find.byType(GameWidget<TaxiGame>))
+          .game!;
+      expect(game.isGauntlet, isTrue);
+      expect(game.isDailyShift, isFalse,
+          reason: 'the gauntlet is not the daily\'s one attempt');
+      expect(game.endlessSeed, plan.seed,
+          reason: 'the week-derived course');
+      expect(game.gauntletWeekKey, plan.weekKey,
+          reason: 'the run pins the week the screen seeded it from');
+      expect(game.gauntletModifier, plan.modifier,
+          reason: 'the week\'s rule rides to the game');
+      expect(game.isGameActive, isTrue);
+    });
+
+    testWidgets('the stored best of the week shows as progress, and a met '
+        'objective says so', (tester) async {
+      final plan = currentPlan();
+      await gameState.recordGauntletRun(
+        weekKey: plan.weekKey,
+        score: 100,
+        fares: 2,
+        bestChain: plan.objective.target,
+        distanceMetres: 100,
+      );
+
+      await pumpScreen(tester);
+
+      expect(
+        find.text('${plan.objective.progressTitle(plan.objective.target)} '
+            '— objective met!'),
+        findsOneWidget,
+        reason: 'the card reports the best the week actually holds',
+      );
+      expect(find.text('No gauntlet run yet this week.'), findsNothing);
+    });
+
+    testWidgets('a record from a past week reads as not played yet',
+        (tester) async {
+      await gameState.recordGauntletRun(
+        weekKey: '2000-W01',
+        score: 9999,
+        fares: 99,
+        bestChain: 9,
+        distanceMetres: 9999,
+      );
+
+      await pumpScreen(tester);
+
+      expect(find.text('No gauntlet run yet this week.'), findsOneWidget,
+          reason: 'last season\'s best is not this week\'s');
     });
   });
 }
