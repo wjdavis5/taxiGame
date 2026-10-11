@@ -116,8 +116,9 @@ class LicenseRun {
 ///
 /// The bar is the [threshold] field, and the rule switch reads that same
 /// field, so the number on the card and the number enforced are one fact:
-/// the tests pin every [brief] to contain its [threshold], and a re-tuned
-/// rule whose card still quotes the old number fails them.
+/// the tests pin every [brief] to name its [threshold] as a standalone
+/// number token, so a re-tuned rule whose card still quotes the old number
+/// — a truncation like 300 to 30 included — fails them.
 enum LicenseRule {
   // Banking: the two ways a bank is a decision — clean, or big.
   cleanBank(LicenseFamily.banking, 'CLEAN BANK',
@@ -180,7 +181,8 @@ enum LicenseRule {
   final String title;
 
   /// The ask, in the board's voice ('BANK 4000+ IN ONE SHIFT'). It names
-  /// [threshold], and the tests hold it to that.
+  /// [threshold], and the tests hold it to that as a standalone number:
+  /// containment alone would let a 300 m card pass a 30 m rule.
   final String brief;
 
   /// The bar this rule enforces, in the rule's own unit — crashes, coins,

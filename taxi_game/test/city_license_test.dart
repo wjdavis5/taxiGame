@@ -60,6 +60,18 @@ void main() {
     fail('no seed produced the wanted weather — the generator changed');
   }
 
+  /// The first sampler distance where [metric] reaches the 300 m bar, and
+  /// the step just short of it. Weather exposure is whole 100 px steps
+  /// (10 m), so the crossing lands exactly on the bar.
+  (int, int) barCrossing(int seed, double Function(LicenseRun run) metric) {
+    for (var d = 0; d <= 40000; d += 100) {
+      if (metric(run(seed: seed, distancePx: d.toDouble())) >= 300) {
+        return (d, d - 100);
+      }
+    }
+    fail('seed $seed never reached the 300 m bar');
+  }
+
   group('the board covers every family with real entries', () {
     test('the five families all carry objectives', () {
       for (final family in LicenseFamily.values) {
@@ -95,13 +107,17 @@ void main() {
     });
 
     test('every brief names the threshold its rule enforces', () {
-      // The rule reads its threshold field and the card quotes it, so a
-      // re-tuned number that leaves the old text behind fails here: the
-      // card can never lie with the suite green.
+      // The rule reads its threshold field and the card quotes it as a
+      // standalone number, so a re-tuned number that leaves the old text
+      // behind fails here — a truncation like 300 to 30 included, which
+      // plain substring containment would let through. The card can never
+      // lie with the suite green.
       for (final rule in CityLicense.board) {
-        expect(rule.brief, contains('${rule.threshold}'),
+        final token = RegExp('\\b${rule.threshold}\\b');
+        expect(token.hasMatch(rule.brief), isTrue,
             reason: '${rule.id} enforces ${rule.threshold}; its card must '
-                'name the number the rule reads');
+                'name the number as a standalone token, not as a substring '
+                'of another number');
       }
     });
 
@@ -203,11 +219,45 @@ void main() {
           reason: 'the calm open is always clear (issue #24)');
     });
 
+    test('RAIN RUN is met at exactly 300 m and not one sampler step short',
+        () {
+      final seed = seedWhere((r) => r.rainMetres >= 300);
+      final (metAt, shortOf) = barCrossing(seed, (r) => r.rainMetres);
+      expect(run(seed: seed, distancePx: metAt.toDouble()).rainMetres, 300,
+          reason: 'exposure is whole 10 m steps, so the crossing lands on '
+              'the bar itself');
+      expect(
+          LicenseRule.rainRun
+              .isMet(run(seed: seed, distancePx: metAt.toDouble())),
+          isTrue);
+      expect(
+          LicenseRule.rainRun
+              .isMet(run(seed: seed, distancePx: shortOf.toDouble())),
+          isFalse,
+          reason: 'the step before the bar is below it — a rule re-tuned '
+              'below 300 m fails here');
+    });
+
     test('FOG RUN wants 300 m in fog', () {
       final seed = seedWhere((r) => r.fogMetres >= 300);
       expect(LicenseRule.fogRun.isMet(run(seed: seed, distancePx: 40000)),
           isTrue);
       expect(LicenseRule.fogRun.isMet(run(seed: 0, distancePx: 5000)), isFalse);
+    });
+
+    test('FOG RUN is met at exactly 300 m and not one sampler step short',
+        () {
+      final seed = seedWhere((r) => r.fogMetres >= 300);
+      final (metAt, shortOf) = barCrossing(seed, (r) => r.fogMetres);
+      expect(run(seed: seed, distancePx: metAt.toDouble()).fogMetres, 300);
+      expect(
+          LicenseRule.fogRun
+              .isMet(run(seed: seed, distancePx: metAt.toDouble())),
+          isTrue);
+      expect(
+          LicenseRule.fogRun
+              .isMet(run(seed: seed, distancePx: shortOf.toDouble())),
+          isFalse);
     });
 
     test('NIGHT SHIFT wants 300 m after dark', () {
@@ -219,6 +269,16 @@ void main() {
           reason: '180 m after dark is short of the bar');
       expect(LicenseRule.nightRun.isMet(run(distancePx: 30000)), isFalse,
           reason: 'daylight completes nothing');
+    });
+
+    test('NIGHT SHIFT is met at exactly 300 m after dark and not one '
+        'sampler step short', () {
+      expect(run(distancePx: 34200).nightMetres, 300);
+      expect(LicenseRule.nightRun.isMet(run(distancePx: 34200)), isTrue);
+      expect(run(distancePx: 34100).nightMetres, 290);
+      expect(LicenseRule.nightRun.isMet(run(distancePx: 34100)), isFalse,
+          reason: 'the step before the bar is below it — a rule re-tuned '
+              'below 300 m fails here');
     });
 
     test('a run that never reached the weather front completes nothing',
