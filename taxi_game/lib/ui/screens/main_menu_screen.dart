@@ -8,6 +8,7 @@ import '../../services/haptics_service.dart';
 import '../widgets/cab_button.dart';
 import '../widgets/day_key_builder.dart';
 import 'credits_screen.dart';
+import 'city_license_screen.dart';
 import 'daily_screen.dart';
 import 'game_screen.dart';
 import 'garage_screen.dart';
@@ -81,9 +82,10 @@ class MainMenuScreen extends StatelessWidget {
                           ),
                           // The next reachable goal (issue #282): the
                           // first screen a returning player sees names
-                          // what they are chasing — the next car, or the
-                          // closest locked achievement — so progression
-                          // stops being a garage price list.
+                          // what they are chasing — the next car, the
+                          // next open City License objective (issue #278),
+                          // or the closest locked achievement — so
+                          // progression stops being a garage price list.
                           if (gameState.nextGoal != null) ...[
                             const SizedBox(height: 14),
                             FittedBox(
@@ -171,6 +173,27 @@ class MainMenuScreen extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (context) => const GarageScreen(),
+                        ),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // City License board (issue #278): the post-tutorial
+                  // challenge board — named, replayable objectives across
+                  // banking, close calls, fare kinds, weather, and vehicle
+                  // tradeoffs. It sits beside the garage because that is
+                  // where its car objectives send a player back to.
+                  _MenuButton(
+                    buttonKey: const Key('license_button'),
+                    icon: Icons.badge,
+                    label: 'CITY LICENSE',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const CityLicenseScreen(),
                         ),
                       );
                     },

@@ -41,6 +41,13 @@ class SaveData {
   /// week and its best must survive the history window.
   WeeklyGauntletRecord weeklyGauntlet;
 
+  /// City License objectives completed (issue #278), keyed by the rule's
+  /// stable id. An id present with `true` is complete, forever: the board
+  /// is a record of what a shift has done, and an objective once met is
+  /// never taken back — only a fresh save (or an explicit reset) clears
+  /// the board, exactly like the achievements map beside it.
+  Map<String, bool> licenseObjectives;
+
   /// The best score any endless shift has ever ended with, banked or
   /// forfeited (issue #15). Compared against at every shift end.
   int endlessBestScore;
@@ -83,11 +90,13 @@ class SaveData {
     LifetimeRunTotals? lifetimeRunTotals,
     DailyStreak? dailyStreak,
     WeeklyGauntletRecord? weeklyGauntlet,
+    Map<String, bool>? licenseObjectives,
     required this.settings,
   })  : personalBests = personalBests ?? PersonalBests(),
         lifetimeRunTotals = lifetimeRunTotals ?? LifetimeRunTotals(),
         dailyStreak = dailyStreak ?? const DailyStreak(),
-        weeklyGauntlet = weeklyGauntlet ?? const WeeklyGauntletRecord();
+        weeklyGauntlet = weeklyGauntlet ?? const WeeklyGauntletRecord(),
+        licenseObjectives = licenseObjectives ?? <String, bool>{};
 
   /// Create default save data for new players
   factory SaveData.createDefault() {
@@ -142,6 +151,11 @@ class SaveData {
           ? const WeeklyGauntletRecord()
           : WeeklyGauntletRecord.fromJson(
               json['weeklyGauntlet'] as Map<String, dynamic>),
+      // Saves written before issue #278 have no license board; a missing
+      // key means "nothing completed yet", not a corrupt save.
+      licenseObjectives: json['licenseObjectives'] == null
+          ? <String, bool>{}
+          : Map<String, bool>.from(json['licenseObjectives'] as Map),
       // Saves written before issue #37 have no hint flag at all — and a
       // save that exists at all means its player has already driven.
       // A missing key therefore reads as dismissed: the stick hint is
@@ -180,6 +194,7 @@ class SaveData {
       'lifetimeRunTotals': lifetimeRunTotals.toJson(),
       'dailyStreak': dailyStreak.toJson(),
       'weeklyGauntlet': weeklyGauntlet.toJson(),
+      'licenseObjectives': licenseObjectives,
       'settings': settings.toJson(),
     };
   }

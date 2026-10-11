@@ -281,7 +281,8 @@ class RunSummaryPanel extends StatelessWidget {
               _statRow('Coins earned', '${summary.coinsEarned}'),
               // The next reachable goal (issue #282): the summary is
               // where the player decides whether to drive again, so it
-              // is where the chase belongs — the next car or the closest
+              // is where the chase belongs — the next car, the next open
+              // City License objective (issue #278), or the closest
               // locked achievement, in the menu's own line.
               if (game.gameState.nextGoal != null) ...[
                 const SizedBox(height: 12),

@@ -1544,6 +1544,11 @@ class TaxiGame extends FlameGame
       durationSeconds: _runDrivenSeconds,
       acceptedByKind: _fareKindCounts(fareKinds?.acceptedByKind),
       declinedByKind: _fareKindCounts(fareKinds?.declinedByKind),
+      // The City License board's two extra facts (issue #278): the seed
+      // the sky and weather derive from, and the car this shift was
+      // driven in — what the weather and vehicle-tradeoff rules measure.
+      seed: runSeed,
+      vehicleId: player.vehicleId,
     ));
 
     // A finished daily shift settles the day's one attempt (issue #19):
