@@ -179,9 +179,25 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
         final natural = _panelNaturalHeight;
         final parksBelowBadge = badgeBand > 0 &&
             (natural == null || natural <= laneHeight - badgeBand);
-        final panelTop = top + (parksBelowBadge ? badgeBand : 0.0);
-        final panelLane = math.max(
-            0.0, laneHeight - (parksBelowBadge ? badgeBand : 0.0));
+        final belowBadgeTop = top + (parksBelowBadge ? badgeBand : 0.0);
+
+        // The settlement line (issue #270 follow-up): the dropoff that
+        // opened this window just named its settlement, and the HUD
+        // holds that line in the band below the scoring row — the band
+        // this panel used to paint over on the smallest phone. While
+        // the line is up, the panel parks below its measured bottom
+        // (the HUD publishes it; both overlays share the stack's
+        // top-left, so the band is directly usable here). The lane
+        // shrinks with the park, and the FittedBox cap keeps the panel
+        // off the cab exactly as it does below the badge.
+        const settlementClearance = 8.0;
+        final settlementBottom = widget.game.showsSettlement
+            ? widget.game.settlementLineBandBottom
+            : null;
+        final panelTop = settlementBottom == null
+            ? belowBadgeTop
+            : math.max(belowBadgeTop, settlementBottom + settlementClearance);
+        final panelLane = math.max(0.0, noseY - cabClearance - panelTop);
 
         // What the post-frame measurement judges against, and the
         // branch it must stay in sync with.
@@ -324,7 +340,16 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                               children: [
                                 Expanded(
                                   child: ElevatedButton(
-                                    onPressed: widget.game.bankShift,
+                                    onPressed: () {
+                                      // Every interactive control answers
+                                      // its press (issue #273): the two
+                                      // choices click and tick like the
+                                      // menu's buttons before the
+                                      // consequence lands.
+                                      widget.game.audio?.playButtonSound();
+                                      widget.game.haptics?.buttonPress();
+                                      widget.game.bankShift();
+                                    },
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor:
                                           Colors.amber.shade700,
@@ -347,7 +372,11 @@ class _BankPromptOverlayState extends State<BankPromptOverlay> {
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: OutlinedButton(
-                                    onPressed: widget.game.pushOn,
+                                    onPressed: () {
+                                      widget.game.audio?.playButtonSound();
+                                      widget.game.haptics?.buttonPress();
+                                      widget.game.pushOn();
+                                    },
                                     style: OutlinedButton.styleFrom(
                                       foregroundColor: Colors.white,
                                       side: const BorderSide(

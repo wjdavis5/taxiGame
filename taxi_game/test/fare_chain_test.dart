@@ -2,8 +2,11 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/coin_pop.dart';
+import 'package:taxi_game/game/components/economy_pops.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/taxi_game.dart';
+import 'package:taxi_game/models/fare_type.dart';
 import 'package:taxi_game/models/passenger_data.dart';
 import 'package:taxi_game/services/game_state_service.dart';
 import 'package:taxi_game/services/level_loader_service.dart';
@@ -127,8 +130,8 @@ void main() {
           closeTo(FareChain.secondsForRide(700), 1e-9));
 
       // First delivery: paid at 1x, and the next fare rides at 2x.
-      expect(chain.completeFare(passenger, fareValue: 50),
-          FareSettlement.onTime);
+      expect(chain.completeFare(passenger, fareValue: 50).outcome,
+          FareOutcome.onTime);
       expect(chain.score, 50);
       expect(chain.multiplier, 2);
       expect(chain.isCarryingFare, isFalse);
@@ -178,8 +181,8 @@ void main() {
       chain.update(FareChain.secondsForRide(700) + 5);
 
       expect(chain.multiplier, 1, reason: 'expiry already reset the chain');
-      expect(chain.completeFare(passenger, fareValue: 50),
-          FareSettlement.late);
+      expect(chain.completeFare(passenger, fareValue: 50).outcome,
+          FareOutcome.late);
       expect(chain.score, 50, reason: 'the ride itself still pays');
       expect(chain.multiplier, 1);
     });
@@ -265,7 +268,8 @@ void main() {
       expect(chain.multiplier, 1, reason: 'one expiry breaks the chain');
 
       // The surviving fare still delivers on time and rebuilds the chain.
-      expect(chain.completeFare(long, fareValue: 50), FareSettlement.onTime);
+      expect(chain.completeFare(long, fareValue: 50).outcome,
+          FareOutcome.onTime);
       expect(chain.multiplier, 2);
     });
 
@@ -326,7 +330,8 @@ void main() {
       // after the delivery paid it.
       final fresh = fareOf('fresh', 400, -300);
       chain.startFare(fresh);
-      expect(chain.completeFare(fresh, fareValue: 50), FareSettlement.onTime);
+      expect(chain.completeFare(fresh, fareValue: 50).outcome,
+          FareOutcome.onTime);
       expect(chain.multiplier, 2);
       chain.update(1 / 60);
       expect(chain.multiplier, 2,
@@ -346,7 +351,8 @@ void main() {
       // The stale passenger's own dropoff still settles late — and that
       // settlement is still the break it always was: riding expired
       // re-broke nothing, but delivering late does.
-      expect(chain.completeFare(stale, fareValue: 50), FareSettlement.late);
+      expect(chain.completeFare(stale, fareValue: 50).outcome,
+          FareOutcome.late);
       expect(chain.score, 100,
           reason: 'B paid 50 x1 then the delivery stepped to 2x; A pays '
               '50 x1 late');
@@ -434,6 +440,85 @@ void main() {
     });
   });
 
+  group('the settlement breakdown (issue #270)', () {
+    test('an on-time fare reports its value, multiplier, award, and the '
+        'at-risk total it left', () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+
+      final settlement = chain.completeFare(passenger, fareValue: 50);
+
+      expect(settlement.outcome, FareOutcome.onTime);
+      expect(settlement.isLate, isFalse);
+      expect(settlement.fareValue, 50);
+      expect(settlement.multiplier, 1,
+          reason: 'the first fare of a run rides at 1x');
+      expect(settlement.chainStepBonus, 0, reason: 'a standard fare');
+      expect(settlement.scoreAwarded, 50);
+      expect(settlement.scoreTotal, 50);
+    });
+
+    test('a late fare reports a flat 1x, no bonus, and the total it holds',
+        () {
+      final chain = FareChain();
+      final first = fareOf('first', 400, -300);
+      chain.startFare(first);
+      chain.completeFare(first, fareValue: 50);
+
+      final late = fareOf('late', 400, -300);
+      chain.startFare(late);
+      chain.update(FareChain.secondsForRide(700) + 5);
+
+      final settlement = chain.completeFare(late, fareValue: 50);
+
+      expect(settlement.outcome, FareOutcome.late);
+      expect(settlement.isLate, isTrue);
+      expect(settlement.multiplier, 1, reason: 'late pays a flat rate');
+      expect(settlement.chainStepBonus, 0);
+      expect(settlement.scoreAwarded, 50);
+      expect(settlement.scoreTotal, 100,
+          reason: 'the late fare still adds to the at-risk total');
+    });
+
+    test('a delivered long-haul names the chain bonus it paid', () {
+      final chain = FareChain();
+      final longHaul = PassengerData(
+        id: 'long',
+        pickupLocation: Vector2(400, 400),
+        dropoffLocation: Vector2(400, -300),
+        reward: 60,
+        fareType: FareType.longHaul,
+      );
+      chain.startFare(longHaul);
+
+      final settlement = chain.completeFare(longHaul, fareValue: 60);
+
+      expect(settlement.chainStepBonus, FareType.longHaul.chainStepBonus);
+      expect(settlement.multiplier, 1);
+      expect(settlement.scoreAwarded, 60);
+      expect(settlement.scoreTotal, 60);
+      expect(chain.multiplier,
+          1 + FareChain.multiplierStep + FareType.longHaul.chainStepBonus);
+    });
+
+    test('update reports the crossing that broke the chain (issue #273)',
+        () {
+      final chain = FareChain();
+      final passenger = fareOf('a', 400, -300);
+      chain.startFare(passenger);
+
+      expect(chain.update(0.5), isFalse, reason: 'a live meter breaks nothing');
+
+      final timer = chain.timerFor(passenger)!;
+      expect(chain.update(timer.totalSeconds), isTrue,
+          reason: 'the crossing frame is the chain-breaking one');
+      expect(chain.multiplier, 1);
+      expect(chain.update(1.0), isFalse,
+          reason: 'riding expired is not a second break (issue #120)');
+    });
+  });
+
   group('a level run scores its fares', () {
     late GameStateService gameState;
 
@@ -505,6 +590,25 @@ void main() {
       expect(game.fareChain.isCarryingFare, isFalse);
       expect(gameState.totalCoins, 50,
           reason: 'the coin economy is unchanged by scoring');
+      // The completion panel's payout line and the wallet reconcile
+      // (issue #284): the credited amount is exactly what the panel
+      // names, never the pop's earlier claim.
+      expect(game.lastCompletionPayout, 50);
+      expect(gameState.totalCoins, game.lastCompletionPayout,
+          reason: 'the visible payout is the credited payout, to the coin');
+      // And the pop count pins *when* the claim plays (issue #284): the
+      // kerb names its settlement, and the only coins in the air are the
+      // completion volley's six — the frame that credited them. The old
+      // dropoff popped three before the wallet moved, making nine here.
+      // The delivery frame queues its adds; one tick mounts them.
+      game.update(1 / 60);
+      await drain();
+      expect(game.world.children.whereType<FareSettlementPop>().length, 1,
+          reason: 'the dropoff explains the settlement instead of popping '
+              'coins the wallet has not received');
+      expect(game.world.children.whereType<CoinPop>().length, 6,
+          reason: 'six completion coins, no dropoff coins: the pops and '
+              'the credit land on the same frame');
       // The bank-or-push offer is an endless-shift thing (issue #13):
       // levels settle at completion, so no choice is armed here.
       expect(game.bankPrompt.isActive, isFalse);

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
 import 'package:taxi_game/game/systems/collision_rules.dart';
+import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/taxi_game.dart';
 import 'package:taxi_game/game/vehicle_sprites.dart';
 import 'package:taxi_game/models/traffic_pattern.dart';
@@ -215,6 +216,114 @@ void main() {
       'dropoff_medium': 1,
       'coin_light': 1,
     });
+  });
+
+  test('a late fare lands with its own weight, not the clean dropoff thud '
+      '(issue #273)', () async {
+    final game = await mountGame(levelGame());
+    await game.loadLevel(1);
+    await tickAndSettle(game);
+
+    final level = game.currentLevel;
+    game.player.position =
+        Vector2(level.pickupPoints.first.x, level.pickupPoints.first.y + 30);
+    game.update(1 / 60);
+    await drain();
+    expect(game.player.hasPassenger, isTrue, reason: 'precondition');
+
+    // Let the meter run out, then deliver late.
+    game.fareChain.mostUrgentTimer!.remainingSeconds = 0.001;
+    game.update(1 / 60);
+    await drain();
+    game.player.position =
+        Vector2(level.dropoffPoints.first.x, level.dropoffPoints.first.y + 30);
+    game.update(1 / 60);
+    await drain();
+
+    expect(haptics.attemptedBuzzes['late_delivery_medium'], 1,
+        reason: 'a late fare is a loss and lands as one');
+    expect(haptics.attemptedBuzzes['dropoff_medium'], isNull,
+        reason: 'the clean dropoff thud belongs to on-time fares');
+  });
+
+  test('a push bonus ticks light (issue #273)', () async {
+    final game = await mountGame(endlessGame());
+
+    game.bankPrompt.offer();
+    game.pushOn();
+
+    expect(haptics.attemptedBuzzes['push_light'], 1,
+        reason: 'riding on confirms itself in the hand');
+  });
+
+  test('a chain break lands heavy, once per crossing (issue #273)', () async {
+    final game = await mountGame(endlessGame());
+    await tickAndSettle(game);
+    final fare = game.course!.fare(0);
+    game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+    game.update(1 / 60);
+    expect(game.fareChain.isCarryingFare, isTrue, reason: 'precondition');
+
+    game.fareChain.multiplier = 3; // a chain worth losing
+    game.fareChain.mostUrgentTimer!.remainingSeconds = 0.001;
+    game.update(1 / 60);
+
+    expect(haptics.attemptedBuzzes['chain_break_heavy'], 1);
+    expect(game.fareChain.multiplier, 1);
+
+    game.update(1 / 60);
+    expect(haptics.attemptedBuzzes['chain_break_heavy'], 1,
+        reason: 'riding expired is not a second break (issue #120)');
+  });
+
+  test('a banked payout lands in the hand (issue #273)', () async {
+    final game = await mountGame(endlessGame());
+
+    game.fareChain.awardNearMiss();
+    game.bankFromPause();
+
+    expect(game.isShiftOver, isTrue, reason: 'the shift actually settled');
+    expect(haptics.attemptedBuzzes['bank_medium'], 1,
+        reason: 'the banked jingle has its twin in the hand');
+  });
+
+  test('a settled Daily ticks its own beat (issue #273)', () async {
+    final game = await mountGame(TaxiGame(
+      levelLoader: LevelLoaderService(),
+      gameState: gameState,
+      haptics: haptics,
+      endlessSeed: DailyShift.seedForDateKey(DailyShift.todayKey),
+      isDailyShift: true,
+    )
+      ..overlays
+          .addEntry('shiftBanked', (_, __) => const SizedBox.shrink()));
+
+    game.fareChain.awardNearMiss();
+    game.bankFromPause();
+
+    expect(haptics.attemptedBuzzes['daily_settled_medium'], 1,
+        reason: 'the day\'s one attempt is spent, and the hand is told');
+  });
+
+  test('a disabled service silences the economy buzzes too (issue #273)',
+      () async {
+    haptics.setEnabled(false);
+    final game = await mountGame(endlessGame());
+    await tickAndSettle(game);
+    final fare = game.course!.fare(0);
+    game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+    game.update(1 / 60);
+    game.fareChain.multiplier = 3;
+    game.fareChain.mostUrgentTimer!.remainingSeconds = 0.001;
+    game.update(1 / 60);
+    game.bankPrompt.offer();
+    game.pushOn();
+    game.fareChain.awardNearMiss();
+    game.bankFromPause();
+
+    expect(haptics.attemptedBuzzes, isEmpty,
+        reason: 'the save vibration setting gates the late, push, '
+            'chain-break, and bank buzzes like every other');
   });
 
   test('a disabled service routes nothing, loudly or quietly', () async {

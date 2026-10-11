@@ -20,6 +20,7 @@ import 'components/scrape_marker.dart';
 import 'components/burst_particles.dart';
 import 'components/close_call_pop.dart';
 import 'components/coin_pop.dart';
+import 'components/economy_pops.dart';
 import 'components/life_lost_pop.dart';
 import 'components/speed_lines.dart';
 import 'components/virtual_stick.dart';
@@ -318,6 +319,14 @@ class TaxiGame extends FlameGame
   /// falls back to the old inset.
   Rect? coinChipGlobalRect;
 
+  /// How far the settlement line's painted bottom sits below the HUD
+  /// root, as measured by [HudOverlay] on its polling timer (issue #270
+  /// follow-up). The bank prompt parks its panel below this band while
+  /// the line is up, so the two never paint over each other on the
+  /// smallest phone. Null while the line is not on screen — or not yet
+  /// laid out — and then the panel falls back to its base park.
+  double? settlementLineBandBottom;
+
   /// What the most recent bank paid out, in coins, for the banked-shift
   /// panel. Null until a shift is banked; cleared when a new run starts.
   int? lastBankedScore;
@@ -329,6 +338,26 @@ class TaxiGame extends FlameGame
   /// flat one the level file still carries. Null until a level completes
   /// without banking; cleared when a new run starts.
   int? lastCompletionPayout;
+
+  /// The most recent fare settlement (issue #270): what the dropoff paid
+  /// and what it left at risk. The dropoff feedback names it, and the HUD
+  /// holds it up for [FareSettlementPop.hudHoldSeconds] after the kerb.
+  /// Cleared when a new run starts.
+  FareSettlement? lastSettlement;
+
+  /// Seconds since [lastSettlement] landed — the HUD hold timer.
+  double _settlementAge = 0;
+
+  /// The settlement pop still on screen, if any (issue #270 follow-up):
+  /// the push pop anchors above this component's live position, so the
+  /// clearance holds as the settlement climbs. Null until a settlement
+  /// lands; cleared with the settlement.
+  FareSettlementPop? _settlementPop;
+
+  /// Whether [lastSettlement] is still worth showing on the HUD.
+  bool get showsSettlement =>
+      lastSettlement != null &&
+      _settlementAge < FareSettlementPop.hudHoldSeconds;
 
   /// The settled record of the shift that just ended (issue #15) — the
   /// run-summary panel reads it. Set the instant the shift ends, before
@@ -814,6 +843,9 @@ class TaxiGame extends FlameGame
     lastBankedScore = null;
     lastCompletionPayout = null;
     lastRunSummary = null;
+    lastSettlement = null;
+    _settlementAge = 0;
+    _settlementPop = null;
     _runCoinsEarned = 0;
     _lifeLossDistancesPx.clear();
     _runDrivenSeconds = 0;
@@ -960,6 +992,9 @@ class TaxiGame extends FlameGame
     // loaded after it.
     lastBankedScore = null;
     lastCompletionPayout = null;
+    lastSettlement = null;
+    _settlementAge = 0;
+    _settlementPop = null;
 
     // Tear down the previous level, if any.
     _clearWorld();
@@ -1117,36 +1152,31 @@ class TaxiGame extends FlameGame
     // primer: on device its freeze makes this unreachable — the cab
     // cannot move to a kerb while the world is stopped — and the tests
     // that pin it drive the cab by hand straight through the paused
-    // primer, exactly as they always have.
-    if (bankPrompt.isActive) pushOn();
+    // primer, exactly as they always have. Cue off (issue #270
+    // follow-up): this delivery's settlement pop names the multiplier it
+    // settled at — the pushed one when the fare is on time — so a second
+    // pop would paint over it on the same beat.
+    if (bankPrompt.isActive) pushOn(cue: false);
 
     passengersDelivered++;
     player.hasPassenger =
         passengers.any((p) => p.isPickedUp && !p.isDelivered);
 
-    // Score the delivery against the fare chain (issue #12); coins are
-    // unchanged — the chain is mastery on top of the existing economy.
-    fareChain.completeFare(passenger, fareValue: passenger.reward);
+    // Score the delivery against the fare chain (issue #12) and name the
+    // settlement (issue #270). Coins are unchanged — the chain is mastery
+    // on top of the existing economy — and no coins pop here: the level
+    // wallet is credited at completion, so the pops wait for it (issue
+    // #284) and this kerb pays in at-risk score, which the settlement
+    // names.
+    final settlement =
+        fareChain.completeFare(passenger, fareValue: passenger.reward);
+    _settleFare(settlement, passenger.dropoffLocation);
 
     // Blue-and-gold burst: the fare is paid (issue #7).
     world.add(BurstParticles(
       position: passenger.dropoffLocation,
       colors: ImpactFxPalettes.dropoff,
     ));
-    // Coins fly from the dropoff to the HUD counter. The total itself
-    // still updates at level completion — the economy is unchanged; this
-    // only makes the award visible.
-    for (var i = 0; i < 3; i++) {
-      world.add(CoinPop(
-        startPosition: passenger.dropoffLocation,
-        delay: 0.06 * i,
-      ));
-    }
-
-    // The two-tone delivery chime (issue #4) over the delivery thud
-    // (issue #5).
-    audio?.playDropoffSound();
-    haptics?.dropoff();
 
     if (passengersDelivered >= passengers.length) {
       // The close-call lesson (issue #269): the last delivery completes
@@ -1168,6 +1198,38 @@ class TaxiGame extends FlameGame
     }
   }
 
+  /// Names a chain break at the tick that caused it (issue #273): the
+  /// multiplier the countdown just cost, at the cab where the player is
+  /// looking, with the break's own falling sting and heavy tick.
+  void _onChainBreak(int lostMultiplier) {
+    if (_playerReady) {
+      world.add(ChainBreakPop(
+        position: player.position.clone(),
+        lostMultiplier: lostMultiplier,
+      ));
+    }
+    audio?.playChainBreakSound();
+    haptics?.chainBreak();
+  }
+
+  /// Names one settled fare (issue #270): records it for the HUD's hold,
+  /// pops the breakdown at the kerb, and gives the dropoff its chime and
+  /// its hand — a late fare lands with its own weight, never the clean
+  /// dropoff's thud (issue #273).
+  void _settleFare(FareSettlement settlement, Vector2 at) {
+    lastSettlement = settlement;
+    _settlementAge = 0;
+    final pop = FareSettlementPop(position: at, settlement: settlement);
+    _settlementPop = pop;
+    world.add(pop);
+    audio?.playDropoffSound();
+    if (settlement.isLate) {
+      haptics?.lateDelivery();
+    } else {
+      haptics?.dropoff();
+    }
+  }
+
   /// Delivery in an endless run (issue #11): the fare pays out on the
   /// spot — there is no level completion to settle up at.
   void _onEndlessFareDelivered(PassengerData passenger) {
@@ -1181,14 +1243,18 @@ class TaxiGame extends FlameGame
     // Same rule as the level dropoff above (issue #186): the open prompt
     // resolves as its default push before this fare scores, so driving
     // straight to the next kerb pays exactly what waiting each window
-    // out pays — never less.
-    if (bankPrompt.isActive) pushOn();
+    // out pays — never less. Cue off for the same reason: this fare's
+    // settlement pop names the multiplier it settled at (issue #270
+    // follow-up).
+    if (bankPrompt.isActive) pushOn(cue: false);
 
     player.hasPassenger = fareController?.hasActivePickup ?? false;
 
-    // Score the delivery against the fare chain (issue #12); the coin
-    // payout below is unchanged.
-    fareChain.completeFare(passenger, fareValue: passenger.reward);
+    // Score the delivery against the fare chain (issue #12) and name the
+    // settlement (issue #270); the coin payout below is unchanged.
+    final settlement =
+        fareChain.completeFare(passenger, fareValue: passenger.reward);
+    _settleFare(settlement, passenger.dropoffLocation);
 
     // Blue-and-gold burst: the fare is paid (issue #7).
     world.add(BurstParticles(
@@ -1197,6 +1263,7 @@ class TaxiGame extends FlameGame
     ));
     // Coins fly from the dropoff to the HUD counter, and the wallet is
     // credited immediately — per-fare, the endless economy's unit. The
+    // pops and the credit land on the same beat (issue #284). The
     // gauntlet's double-fares week pays every fare twice (issue #288);
     // the chain score above stays the fare's own value, so the modifier
     // moves the wallet, not the mastery.
@@ -1210,11 +1277,6 @@ class TaxiGame extends FlameGame
     }
     gameState.addCoins(payout);
     _runCoinsEarned += payout;
-
-    // The two-tone delivery chime (issue #4) over the delivery thud
-    // (issue #5).
-    audio?.playDropoffSound();
-    haptics?.dropoff();
 
     // Every completed dropoff asks the question (issue #13): bank the
     // score and end the shift, or push on at an increased multiplier. The
@@ -1344,15 +1406,65 @@ class TaxiGame extends FlameGame
   /// and — since issue #186 — the next delivery superseding an
   /// still-open prompt. Pushing is the default, and it must pay the same
   /// however it happens: chosen, allowed, or driven straight through.
-  void pushOn() {
+  ///
+  /// [cue] false is the superseding-delivery path (issue #270 follow-up):
+  /// the multiplier step still lands, but the pop is suppressed because
+  /// the same frame's settlement pop already names the multiplier the
+  /// fare settled at — the pushed one when it delivered on time, a flat
+  /// 1x when it was late — at the same kerb, and two pops on one beat
+  /// paint over each other. The sting and tick still fire — every push
+  /// keeps its own feedback.
+  void pushOn({bool cue = true}) {
     if (bankPrompt.push() == null) return;
-    _applyPushBonus();
+    _applyPushBonus(cue: cue);
   }
 
-  void _applyPushBonus() {
+  void _applyPushBonus({bool cue = true}) {
     fareChain.applyPushBonus();
+    // The push has its own beat (issue #273): the step the player just
+    // bought, named where the cab is, with its own sting and tick. The
+    // button and the window timing out show the pop; a delivery that
+    // supersedes the prompt shows only the settlement, whose own numbers
+    // name the multiplier the fare settled at — the pushed one when it
+    // delivered on time, a flat 1x when it was late (issue #270
+    // follow-up).
+    if (cue && _playerReady) {
+      // A settlement pop still climbing would sit under this one — the
+      // player can answer a window inside the settlement's 1.1 s life —
+      // so the push pop starts clear above it. Anchored to the pop's
+      // live position, not its spawn or the cab: both rise at the same
+      // 46 px/s, so the clearance holds for the rest of the settlement's
+      // life, and at the kerb the cab sits ~30 px below the dropoff
+      // centre.
+      final settlementPop = _settlementPop;
+      final settlementOnScreen = settlementPop != null &&
+          settlementPop.isMounted &&
+          _settlementAge < FareSettlementPop.lifetime;
+      var popY = player.position.y;
+      if (settlementOnScreen) {
+        popY =
+            math.min(popY, settlementPop.position.y) - pushPopSettlementOffset;
+      }
+      world.add(PushPop(
+        position: Vector2(player.position.x, popY),
+        multiplier: fareChain.multiplier,
+      ));
+    }
+    audio?.playPushSound();
+    haptics?.push();
     _dismissBankPrompt();
   }
+
+  /// How far above a live settlement pop the push pop starts, in world px
+  /// (issue #270 follow-up). The settlement pop is three lines — the
+  /// headline plus two detail lines, ~54 px on device and ~45 in the test
+  /// font — and the push pop is one, ~18 px, so this clears the taller
+  /// pop's half-height plus the shorter one's with ~10 px of daylight on
+  /// device (more in the test font). Both pops rise at the same 46 px/s
+  /// and shrink on their own clocks, so the clearance never erodes while
+  /// the settlement is alive; the pop-de-stacking test pins it against
+  /// the mounted pops' measured heights.
+  static const double pushPopSettlementOffset = 46.0;
 
   /// Freezes the shift and pays the banked score out. The score itself
   /// stays readable for the panel until the next run resets it.
@@ -1393,8 +1505,9 @@ class TaxiGame extends FlameGame
 
     gameState.addCoins(lastBankedScore!);
     _runCoinsEarned += lastBankedScore!;
-    // A payout deserves its sting (issue #4).
+    // A payout deserves its sting (issue #4) and its hand (issue #273).
     audio?.playBankedJingle();
+    haptics?.bank();
     _finalizeRunSummary(ShiftOutcome.banked);
     overlays.add('shiftBanked');
   }
@@ -1445,6 +1558,9 @@ class TaxiGame extends FlameGame
         banked: outcome == ShiftOutcome.banked,
         completedAtMs: DateTime.now().millisecondsSinceEpoch,
       ));
+      // The day's one attempt is spent (issue #273): the banner says so,
+      // and the hand gets the tick on the same beat.
+      haptics?.dailySettled();
     }
 
     // A finished gauntlet run folds into the week's stored best (issue
@@ -2165,7 +2281,15 @@ class TaxiGame extends FlameGame
     // everything else. (Pause stops this whole method; overlays set
     // isGameActive false first.)
     if (isGameActive) {
-      fareChain.update(dt);
+      // A countdown running out is the chain break's silent moment no
+      // longer (issue #273): the tick that crosses zero gets the lost
+      // multiplier named at the cab, its own falling sting, and a heavy
+      // tick — but only when a chain was actually standing to lose.
+      final chainStanding = fareChain.multiplier;
+      final chainBroke = fareChain.update(dt);
+      if (chainBroke && chainStanding > 1) {
+        _onChainBreak(chainStanding);
+      }
 
       // The stranded-fare verdict (issue #112) rides the live clock with
       // the meter: it must not tick (nor fire) through a crash stall, a
@@ -2229,6 +2353,14 @@ class TaxiGame extends FlameGame
 
     if (_scrapeFeedbackCooldown > 0) {
       _scrapeFeedbackCooldown = math.max(0.0, _scrapeFeedbackCooldown - dt);
+    }
+
+    // The settlement's HUD hold runs on the live clock: a pause stops
+    // update with the world and freezes the hold too, while an end-of-run
+    // panel leaves the ticker running and the hold simply ages out behind
+    // the summary (issue #270).
+    if (lastSettlement != null) {
+      _settlementAge += dt;
     }
   }
 

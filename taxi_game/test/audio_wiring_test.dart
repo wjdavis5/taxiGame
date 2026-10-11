@@ -54,6 +54,23 @@ void main() {
       )
         ..overlays.addEntry('shiftWrecked', (_, __) => const SizedBox.shrink());
 
+  /// Lets pending component mounts finish before the next simulated tick.
+  Future<void> drain() async {
+    for (var i = 0; i < 8; i++) {
+      await Future<void>.value();
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
+  /// Two settled ticks: the fare zones the course deals mount and start
+  /// colliding, the way every live-run test opens.
+  Future<void> tickAndSettle(TaxiGame game) async {
+    game.update(1 / 60);
+    await drain();
+    game.update(1 / 60);
+    await drain();
+  }
+
   CrashReport busCrash() => CollisionRules.buildReport(
         severity: ContactSeverity.crash,
         vehicleKind: 'bus',
@@ -103,6 +120,57 @@ void main() {
     expect(audio.attemptedPlays['scrape'], 1,
         reason: 'one sound per frame flooded the audio platform channel; '
             'the sound rides the scrape marker cooldown (0.4 s)');
+  });
+
+  test('a push bonus plays the push sting (issue #273)', () async {
+    final game = await mountGame(endlessGame());
+
+    game.bankPrompt.offer();
+    game.pushOn();
+
+    expect(audio.attemptedPlays['push'], 1,
+        reason: 'riding on has its own rising sting');
+  });
+
+  test('a countdown running out plays the falling chain-break sting, '
+      'once per crossing (issue #273)', () async {
+    final game = await mountGame(endlessGame());
+    await tickAndSettle(game);
+    final fare = game.course!.fare(0);
+    game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+    game.update(1 / 60);
+    expect(game.fareChain.isCarryingFare, isTrue, reason: 'precondition');
+
+    game.fareChain.multiplier = 3; // a chain worth losing
+    game.fareChain.mostUrgentTimer!.remainingSeconds = 0.001;
+    game.update(1 / 60);
+
+    expect(audio.attemptedPlays['chain_break'], 1,
+        reason: 'the break gets the falling sting, not silence');
+    expect(game.fareChain.multiplier, 1);
+
+    // The rider is still aboard and still expired: riding on is not a
+    // second break (issue #120), so it must not be a second sting.
+    game.update(1 / 60);
+    expect(audio.attemptedPlays['chain_break'], 1);
+  });
+
+  test('a muted service silences the economy cues too (issue #273)', () async {
+    audio.setSoundEnabled(false);
+    final game = await mountGame(endlessGame());
+    await tickAndSettle(game);
+    final fare = game.course!.fare(0);
+    game.player.position = Vector2(fare.pickup.x, fare.pickup.y + 30);
+    game.update(1 / 60);
+    game.fareChain.multiplier = 3;
+    game.fareChain.mostUrgentTimer!.remainingSeconds = 0.001;
+    game.update(1 / 60);
+    game.bankPrompt.offer();
+    game.pushOn();
+
+    expect(audio.attemptedPlays, isEmpty,
+        reason: 'the save sound setting gates the push and chain-break '
+            'stings like every other cue');
   });
 
   test('a muted service routes nothing, loudly or quietly', () async {

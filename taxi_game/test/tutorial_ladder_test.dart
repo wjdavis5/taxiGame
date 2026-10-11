@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/components/close_call_pop.dart';
+import 'package:taxi_game/game/components/coin_pop.dart';
 import 'package:taxi_game/game/components/dropoff_zone.dart';
 import 'package:taxi_game/game/components/pickup_zone.dart';
 import 'package:taxi_game/game/components/traffic_vehicle.dart';
@@ -390,6 +391,15 @@ void main() {
           reason: 'the panel names the payout actually credited');
       expect(saveAtNine.totalCoins, coinsBefore + 500,
           reason: 'completion pays max(score, reward) — the score here');
+      // The completing frame's coins are the completion volley's six
+      // (issue #284): the kerb it just left claimed no coins of its own,
+      // because the wallet did not move until this frame credited it.
+      // The completing frame queues its adds; one tick mounts them.
+      game.update(1 / 60);
+      await drain();
+      expect(game.world.children.whereType<CoinPop>().length, 6,
+          reason: 'six completion coins, no dropoff coins: the pops and '
+              'the credit land on the same frame');
       expect(game.isGameActive, isFalse);
     });
 
@@ -1373,6 +1383,20 @@ void main() {
       expect(find.text('Banked: +120 Coins'), findsOneWidget);
       expect(find.text('+${game.currentLevel.coinReward} Coins'),
           findsNothing);
+    });
+
+    testWidgets('the payout line names exactly what the completion credited '
+        '(issue #284)', (tester) async {
+      final game = await panelGame(tester, 9);
+      // A pushed finish credits max(score, reward) — the number the panel
+      // must name, never the level file's flat reward (issue #155).
+      game.lastCompletionPayout = 420;
+      await showPanel(tester, game);
+
+      expect(find.text('+420 Coins'), findsOneWidget,
+          reason: 'the panel reconciles with the credited amount');
+      expect(find.text('+${game.currentLevel.coinReward} Coins'), findsNothing,
+          reason: 'the flat reward is not what the wallet received');
     });
 
     testWidgets('tapping START SHIFT begins the first endless shift',

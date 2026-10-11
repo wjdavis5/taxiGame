@@ -1,8 +1,10 @@
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:taxi_game/game/components/economy_pops.dart';
 import 'package:taxi_game/game/systems/daily_shift.dart';
 import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/taxi_game.dart';
@@ -282,6 +284,92 @@ void main() {
         lessThanOrEqualTo(ghostTextRect.width + 16 + 4 + 30 + 0.5),
         reason: 'a badge twice as wide as its text is a bar, not a pill',
       );
+    });
+  });
+
+  group('the fare settlement line (issue #270)', () {
+    const onTimeLongHaul = FareSettlement(
+      outcome: FareOutcome.onTime,
+      fareValue: 60,
+      multiplier: 2,
+      chainStepBonus: 2,
+      scoreAwarded: 120,
+      scoreTotal: 240,
+    );
+
+    testWidgets('a settled fare names its whole breakdown under the '
+        'scoring row', (tester) async {
+      final game = levelGame();
+      await tester.pumpWidget(hudFor(game));
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(find.byKey(const ValueKey('fare_settlement_panel')), findsNothing,
+          reason: 'nothing has settled yet');
+
+      game.lastSettlement = onTimeLongHaul;
+      await tester.pump(const Duration(milliseconds: 150)); // poll tick
+
+      expect(
+        find.text(
+            'ON TIME  60 \u00d72 +2 CHAIN  \u00b7  +120 \u00b7 AT RISK 240'),
+        findsOneWidget,
+        reason: 'status, value, multiplier, chain bonus, and the at-risk '
+            'total — the whole settlement, not just a coin pop',
+      );
+
+      // A cleared settlement takes the line down with it.
+      game.lastSettlement = null;
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(find.byKey(const ValueKey('fare_settlement_panel')), findsNothing);
+    });
+
+    testWidgets('a late settlement reads LATE, never ON TIME', (tester) async {
+      final game = levelGame();
+      game.lastSettlement = const FareSettlement(
+        outcome: FareOutcome.late,
+        fareValue: 50,
+        multiplier: 1,
+        chainStepBonus: 0,
+        scoreAwarded: 50,
+        scoreTotal: 50,
+      );
+      await tester.pumpWidget(hudFor(game));
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(find.text('LATE  50 \u00d71  \u00b7  +50 \u00b7 AT RISK 50'),
+          findsOneWidget);
+    });
+
+    testWidgets('the line stays one unwrapped line on the smallest phone '
+        '(issue #270)', (tester) async {
+      // 320 pt is the oldest supported iPhone width, and the widest
+      // settlement the economy can print is a long-haul chain bonus on
+      // four-digit numbers — the crowding case the issue names.
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      const worstCase = FareSettlement(
+        outcome: FareOutcome.onTime,
+        fareValue: 9999,
+        multiplier: 12,
+        chainStepBonus: 2,
+        scoreAwarded: 119988,
+        scoreTotal: 999999,
+      );
+      final game = levelGame();
+      game.lastSettlement = worstCase;
+      await tester.pumpWidget(hudFor(game));
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(tester.takeException(), isNull,
+          reason: 'the settlement line must not overflow the HUD');
+      final paragraph = tester.renderObject<RenderParagraph>(
+          find.text(FareSettlementPop.hudLine(worstCase)));
+      expect(paragraph.size.height, lessThan(13 * 1.5),
+          reason: 'one line of ink: Ahem makes two lines ~26 px');
+      expect(paragraph.constraints.maxWidth, equals(double.infinity),
+          reason: 'laid out under the scale-down box, so it can never wrap');
     });
   });
 }
