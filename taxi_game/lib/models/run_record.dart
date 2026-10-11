@@ -24,6 +24,8 @@ class RunRecord {
     required this.banked,
     required this.durationSeconds,
     this.nearMisses = 0,
+    this.acceptedByKind = const {},
+    this.declinedByKind = const {},
   });
 
   /// When the shift ended, in epoch milliseconds. Not used by the
@@ -70,6 +72,14 @@ class RunRecord {
   /// measures driving, not dead time.
   final double durationSeconds;
 
+  /// Accepted and declined fare counts by kind (issue #279), keyed by
+  /// `FareType.name` (`'standard'`, `'vip'`, `'longHaul'`, `'awkward'`).
+  /// The offer bar turns every kind into a contract; these keep how the
+  /// player answered each one — the decision data the totals alone
+  /// cannot say. Empty for records written before the counts existed.
+  final Map<String, int> acceptedByKind;
+  final Map<String, int> declinedByKind;
+
   /// The run's distance in metres, on the same px scale
   /// [RunSummary.pixelsPerMetre] and the HUD's distance badge use — one
   /// constant referenced, never duplicated.
@@ -97,6 +107,8 @@ class RunRecord {
           .toList(),
       banked: (json['banked'] as bool?) ?? false,
       durationSeconds: (json['durationSeconds'] as num?)?.toDouble() ?? 0.0,
+      acceptedByKind: _countsFromJson(json['acceptedByKind']),
+      declinedByKind: _countsFromJson(json['declinedByKind']),
     );
   }
 
@@ -113,6 +125,20 @@ class RunRecord {
       'lifeLossDistancesPx': lifeLossDistancesPx,
       'banked': banked,
       'durationSeconds': durationSeconds,
+      'acceptedByKind': acceptedByKind,
+      'declinedByKind': declinedByKind,
     };
   }
+}
+
+/// Decodes a stored per-kind count map (issue #279): entries that are
+/// not name-to-number pairs are dropped rather than thrown, the same
+/// forgiving rule the record's fields follow.
+Map<String, int> _countsFromJson(Object? json) {
+  if (json is! Map) return const {};
+  final counts = <String, int>{};
+  json.forEach((key, value) {
+    if (key is String && value is num) counts[key] = value.toInt();
+  });
+  return counts;
 }

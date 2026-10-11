@@ -7,6 +7,7 @@ import '../../game/systems/fare_chain.dart';
 import '../../game/systems/lives.dart';
 import '../../game/taxi_game.dart';
 import '../../models/fare_type.dart';
+import '../../models/passenger_data.dart';
 import '../../services/game_state_service.dart';
 
 /// HUD overlay that displays during gameplay
@@ -739,12 +740,15 @@ class _FareTimerBadge extends StatelessWidget {
   }
 }
 
-/// The fare offer bar (issue #25): while a passenger waits on a kerb
-/// ahead, it names the fare's kind, what it pays, and offers the decline
-/// that turns variety into a decision — a VIP you cannot refuse would be
-/// a modifier, not a choice. Hidden outside endless runs (a level's
-/// pickups are mandatory) and whenever nothing waitable is on screen.
-/// Polls the game like the scoring bar does.
+/// The fare offer bar (issues #25, #279): while a passenger waits on a
+/// kerb ahead, it states the contract — the fare's kind, what it pays,
+/// and what it costs — beside the decline that turns variety into a
+/// decision; a VIP you cannot refuse would be a modifier, not a choice.
+/// The first special kind a save ever meets also gets a one-line
+/// explanation under the offer, without stopping the drive. Hidden
+/// outside endless runs (a level's pickups are mandatory) and whenever
+/// nothing waitable is on screen. Polls the game like the scoring bar
+/// does.
 class _FareOfferBar extends StatefulWidget {
   const _FareOfferBar({required this.game});
 
@@ -757,12 +761,38 @@ class _FareOfferBar extends StatefulWidget {
 class _FareOfferBarState extends State<_FareOfferBar> {
   Timer? _timer;
 
+  /// The special offer whose first encounter this bar explained (issue
+  /// #279), or null when no explanation is due. Set while the offer
+  /// waits; when the offer leaves the screen the explanation has been
+  /// given and the save is marked, so no later run repeats it.
+  PassengerData? _explainedOffer;
+
   @override
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      _watchFirstContract();
+      setState(() {});
     });
+  }
+
+  /// Runs the one-time fare-contract explanation (issue #279): the first
+  /// special kind that waits on a kerb gets its brief under the offer.
+  /// The save is marked once that offer has left the screen — the
+  /// explanation belongs to the encounter, and a player who takes or
+  /// skips the fare has had it.
+  void _watchFirstContract() {
+    final gameState = context.read<GameStateService>();
+    final offer = widget.game.currentFareOffer;
+    if (_explainedOffer != null && !identical(offer, _explainedOffer)) {
+      gameState.markFareContractSeen();
+      _explainedOffer = null;
+    }
+    if (_explainedOffer != null) return;
+    if (offer == null || offer.fareType.isStandard) return;
+    if (gameState.fareContractSeen) return;
+    _explainedOffer = offer;
   }
 
   @override
@@ -790,86 +820,134 @@ class _FareOfferBarState extends State<_FareOfferBar> {
     if (offer == null) return const SizedBox.shrink();
 
     final type = offer.fareType;
+    final cost = type.offerCost;
+    final explain =
+        identical(offer, _explainedOffer) && type.contractBrief.isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.only(top: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // The pitch yields before the decision does — the same rule
-          // the scoring row (#43) and the title pill (#57) already live
-          // by. The widest fare blurb (a long-haul's
-          // 'LONG HAUL · 999 c · +3 CHAIN') plus the SKIP button
-          // overflows the narrowest phone's 343 px of content all by
-          // itself.
-          //
-          // The two Flexibles are a pair, and both are needed. A Row
-          // lays its ordinary children out with no main-axis maximum
-          // at all (the rendering layer's non-flex child constraints
-          // bound only the cross axis), so the pill's own min-sized
-          // Row has no width to flex against — a Flexible nested in it
-          // alone is inert, and the pill simply overflows, which is
-          // exactly what shipped. The outer Flexible is what hands the
-          // pill the row's bound; the inner one then spends whatever
-          // of it is left after SKIP on the scale-down box: icon and
-          // blurb render at natural size while they fit and shrink
-          // proportionally when they do not, while SKIP — this bar's
-          // one control, and the control is never the thing that gives
-          // way (the pause button's own rule, #57) — keeps its full
-          // size and 44 px touch target outside the scaling.
-          Flexible(
-            child: _HudPill(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(_iconFor(type),
-                              color: type.markerColor, size: 16),
-                          const SizedBox(width: 6),
-                          Text(
-                            type.offerBlurb(offer.reward),
-                            style: TextStyle(
-                              color: type.markerColor,
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // The pitch yields before the decision does — the same rule
+              // the scoring row (#43) and the title pill (#57) already live
+              // by. The widest contract (a long-haul's
+              // 'LONG HAUL · PAYS 999 c +3 CHAIN' with its cost line under
+              // it) plus the SKIP button overflows the narrowest phone's
+              // 343 px of content all by itself.
+              //
+              // The two Flexibles are a pair, and both are needed. A Row
+              // lays its ordinary children out with no main-axis maximum
+              // at all (the rendering layer's non-flex child constraints
+              // bound only the cross axis), so the pill's own min-sized
+              // Row has no width to flex against — a Flexible nested in it
+              // alone is inert, and the pill simply overflows, which is
+              // exactly what shipped. The outer Flexible is what hands the
+              // pill the row's bound; the inner one then spends whatever
+              // of it is left after SKIP on the scale-down box: icon and
+              // contract render at natural size while they fit and shrink
+              // proportionally when they do not, while SKIP — this bar's
+              // one control, and the control is never the thing that gives
+              // way (the pause button's own rule, #57) — keeps its full
+              // size and 44 px touch target outside the scaling.
+              Flexible(
+                child: _HudPill(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(_iconFor(type),
+                                  color: type.markerColor, size: 16),
+                              const SizedBox(width: 6),
+                              // The contract (issue #279): what the fare
+                              // pays and what it costs, both stated
+                              // before the accept or the skip.
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    type.offerPayout(offer.reward),
+                                    key: const ValueKey('offer_payout_text'),
+                                    style: TextStyle(
+                                      color: type.markerColor,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  if (cost != null)
+                                    Text(
+                                      cost,
+                                      key: const ValueKey('offer_cost_text'),
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  // The decline: removes the waiting fare from the street —
-                  // no pay, no penalty. The whole decision is here. Sized
-                  // to the platform's minimum touch target: the decline is
-                  // the point of the offer bar, not fine print.
-                  TextButton(
-                    key: const ValueKey('decline_fare_button'),
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      minimumSize: const Size(44, 44),
-                    ),
-                    onPressed: () => widget.game.declineCurrentOffer(),
-                    child: const Text(
-                      'SKIP',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.5,
+                      const SizedBox(width: 4),
+                      // The decline: removes the waiting fare from the
+                      // street — no pay, no penalty. The whole decision is
+                      // here. Sized to the platform's minimum touch
+                      // target: the decline is the point of the offer
+                      // bar, not fine print.
+                      TextButton(
+                        key: const ValueKey('decline_fare_button'),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          minimumSize: const Size(44, 44),
+                        ),
+                        onPressed: () => widget.game.declineCurrentOffer(),
+                        child: const Text(
+                          'SKIP',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
+              ),
+            ],
+          ),
+          // The first-encounter explanation (issue #279): a short,
+          // pointer-transparent brief under the offer while the first
+          // special fare waits — the drive never stops for it.
+          if (explain)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: _HudPill(
+                child: Text(
+                  type.contractBrief,
+                  key: const ValueKey('fare_contract_brief'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ),
-          ),
         ],
       ),
     );

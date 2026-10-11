@@ -639,6 +639,21 @@ class GameStateService extends ChangeNotifier {
     save();
   }
 
+  /// True once the one-time fare-contract explanation (issue #279) has
+  /// been given for this save. The HUD's offer bar reads it to decide
+  /// whether a first special fare still needs teaching.
+  bool get fareContractSeen => _saveData.fareContractSeen;
+
+  /// Marks the fare-contract explanation given and persists it
+  /// immediately — once per save, ever. Idempotent, like
+  /// [markBankPromptSeen].
+  void markFareContractSeen() {
+    if (_saveData.fareContractSeen) return;
+    _saveData.fareContractSeen = true;
+    notifyListeners();
+    save();
+  }
+
   /// Reset all progress (for testing)
   ///
   /// The wipe is one storage transaction (issue #232): the three record

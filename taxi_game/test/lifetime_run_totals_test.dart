@@ -15,6 +15,8 @@ void main() {
     int fares = 0,
     int livesLost = 0,
     double durationSeconds = 0,
+    Map<String, int> acceptedByKind = const {},
+    Map<String, int> declinedByKind = const {},
   }) {
     return RunRecord(
       endedAtMs: 0,
@@ -26,6 +28,8 @@ void main() {
       lifeLossDistancesPx: List<double>.filled(livesLost, 100),
       banked: livesLost == 0,
       durationSeconds: durationSeconds,
+      acceptedByKind: acceptedByKind,
+      declinedByKind: declinedByKind,
     );
   }
 
@@ -66,6 +70,22 @@ void main() {
       expect(totals.totalFares, 3);
       expect(totals.totalLivesLost, 3);
       expect(totals.totalDurationSeconds, 70);
+    });
+
+    test('folds the per-kind accepted and declined counts', () {
+      final totals = LifetimeRunTotals();
+      totals.applyRun(rec(
+        acceptedByKind: {'vip': 2, 'standard': 3},
+        declinedByKind: {'vip': 1},
+      ));
+      totals.applyRun(rec(
+        acceptedByKind: {'vip': 1, 'awkward': 1},
+        declinedByKind: {'vip': 2, 'longHaul': 1},
+      ));
+
+      expect(totals.acceptedFaresByKind,
+          {'vip': 3, 'standard': 3, 'awkward': 1});
+      expect(totals.declinedFaresByKind, {'vip': 3, 'longHaul': 1});
     });
   });
 
@@ -144,6 +164,23 @@ void main() {
       expect(totals.seedFromWindow(const []), isFalse);
       expect(totals.shiftsEnded, 0);
     });
+
+    test('seeds the per-kind counts per key, never down', () {
+      final totals = LifetimeRunTotals(acceptedFaresByKind: {'vip': 5});
+      final window = [
+        rec(
+          acceptedByKind: {'vip': 2, 'awkward': 4},
+          declinedByKind: {'vip': 1},
+        ),
+      ];
+
+      expect(totals.seedFromWindow(window), isTrue);
+      expect(totals.acceptedFaresByKind['vip'], 5,
+          reason: 'stored wins while it is the larger number');
+      expect(totals.acceptedFaresByKind['awkward'], 4,
+          reason: 'a key the save lacks takes the window count');
+      expect(totals.declinedFaresByKind['vip'], 1);
+    });
   });
 
   group('persistence', () {
@@ -155,6 +192,8 @@ void main() {
         totalFares: 42,
         totalLivesLost: 9,
         totalDurationSeconds: 4567.5,
+        acceptedFaresByKind: {'vip': 3, 'standard': 12},
+        declinedFaresByKind: {'longHaul': 2},
       );
 
       final restored =
@@ -166,6 +205,9 @@ void main() {
       expect(restored.totalFares, 42);
       expect(restored.totalLivesLost, 9);
       expect(restored.totalDurationSeconds, 4567.5);
+      expect(restored.acceptedFaresByKind, {'vip': 3, 'standard': 12},
+          reason: 'the per-kind counts survive (issue #279)');
+      expect(restored.declinedFaresByKind, {'longHaul': 2});
     });
 
     test('a missing block reads as zeros — the pre-fix save', () {
@@ -178,6 +220,8 @@ void main() {
       expect(totals.totalFares, 0);
       expect(totals.totalLivesLost, 0);
       expect(totals.totalDurationSeconds, 0.0);
+      expect(totals.acceptedFaresByKind, isEmpty);
+      expect(totals.declinedFaresByKind, isEmpty);
     });
   });
 }

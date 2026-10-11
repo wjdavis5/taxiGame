@@ -1,5 +1,6 @@
 import 'package:flame/components.dart';
 
+import '../../models/fare_type.dart';
 import '../../models/passenger_data.dart';
 import '../components/dropoff_zone.dart';
 import '../components/pickup_zone.dart';
@@ -67,6 +68,22 @@ class EndlessFareController extends Component
   /// on-device history can tell "drove past" from "looked at it and
   /// refused it".
   int faresDeclined = 0;
+
+  /// Accepted and declined counts by kind (issue #279): the offer is a
+  /// contract, so the settled record keeps how the player answered each
+  /// kind, not just the totals. Accepted means the passenger boarded.
+  final Map<FareType, int> _acceptedByKind = {
+    for (final kind in FareType.values) kind: 0,
+  };
+  final Map<FareType, int> _declinedByKind = {
+    for (final kind in FareType.values) kind: 0,
+  };
+
+  /// How many fares of each kind the player accepted (boarded).
+  Map<FareType, int> get acceptedByKind => Map.unmodifiable(_acceptedByKind);
+
+  /// How many fares of each kind the player declined (SKIP).
+  Map<FareType, int> get declinedByKind => Map.unmodifiable(_declinedByKind);
 
   final List<_ActiveFare> _active = [];
 
@@ -188,6 +205,8 @@ class EndlessFareController extends Component
     fare.pickupZone.removeFromParent();
     fare.dropoffZone.removeFromParent();
     faresDeclined++;
+    _declinedByKind[fare.passenger.fareType] =
+        (_declinedByKind[fare.passenger.fareType] ?? 0) + 1;
     return true;
   }
 
@@ -247,7 +266,11 @@ class EndlessFareController extends Component
     final pickupZone = PickupZone(
       position: fare.pickup.clone(),
       passenger: passenger,
-      onPickup: () => onPickup(passenger),
+      onPickup: () {
+        _acceptedByKind[passenger.fareType] =
+            (_acceptedByKind[passenger.fareType] ?? 0) + 1;
+        onPickup(passenger);
+      },
     );
     final dropoffZone = DropoffZone(
       position: fare.dropoff.clone(),
