@@ -48,13 +48,17 @@ class FareSettlementPop extends TextComponent with WorldOneShot {
       settlement.isLate ? 'LATE' : 'ON TIME';
 
   /// The numbers behind the verdict: value x multiplier, any chain bonus
-  /// the fare kind paid, the score it awarded, and the at-risk total.
+  /// the fare kind paid, the score it awarded, the at-risk total, and
+  /// the tip the ride earned (issue #276) when there is one.
   static String detail(FareSettlement settlement) {
     final bonus = settlement.chainStepBonus > 0
         ? ' +${settlement.chainStepBonus} CHAIN'
         : '';
+    final tip =
+        settlement.tipCoins > 0 ? ' \u00b7 +${settlement.tipCoins} TIP' : '';
     return '${settlement.fareValue} \u00d7${settlement.multiplier}$bonus\n'
-        '+${settlement.scoreAwarded} \u00b7 AT RISK ${settlement.scoreTotal}';
+        '+${settlement.scoreAwarded} \u00b7 AT RISK ${settlement.scoreTotal}'
+        '$tip';
   }
 
   /// The HUD line, one line so it scales down instead of wrapping on the
@@ -63,9 +67,12 @@ class FareSettlementPop extends TextComponent with WorldOneShot {
     final bonus = settlement.chainStepBonus > 0
         ? ' +${settlement.chainStepBonus} CHAIN'
         : '';
+    final tip =
+        settlement.tipCoins > 0 ? '  \u00b7  +${settlement.tipCoins} TIP' : '';
     return '${headline(settlement)}  ${settlement.fareValue} '
         '\u00d7${settlement.multiplier}$bonus  \u00b7  '
-        '+${settlement.scoreAwarded} \u00b7 AT RISK ${settlement.scoreTotal}';
+        '+${settlement.scoreAwarded} \u00b7 AT RISK ${settlement.scoreTotal}'
+        '$tip';
   }
 
   static Color colorFor(FareSettlement settlement) => settlement.isLate

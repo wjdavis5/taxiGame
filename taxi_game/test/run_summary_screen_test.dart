@@ -140,6 +140,9 @@ void main() {
     expect(find.text('12'), findsOneWidget);
     expect(find.text('Close calls'), findsOneWidget);
     expect(find.text('9'), findsOneWidget);
+    expect(find.text('Thrill passes'), findsOneWidget,
+        reason: 'the tip\'s named event is on the record (issue #276)');
+    expect(find.text('Tips'), findsOneWidget);
     expect(find.text('Distance'), findsOneWidget);
     expect(find.text('1.2 km'), findsOneWidget);
     expect(find.text('Coins earned'), findsOneWidget);
@@ -166,6 +169,29 @@ void main() {
         reason: 'only fare-base coins were ever paid');
     expect(find.text('+90 Coins'), findsNothing,
         reason: 'nothing was paid out at a wreck');
+  });
+
+  testWidgets('a tipped shift names the tip and the pass behind it '
+      '(issue #276)', (tester) async {
+    final game = endlessGame();
+    await showPanel(tester, game, const RunSummary(
+      outcome: ShiftOutcome.banked,
+      score: 240,
+      bestChain: 4,
+      faresDelivered: 12,
+      nearMisses: 9,
+      thrillPasses: 2,
+      tipsEarned: 8,
+      distancePx: 12340,
+      coinsEarned: 203,
+      isPersonalBest: false,
+      previousBest: 180,
+    ));
+
+    expect(find.text('Thrill passes'), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+    expect(find.text('Tips'), findsOneWidget);
+    expect(find.text('8'), findsOneWidget);
   });
 
   testWidgets('the settled shift names the next reachable goal (issue #282)',
@@ -278,6 +304,10 @@ void main() {
       final game = dailyGame();
       await showPanel(tester, game, wreckedSummary);
 
+      // The tip's two rows (issue #276) made the panel taller than the
+      // 600 px test surface: scroll the button into view the way a thumb
+      // would, then tap it.
+      await tester.ensureVisible(find.byKey(const ValueKey('retry_button')));
       await tester.tap(find.byKey(const ValueKey('retry_button')));
       await tester.pump();
 

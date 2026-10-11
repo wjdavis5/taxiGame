@@ -70,6 +70,27 @@ void main() {
       expect(pop.text, 'LATE\n50 \u00d71\n+50 \u00b7 AT RISK 90');
       expect(FareSettlementPop.colorFor(late), const Color(0xFFFF7043));
     });
+
+    test('a tipped fare names the tip on the pop and the HUD line '
+        '(issue #276)', () {
+      const tipped = FareSettlement(
+        outcome: FareOutcome.onTime,
+        fareValue: 50,
+        multiplier: 2,
+        chainStepBonus: 0,
+        scoreAwarded: 100,
+        scoreTotal: 150,
+        tipCoins: 8,
+        thrillPasses: 2,
+      );
+
+      expect(FareSettlementPop.detail(tipped),
+          '50 \u00d72\n+100 \u00b7 AT RISK 150 \u00b7 +8 TIP');
+      expect(FareSettlementPop.hudLine(tipped),
+          'ON TIME  50 \u00d72  \u00b7  +100 \u00b7 AT RISK 150  \u00b7  +8 TIP');
+      final pop = FareSettlementPop(position: Vector2.zero(), settlement: tipped);
+      expect(pop.text, 'ON TIME\n50 \u00d72\n+100 \u00b7 AT RISK 150 \u00b7 +8 TIP');
+    });
   });
 
   test('ChainBreakPop names the multiplier the countdown cost (issue #273)',

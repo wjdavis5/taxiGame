@@ -19,6 +19,8 @@ class RunSummary {
     required this.isPersonalBest,
     required this.previousBest,
     this.nearMisses = 0,
+    this.thrillPasses = 0,
+    this.tipsEarned = 0,
     this.achievementsUnlocked = const [],
   });
 
@@ -43,12 +45,23 @@ class RunSummary {
   /// issue's kill criterion: whether near-misses read as skill or luck.
   final int nearMisses;
 
+  /// Close calls that landed while a live fare was aboard (issue #276)
+  /// — the THRILL PASS events the shift's tips paid for. Named on the
+  /// summary beside [tipsEarned] so the tip's source is never a mystery.
+  final int thrillPasses;
+
+  /// Tip coins the passengers handed over at the kerb (issue #276):
+  /// the capped, deterministic reward for the named skill events a ride
+  /// completed, counted into [coinsEarned] because the wallet took them.
+  final int tipsEarned;
+
   /// How far the taxi drove, in world px — raw material for
   /// [distanceLabel].
   final double distancePx;
 
   /// Coins actually credited to the wallet during the run: each delivered
-  /// fare's base reward, plus the banked payout for a banked shift.
+  /// fare's base reward, each ride's tip (issue #276), plus the banked
+  /// payout for a banked shift.
   final int coinsEarned;
 
   /// True when [score] beat the personal best as it stood before this

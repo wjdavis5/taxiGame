@@ -16,7 +16,8 @@ enum FareOutcome {
 /// What one fare settled at (issues #12, #270): the outcome plus the
 /// numbers behind it, so the dropoff feedback can name the whole deal —
 /// what the fare was worth, the multiplier it scored at, any chain bonus
-/// its kind paid, what it awarded, and the at-risk total it left standing.
+/// its kind paid, what it awarded, the at-risk total it left standing,
+/// and the tip the ride itself earned (issue #276).
 class FareSettlement {
   const FareSettlement({
     required this.outcome,
@@ -25,6 +26,8 @@ class FareSettlement {
     required this.chainStepBonus,
     required this.scoreAwarded,
     required this.scoreTotal,
+    this.tipCoins = 0,
+    this.thrillPasses = 0,
   });
 
   final FareOutcome outcome;
@@ -46,11 +49,56 @@ class FareSettlement {
   /// The chain score standing after this fare — the at-risk total.
   final int scoreTotal;
 
+  /// Coins this ride tipped at the kerb (issue #276), per [TipRule] —
+  /// wallet money, never chain score, so the mastery economy is
+  /// untouched. Zero for a ride no named skill event thrilled.
+  final int tipCoins;
+
+  /// How many of the fare's close calls landed while it rode — the
+  /// THRILL PASS events behind [tipCoins].
+  final int thrillPasses;
+
   bool get isLate => outcome == FareOutcome.late;
 }
 
+/// The passenger tip (issue #276): what a rider pays for a ride that
+/// thrilled them, in the game's existing skill vocabulary. Two named
+/// events earn it, both already ruled on elsewhere in the game:
+///
+///  - **THRILL PASS** — a qualifying close call (issue #23's ruling)
+///    cleared while this fare is aboard with a live meter. The passenger
+///    feels the shave the chain already pays for.
+///  - **CLEAN CHAIN** — an on-time delivery at 2x or better: the fare
+///    rode a live chain, so the smooth fast ride itself tips.
+///
+/// The tip is deterministic — a flat coin value per event, no draws —
+/// and capped per fare, so a thrill spree can never outpay the fare
+/// economy it sits beside. Late deliveries never tip the chain event,
+/// but a fare keeps whatever thrill passes it earned while its meter
+/// was live: the thrill was real; the chain break is a separate debt.
+class TipRule {
+  TipRule._();
+
+  /// Coins one THRILL PASS adds to the fare's pending tip.
+  static const int thrillPassCoins = 4;
+
+  /// Coins one CLEAN CHAIN delivery adds to the tip.
+  static const int cleanChainCoins = 4;
+
+  /// Hard ceiling on one fare's tip, however many events landed: about
+  /// a fifth of a standard fare, so tips season the wallet rather than
+  /// replace the fare economy the garage ladder is priced against.
+  static const int maxTipCoins = 12;
+
+  /// [coins] under the per-fare ceiling.
+  static int capped(int coins) =>
+      coins > maxTipCoins ? maxTipCoins : coins;
+}
+
 /// One passenger's countdown. Starts at pickup and ticks every frame the
-/// passenger is aboard (issue #12).
+/// passenger is aboard (issue #12). It also carries the tip the ride has
+/// earned so far (issue #276) — accrued per THRILL PASS while the meter
+/// is live, paid and capped at the dropoff.
 class FareTimer {
   FareTimer({required this.passengerId, required this.totalSeconds})
       : remainingSeconds = totalSeconds;
@@ -63,6 +111,13 @@ class FareTimer {
 
   /// Seconds left on the clock; floored at zero, never negative.
   double remainingSeconds;
+
+  /// Tip coins this ride has accrued (issue #276), uncapped until
+  /// [FareChain.completeFare] pays it through [TipRule.maxTipCoins].
+  int tipCoins = 0;
+
+  /// THRILL PASS close calls this ride's meter was live for.
+  int thrillPasses = 0;
 
   bool get isExpired => remainingSeconds <= 0.0;
 
@@ -156,6 +211,11 @@ class FareChain {
   /// material for the issue's kill criterion, judging from the on-device
   /// history whether near-misses read as skill or as luck.
   int nearMisses = 0;
+
+  /// Close calls that landed while a live fare was aboard (issue #276) —
+  /// the THRILL PASS events behind the run's tips, named on the run
+  /// summary beside the tip coins they paid.
+  int thrillPasses = 0;
 
   final Map<String, FareTimer> _timers = {};
 
@@ -258,11 +318,21 @@ class FareChain {
   /// rebuilt while this rider sat expired aboard (issue #120: the break
   /// now fires once, at the crossing, so the multiplier standing at a
   /// late dropoff is whatever the deliveries since then earned).
+  ///
+  /// The tip (issue #276) is priced here too: the fare's accrued THRILL
+  /// PASS coins plus the CLEAN CHAIN award for an on-time delivery at 2x
+  /// or better, capped by [TipRule.maxTipCoins]. Coins, never score —
+  /// the chain's at-risk total is untouched. [tipsEnabled] gates it at
+  /// the call site: an endless shift pays the tip, while the tutorial
+  /// ladder's authored payout — exactly max(score, reward), once —
+  /// stays untouched, so its rungs teach their lessons without a
+  /// second income.
   /// Returns the full [FareSettlement] — outcome and numbers — so callers
   /// can react and say what happened (issue #270).
   FareSettlement completeFare(
     PassengerData passenger, {
     required int fareValue,
+    bool tipsEnabled = true,
   }) {
     final timer = _timers.remove(passenger.id);
     final onTime = timer != null && !timer.isExpired;
@@ -276,6 +346,14 @@ class FareChain {
         : 1;
     _trackBest();
 
+    final pendingTip = timer?.tipCoins ?? 0;
+    final cleanChain = onTime && appliedMultiplier >= 2;
+    final tip = tipsEnabled
+        ? TipRule.capped(
+            pendingTip + (cleanChain ? TipRule.cleanChainCoins : 0),
+          )
+        : 0;
+
     return FareSettlement(
       outcome: onTime ? FareOutcome.onTime : FareOutcome.late,
       fareValue: fareValue,
@@ -283,6 +361,8 @@ class FareChain {
       chainStepBonus: chainStepBonus,
       scoreAwarded: awarded,
       scoreTotal: score,
+      tipCoins: tip,
+      thrillPasses: timer?.thrillPasses ?? 0,
     );
   }
 
@@ -308,11 +388,26 @@ class FareChain {
   /// undisturbed — defensive players build the same chains they always
   /// did, and shaving traffic monetises risk the chain already prices.
   ///
+  /// The pass is also a THRILL PASS for every fare aboard with a live
+  /// meter (issue #276): each accrues [TipRule.thrillPassCoins] on its
+  /// own countdown, paid at that fare's dropoff. An expired rider
+  /// accrues nothing — the thrill is the live ride's — and a pass with
+  /// nobody live aboard still pays the chain score and counts only as a
+  /// near-miss.
+  ///
   /// Returns the points awarded, so the on-road feedback can name them.
   int awardNearMiss() {
     nearMisses++;
     final points = nearMissScore * multiplier;
     score += points;
+    var thrilled = false;
+    for (final timer in _timers.values) {
+      if (timer.isExpired) continue;
+      timer.tipCoins += TipRule.thrillPassCoins;
+      timer.thrillPasses++;
+      thrilled = true;
+    }
+    if (thrilled) thrillPasses++;
     return points;
   }
 
@@ -355,13 +450,15 @@ class FareChain {
     return crossedZero;
   }
 
-  /// Clears the chain: score, multiplier, best chain, close calls, and
-  /// every live countdown. Called whenever a run or level (re)starts.
+  /// Clears the chain: score, multiplier, best chain, close calls,
+  /// thrill passes, and every live countdown. Called whenever a run or
+  /// level (re)starts.
   void reset() {
     score = 0;
     multiplier = 1;
     bestMultiplier = 1;
     nearMisses = 0;
+    thrillPasses = 0;
     _timers.clear();
   }
 }

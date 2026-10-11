@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taxi_game/game/systems/endless_course.dart';
+import 'package:taxi_game/game/systems/fare_chain.dart';
 import 'package:taxi_game/game/systems/impact_fx.dart';
 import 'package:taxi_game/game/systems/lives.dart';
 import 'package:taxi_game/game/systems/run_summary.dart';
@@ -177,6 +178,31 @@ void main() {
 
       expect(game.lastRunSummary!.isPersonalBest, isFalse);
       expect(game.lastRunSummary!.previousBest, 100000);
+    });
+
+    test('a clean chain delivery tips, and the summary counts it in the '
+        'wallet (issue #276)', () async {
+      final game = await mountGame(endlessGame(42));
+      await tickAndSettle(game);
+      final coinsBefore = gameState.totalCoins;
+
+      final fare0 = game.course!.fare(0);
+      deliverFare(game, fare0);
+      await tickAndSettle(game);
+      final fare1 = game.course!.fare(1);
+      deliverFare(game, fare1);
+      game.bankShift();
+
+      final summary = game.lastRunSummary!;
+      expect(summary.thrillPasses, 0, reason: 'no close calls were driven');
+      expect(summary.tipsEarned, TipRule.cleanChainCoins,
+          reason: 'the second delivery rode the live chain at 3x');
+      // The tip is wallet money, so the summary's coins-earned line — the
+      // number the wallet must reconcile to — carries it.
+      expect(summary.coinsEarned,
+          fare0.reward + fare1.reward + TipRule.cleanChainCoins + summary.score);
+      expect(gameState.totalCoins, coinsBefore + summary.coinsEarned,
+          reason: 'the visible tip is the credited tip, to the coin');
     });
 
     test('a stored best that falls is beaten, with the old best kept for '
