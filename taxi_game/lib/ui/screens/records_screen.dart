@@ -10,7 +10,8 @@ import '../../services/game_state_service.dart';
 /// With no leaderboards — the game is permanently offline — this screen
 /// and the history behind it are the only place a player's history lives.
 /// Two halves: the personal bests (best banked score, longest chain,
-/// furthest distance, most fares in one shift) and the achievement set,
+/// furthest distance, most fares in one shift) plus the lifetime totals
+/// the mastery records measure (issue #283), and the achievement set,
 /// every entry shown with either its earned state or its progress toward
 /// it. Everything reads live save state through [GameStateService]; the
 /// `achievements` map in the save is the single source of truth for what
@@ -81,6 +82,8 @@ class RecordsScreen extends StatelessWidget {
                         children: [
                           _PersonalBestsCard(gameState: gameState),
                           const SizedBox(height: 24),
+                          _LifetimeCard(gameState: gameState),
+                          const SizedBox(height: 24),
                           _AchievementsList(gameState: gameState),
                         ],
                       ),
@@ -132,6 +135,57 @@ class _PersonalBestsCard extends StatelessWidget {
               'Most fares in one shift',
               '${bests.mostFaresInOneShift}',
               valueKey: const Key('records_pb_fares'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// The lifetime totals (issue #283): the records the mastery achievements
+/// measure, on screen where their progress lives — close calls, volume
+/// driven, fares, daily participation, and the shifts it all happened
+/// over. Stored counters (issue #183), so no number here can fall as the
+/// history window trims.
+class _LifetimeCard extends StatelessWidget {
+  const _LifetimeCard({required this.gameState});
+
+  final GameStateService gameState;
+
+  @override
+  Widget build(BuildContext context) {
+    final totals = gameState.lifetimeRunTotals;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionLabel('Lifetime'),
+        _Card(
+          children: [
+            _statRow(
+              'Close calls',
+              '${totals.totalNearMisses}',
+              valueKey: const Key('records_lifetime_close_calls'),
+            ),
+            _statRow(
+              'Distance driven',
+              RunStats.formatDistance(totals.totalDistanceMetres),
+              valueKey: const Key('records_lifetime_distance'),
+            ),
+            _statRow(
+              'Fares delivered',
+              '${totals.totalFares}',
+              valueKey: const Key('records_lifetime_fares'),
+            ),
+            _statRow(
+              'Daily shifts',
+              '${gameState.dailyHistory.length}',
+              valueKey: const Key('records_lifetime_dailies'),
+            ),
+            _statRow(
+              'Shifts ended',
+              '${totals.shiftsEnded}',
+              valueKey: const Key('records_lifetime_shifts'),
             ),
           ],
         ),
